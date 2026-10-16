@@ -26,6 +26,8 @@ target_sources(${PROJECT_NAME} PUBLIC
     dialog.c dialog_swrscan.c
     dxcc.c
     dialog_ft8.c dialog_freq.c dialog_gps.c dialog_msg_cw.c
+    dialog_wspr.c wspr_app.c wspr_worker.c wspr_demod.c wspr_fano.c
+    wspr_encode.c wspr_mod.c wspr_spec.c
     ft8_ui/table_view.c
     ft8_udp.c
     dialog_msg_voice.c dialog_recorder.c dialog_qth.c dialog_callsign.c

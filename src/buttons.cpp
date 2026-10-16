@@ -325,6 +325,7 @@ static button_data_t btn_settings = make_app_btn("Settings", ACTION_APP_SETTINGS
 
 static button_data_t  btn_wifi   = make_app_btn("WiFi", ACTION_APP_WIFI);
 static button_data_t  btn_bt     = make_app_btn("Bluetooth", ACTION_APP_BT);
+static button_data_t  btn_wspr   = make_app_btn("WSPR", ACTION_APP_WSPR);
 
 /* RTTY */
 static button_data_t btn_rtty_p1 = {
@@ -455,7 +456,7 @@ static buttons_page_t page_app_2 = {
     {&btn_app_p2, &btn_rec, &btn_qth, &btn_callsign, &btn_settings}
 };
 static buttons_page_t page_app_3 = {
-    {&btn_app_p3, &btn_wifi, &btn_bt}
+    {&btn_app_p3, &btn_wifi, &btn_bt, &btn_wspr}
 };
 
 /* RTTY */
