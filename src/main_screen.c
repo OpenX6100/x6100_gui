@@ -929,8 +929,7 @@ static void main_screen_rotary_cb(lv_event_t * e) {
     rotary_data_t *data = (rotary_data_t *) lv_event_get_param(e);
 
     freq_shift(data->diff, data->dt);
-    // TODO: add dt support
-    dialog_rotary(data->diff);
+    dialog_rotary(data->diff, data->dt);
     free(data);
 }
 
