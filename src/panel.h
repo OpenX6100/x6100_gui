@@ -25,6 +25,10 @@ void panel_hide();
 void panel_clear();
 void panel_update_visibility(bool clear);
 void panel_add_text(const char * text);
+
+/* Echo of what we transmit, on its own line and in its own colour, so
+ * a QSO reads as a conversation. Used by the RTTY transmitter. */
+void panel_add_tx_text(const char * text);
 void panel_set_info(const char * text);
 
 #ifdef __cplusplus

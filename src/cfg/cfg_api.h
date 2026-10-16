@@ -237,6 +237,7 @@ typedef struct {
     ParamInt *(*shift)(void); /* p_rtty_shift */
     ParamInt *(*rate)(void); /* p_rtty_rate */
     ParamInt *(*reverse)(void); /* p_rtty_reverse */
+    ParamInt *(*squelch)(void); /* p_rtty_squelch */
 } cfg_rtty_refs_t;
 
 typedef struct {

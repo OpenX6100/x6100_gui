@@ -109,6 +109,7 @@ static void on_rit_change(Subject *subj, void *user_data);
 static void on_peak_changed(Subject *subj, void *user_data);
 static void on_peak_hold_changed(Subject *subj, void *user_data);
 static void on_peak_speed_changed(Subject *subj, void *user_data);
+static void on_rtty_marker_change(Subject *subj, void *user_data);
 static void shift_peaks(int32_t df);
 
 static void spectrum_render_rotated(uint32_t *buf, int stride);
@@ -321,6 +322,10 @@ lv_obj_t *spectrum_init(lv_obj_t *overlay_parent, lv_coord_t y, lv_coord_t h) {
 
     subject_subscribe_and_notify((Subject *)cfg.cur.fg_freq(), on_fg_freq_change, NULL);
     subject_subscribe_and_notify((Subject *)cfg.rit(), on_rit_change, NULL);
+
+    /* RTTY markers: repaint when the tones move, not on the next VFO step. */
+    subject_subscribe((Subject *)cfg.rtty.center(), on_rtty_marker_change, NULL);
+    subject_subscribe((Subject *)cfg.rtty.shift(), on_rtty_marker_change, NULL);
 
     if (spectrum_sub_id == DSP_FRAME_SUB_INVALID) {
         const dsp_frame_cfg_t sub_cfg = {
@@ -536,6 +541,16 @@ static void on_fg_freq_change(Subject *subj, void *user_data) {
     fg_freq = cparam_i_get(cfg.cur.fg_freq());
     __atomic_store_n(&s_cond_dirty, 1, __ATOMIC_RELEASE);
     lv_obj_invalidate(obj);
+}
+
+static void on_rtty_marker_change(Subject *subj, void *user_data) {
+    lv_obj_invalidate(obj);
+}
+
+void spectrum_refresh_overlay(void) {
+    if (obj) {
+        lv_obj_invalidate(obj);
+    }
 }
 
 static void on_rit_change(Subject *subj, void *user_data) {

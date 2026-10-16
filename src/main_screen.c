@@ -30,6 +30,8 @@
 #include "main.h"
 #include "panel.h"
 #include "rtty.h"
+#include "rtty_tx.h"
+#include "rtty_buttons.h"
 #include "screenshot.h"
 #include "keyboard.h"
 #include "dialog.h"
@@ -152,7 +154,10 @@ static void next_freq_step(bool up) {
 static void apps_disable() {
     dialog_destruct();
 
+    rtty_tx_stop();
+    rtty_sql_timer_stop();
     rtty_set_state(RTTY_OFF);
+    spectrum_refresh_overlay();     /* RTTY markers off */
     panel_update_visibility(false);
 }
 
@@ -161,9 +166,13 @@ void main_screen_start_app(press_action_t app_action) {
 
     switch (app_action) {
         case ACTION_APP_RTTY:
+            rtty_macros_load();
+            rtty_refresh_macro_labels();
             buttons_load_page(&buttons_page_rtty);
             rtty_set_state(RTTY_RX);
+            spectrum_refresh_overlay();     /* RTTY markers on */
             panel_update_visibility(true);
+            rtty_sql_timer_start();
             voice_say_text_fmt("Teletype window");
             break;
 

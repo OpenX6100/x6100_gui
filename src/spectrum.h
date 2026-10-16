@@ -32,6 +32,9 @@ void      spectrum_clear();
  * stops accumulating and delivering. */
 void spectrum_set_enabled(bool enabled);
 
+/* Repaint the overlay (filter, notch, RTTY markers). UI thread only. */
+void spectrum_refresh_overlay(void);
+
 /* Direct-render entry point. Call from the main loop between lv_timer_handler()
  * and drm_flip(). Renders the spectrum into the DRM primary back-buffer when new
  * data arrived or the render conditions changed. Returns true if it rendered. */

@@ -79,7 +79,7 @@ static void panel_update_text_cb(const char *text) {
         if (strcmp(buf_write - 2, "\n\n") == 0) {
             *buf_write-- = '\0';
         } else {
-            lv_txt_get_size(&text_size, buf, font, 0, 0, LV_COORD_MAX, 0);
+            lv_txt_get_size(&text_size, buf, font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_RECOLOR);
             if (text_size.x > (lv_obj_get_width(obj) - 20)) {
                 *old_write = '\n';
                 buf_write = stpcpy(old_write + 1, text);
@@ -117,6 +117,10 @@ static void text_size_cb(Subject *subj, void *user_data) {
 lv_obj_t * panel_init(lv_obj_t *parent) {
     obj = lv_label_create(parent);
 
+    /* Recolor markup lets transmitted text be shown in its own colour.
+     * Received text is escaped before it reaches the buffer, so a '#'
+     * off the air cannot be mistaken for a markup tag. */
+    lv_label_set_recolor(obj, true);
     lv_label_set_text_static(obj, buf);
 
     lv_obj_add_style(obj, &style.panels.base, 0);
@@ -151,8 +155,43 @@ void panel_set_height(lv_coord_t h) {
     truncate();
 }
 
+/* '#' starts a recolor tag in LVGL, so anything arriving off the air has
+ * to be doubled or a stray '#' would swallow the rest of the line. */
+static size_t escape_hash(const char *in, char *out, size_t out_sz) {
+    size_t o = 0;
+
+    for (const char *p = in; *p && o + 2 < out_sz; p++) {
+        if (*p == '#') {
+            out[o++] = '#';
+        }
+        out[o++] = *p;
+    }
+    out[o] = '\0';
+    return o;
+}
+
 void panel_add_text(const char * text) {
-    scheduler_put((void(*)(void*))panel_update_text_cb, (void*)text, strlen(text) + 1);
+    char   esc[256];
+    size_t n = escape_hash(text, esc, sizeof(esc));
+
+    scheduler_put((void(*)(void*))panel_update_text_cb, (void*)esc, n + 1);
+}
+
+void panel_add_tx_text(const char * text) {
+    char esc[256];
+    char out[320];
+
+    escape_hash(text, esc, sizeof(esc));
+
+    /* Own line, own colour: sent text reads clearly against received. */
+    int n = snprintf(out, sizeof(out), "\n#F5C400 %s#\n", esc);
+    if (n <= 0) {
+        return;
+    }
+    if ((size_t)n >= sizeof(out)) {
+        n = sizeof(out) - 1;
+    }
+    scheduler_put((void(*)(void*))panel_update_text_cb, (void*)out, (size_t)n + 1);
 }
 
 void panel_set_info(const char *text) {

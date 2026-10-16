@@ -167,6 +167,7 @@ static ParamInt *cfg_rtty_center(void) { return param_ref<ParamInt>(cfg_instance
 static ParamInt *cfg_rtty_shift(void) { return param_ref<ParamInt>(cfg_instance().p_rtty_shift); }
 static ParamInt *cfg_rtty_rate(void) { return param_ref<ParamInt>(cfg_instance().p_rtty_rate); }
 static ParamInt *cfg_rtty_reverse(void) { return param_ref<ParamInt>(cfg_instance().p_rtty_reverse); }
+static ParamInt *cfg_rtty_squelch(void) { return param_ref<ParamInt>(cfg_instance().p_rtty_squelch); }
 static ParamInt *cfg_cw_encoder_period(void) { return param_ref<ParamInt>(cfg_instance().p_cw_encoder_period); }
 static ParamInt *cfg_ft8_tx_freq(void) { return param_ref<ParamInt>(cfg_instance().p_ft8_tx_freq); }
 static ParamFloat *cfg_ft8_output_gain_offset(void) { return param_ref<ParamFloat>(cfg_instance().p_ft8_output_gain_offset); }
@@ -419,6 +420,7 @@ extern "C" const cfg_refs_t cfg = {
         .shift = &cfg_rtty_shift,
         .rate = &cfg_rtty_rate,
         .reverse = &cfg_rtty_reverse,
+        .squelch = &cfg_rtty_squelch,
     },
     .network = {
         .wifi_enabled = &cfg_wifi_enabled,

@@ -28,6 +28,7 @@ extern "C" {
     #include "panel.h"
     #include "voice.h"
     #include "pubsub_ids.h"
+    #include "rtty_buttons.h"
 }
 
 #define STATE_ASSIGNED LV_STATE_USER_1
@@ -329,8 +330,9 @@ static button_data_t  btn_bt     = make_app_btn("Bluetooth", ACTION_APP_BT);
 /* RTTY */
 static button_data_t btn_rtty_p1 = {
     .type  = BTN_TEXT,
-    .label = "(RTTY 1:1)",
-    .press = NULL,
+    .label = "(RTTY 1:2)",
+    .press = button_next_page_cb,
+    .hold  = button_prev_page_cb,
 };
 static button_data_t btn_rtty_rate = {
     .type  = BTN_TEXT,
@@ -464,6 +466,12 @@ buttons_page_t buttons_page_rtty = {
     {&btn_rtty_p1, &btn_rtty_rate, &btn_rtty_shift, &btn_rtty_center, &btn_rtty_reverse}
 };
 
+/* Page 2 lives in rtty_buttons.c */
+static buttons_group_t buttons_group_rtty = {
+    &buttons_page_rtty,
+    &buttons_page_rtty_2,
+};
+
 buttons_group_t buttons_group_gen = {
     &buttons_page_vol_1,
     &page_vol_2,
@@ -511,6 +519,7 @@ static struct {
     {buttons_group_dfn, ARRAY_SIZE(buttons_group_dfn)},
     {buttons_group_dfl, ARRAY_SIZE(buttons_group_dfl)},
     {buttons_group_vm,  ARRAY_SIZE(buttons_group_vm) },
+    {buttons_group_rtty, ARRAY_SIZE(buttons_group_rtty)},
 };
 
 void buttons_init(lv_obj_t *parent) {
