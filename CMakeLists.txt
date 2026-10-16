@@ -27,7 +27,7 @@ if(ENABLE_TESTING)
         # include_directories(${CMAKE_CURRENT_SOURCE_DIR}/tests/mock_gpiod)
         FetchContent_Declare(
         aether_x6100_control
-        GIT_REPOSITORY https://github.com/gdyuldin/X6100Control.git
+        GIT_REPOSITORY https://github.com/OpenX6100/X6100Control.git
         GIT_TAG        v0.16.1
         )
         FetchContent_MakeAvailable(aether_x6100_control)
