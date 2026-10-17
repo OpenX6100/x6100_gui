@@ -193,6 +193,7 @@ typedef struct {
     ParamInt *(*waterfall_center_line)(void); /* p_waterfall_center_line */
 
     ParamInt *(*show_meter_value)(void); /* p_show_meter_values */
+    ParamInt *(*s_meter_offset)(void); /* p_s_meter_offset (1KO125, dB) */
 
     ParamInt *(*mag_freq)(void); /* p_mag_freq */
     ParamInt *(*mag_info)(void); /* p_mag_info */

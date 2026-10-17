@@ -453,6 +453,19 @@ static void make_meter_label_info(SettingsPage &page) {
     page.row++;
 }
 
+/* 1KO125: S-meter calibration offset, dB (also applied to the CAT S-meter). */
+static void make_s_meter_offset(SettingsPage &page) {
+    page.label("S-meter offset");
+
+    lv_obj_t *obj = page.cell(1, 6, SMALL_6);
+    obj           = page.slider_int(obj, *cfg.ui.s_meter_offset(), -30, 30, 1, SMALL_6 - 120, "%d dB");
+
+    lv_obj_add_event_cb(obj, settings_change_bg_opa_cb, LV_EVENT_FOCUSED, &page);
+    lv_obj_add_event_cb(obj, settings_change_bg_opa_cb, LV_EVENT_DEFOCUSED, &page);
+
+    page.row++;
+}
+
 static void make_display_invert(SettingsPage &page) {
     lv_obj_t *obj;
 
@@ -752,6 +765,7 @@ void make_ui_page(SettingsPage &page) {
     page.delimiter();
 
     make_meter_label_info(page);
+    make_s_meter_offset(page);
     page.delimiter();
 
     make_display_invert(page);
