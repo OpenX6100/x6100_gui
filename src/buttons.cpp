@@ -331,6 +331,7 @@ static button_data_t  btn_bt     = make_app_btn("Bluetooth", ACTION_APP_BT);
 /* WSPR */
 /* JS8 */
 /* PSK31 */
+static button_data_t  btn_psk    = make_app_btn("PSK31", ACTION_APP_PSK);
 /* Olivia */
 /* WeFax */
 /* SSTV */
@@ -481,7 +482,7 @@ static buttons_page_t page_app_3 = {{
 [[maybe_unused]] static buttons_page_t page_app_4 = {{
     &btn_app_p4,
     /* PSK31 */
-    NULL,
+    &btn_psk,
     /* Olivia */
     NULL,
     /* WeFax */

@@ -50,6 +50,7 @@ typedef enum {
     /* JS8 */
     /* WSPR */
     /* PSK31 */
+    ACTION_APP_PSK = 114,
     /* Olivia */
     ACTION_APP_BT = 116,
 } press_action_t;
