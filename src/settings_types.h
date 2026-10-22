@@ -51,6 +51,7 @@ typedef enum {
     /* WSPR */
     /* PSK31 */
     /* Olivia */
+    ACTION_APP_OLIVIA = 115,
     ACTION_APP_BT = 116,
 } press_action_t;
 

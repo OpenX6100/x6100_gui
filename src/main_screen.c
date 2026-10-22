@@ -50,6 +50,7 @@
 /* JS8 */
 /* PSK31 */
 /* Olivia */
+#include "dialog_olivia.h"
 /* WeFax */
 /* SSTV */
 #include "display.h"
@@ -215,6 +216,11 @@ void main_screen_start_app(press_action_t app_action) {
         /* JS8 */
         /* PSK31 */
         /* Olivia */
+        case ACTION_APP_OLIVIA:
+            dialog_construct(dialog_olivia, obj);
+            voice_say_text_fmt("Olivia window");
+            break;
+
         /* WeFax */
         /* SSTV */
         default:
@@ -288,6 +294,7 @@ void main_screen_action(press_action_t action) {
         /* JS8 */
         /* PSK31 */
         /* Olivia */
+        case ACTION_APP_OLIVIA:
         /* WeFax */
         /* SSTV */
             main_screen_start_app(action);

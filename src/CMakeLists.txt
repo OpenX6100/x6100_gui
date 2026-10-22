@@ -21,7 +21,7 @@ target_sources(${PROJECT_NAME} PUBLIC
     waterfall.c rotary.cpp keyboard.c kbd_rollover.c encoder.c
     events.c msg.c msg_tiny.c keypad.c
     hkey.c clock.c
-    meter.c band_info.cpp tx_info.c tx_level.c tx_player.c
+    meter.c band_info.cpp tx_info.c
     audio.c mfk.cpp cw.cpp panel.cpp
     rtty.c screenshot.c display.cpp gps.c
     ui_list.c app_info.c
@@ -43,6 +43,9 @@ target_sources(${PROJECT_NAME} PUBLIC
     # JS8
     # PSK31
     # Olivia
+    dialog_olivia.c olivia.c olivia_mod.c olivia_demod.c olivia_rx.c
+    olivia_resamp.c olivia_tx.c olivia_app.c olivia_macro.c
+    psk_spec.c digi_qso.c digi_menu.c digi_next.c
     # WeFax
     # SSTV
 )

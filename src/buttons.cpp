@@ -332,6 +332,7 @@ static button_data_t  btn_bt     = make_app_btn("Bluetooth", ACTION_APP_BT);
 /* JS8 */
 /* PSK31 */
 /* Olivia */
+static button_data_t  btn_olivia = make_app_btn("Olivia", ACTION_APP_OLIVIA);
 /* WeFax */
 /* SSTV */
 
@@ -483,7 +484,7 @@ static buttons_page_t page_app_3 = {{
     /* PSK31 */
     NULL,
     /* Olivia */
-    NULL,
+    &btn_olivia,
     /* WeFax */
     NULL,
     /* SSTV */
