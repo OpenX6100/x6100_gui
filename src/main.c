@@ -44,6 +44,7 @@
 #include "scheduler.h"
 #include "wifi.h"
 #include "usb_devices.h"
+#include "sstv_resources.h"
 
 rotary_t  *vol;
 encoder_t *mfk;
@@ -147,6 +148,7 @@ int main(void) {
     vol->state = VOL_STATE_EDIT;
 
     cfg_init();
+    sstv_resources_init();
     audio_set_play_vol(param_f_get(cfg.audio.play_gain_db()));
     audio_set_rec_vol(param_f_get(cfg.audio.rec_gain_db()));
     mfk_init();

@@ -46,6 +46,7 @@ target_sources(${PROJECT_NAME} PUBLIC
     # WeFax
     dialog_wefax.c wefax/decoder.c wefax/stations.c
     # SSTV
+    dialog_sstv.c sstv_resources.c sstv/decoder.c sstv/encoder.c sstv/autodetect.c sstv/vis.c sstv/linesync.c sstv/preview.c sstv/sstv_denoise.c sstv/sstv_dnn.c sstv/syncgrid.c
 )
 
 add_subdirectory(fonts)

@@ -335,6 +335,7 @@ static button_data_t  btn_bt     = make_app_btn("Bluetooth", ACTION_APP_BT);
 /* WeFax */
 static button_data_t  btn_wefax  = make_app_btn("WeFax", ACTION_APP_WEFAX);
 /* SSTV */
+static button_data_t  btn_sstv   = make_app_btn("SSTV", ACTION_APP_SSTV);
 
 /* RTTY */
 static button_data_t btn_rtty_p1 = {
@@ -486,7 +487,7 @@ static buttons_page_t page_app_4 = {{
     /* WeFax */
     &btn_wefax,
     /* SSTV */
-    NULL,
+    &btn_sstv,
 }};
 
 /* RTTY */

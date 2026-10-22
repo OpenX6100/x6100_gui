@@ -48,6 +48,7 @@ typedef enum {
     /* WeFax */
     ACTION_APP_WEFAX = 109,
     /* SSTV */
+    ACTION_APP_SSTV = 111,
     /* JS8 */
     /* WSPR */
     /* PSK31 */
