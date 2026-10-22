@@ -49,6 +49,7 @@ typedef enum {
     /* SSTV */
     /* JS8 */
     /* WSPR */
+    ACTION_APP_WSPR = 113,
     /* PSK31 */
     /* Olivia */
     ACTION_APP_BT = 116,

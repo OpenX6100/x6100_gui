@@ -21,7 +21,7 @@ target_sources(${PROJECT_NAME} PUBLIC
     waterfall.c rotary.cpp keyboard.c kbd_rollover.c encoder.c
     events.c msg.c msg_tiny.c keypad.c
     hkey.c clock.c
-    meter.c band_info.cpp tx_info.c tx_level.c tx_player.c
+    meter.c band_info.cpp tx_info.c
     audio.c mfk.cpp cw.cpp panel.cpp
     rtty.c screenshot.c display.cpp gps.c
     ui_list.c app_info.c
@@ -40,6 +40,8 @@ target_sources(${PROJECT_NAME} PUBLIC
     dialog_bt.c bt_ctl.c bt_dev.c bt_spp.c
     # The apps on their way in: each one's sources below its name
     # WSPR
+    dialog_wspr.c wspr_app.c wspr_worker.c wspr_demod.c wspr_fano.c
+    wspr_encode.c wspr_mod.c wspr_spec.c
     # JS8
     # PSK31
     # Olivia
