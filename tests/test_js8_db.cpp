@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (c) 2026 Randal Warren VE7NHW
+// Part of OpenX6100 (github.com/OpenX6100)
 //
 // params.db across the move to R1CBU 1.0 (src/cfg/js8_db.c): every kind of
 // card gets 1.0's settings conversion exactly once, and JS8's frequency lists.

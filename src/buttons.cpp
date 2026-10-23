@@ -330,6 +330,7 @@ static button_data_t  btn_bt     = make_app_btn("Bluetooth", ACTION_APP_BT);
  * other's lines. Their places on the pages are fixed below. */
 /* WSPR */
 /* JS8 */
+static button_data_t  btn_js8    = make_app_btn("JS8", ACTION_APP_JS8);
 /* PSK31 */
 /* Olivia */
 /* WeFax */
@@ -476,7 +477,7 @@ static buttons_page_t page_app_3 = {{
     /* WSPR */
     NULL,
     /* JS8 */
-    NULL,
+    &btn_js8,
 }};
 [[maybe_unused]] static buttons_page_t page_app_4 = {{
     &btn_app_p4,

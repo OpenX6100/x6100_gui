@@ -48,6 +48,9 @@ typedef enum {
     /* WeFax */
     /* SSTV */
     /* JS8 */
+    /* JS8 opens from the APP menu only, not as a long-press action (#283),
+     * so its number is never stored. */
+    ACTION_APP_JS8 = 112,
     /* WSPR */
     /* PSK31 */
     /* Olivia */

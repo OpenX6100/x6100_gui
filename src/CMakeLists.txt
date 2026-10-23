@@ -41,6 +41,7 @@ target_sources(${PROJECT_NAME} PUBLIC
     # The apps on their way in: each one's sources below its name
     # WSPR
     # JS8
+    dialog_js8.c js8_wf.c js8_clock.c
     # PSK31
     # Olivia
     # WeFax
@@ -83,6 +84,7 @@ liquid
 RHVoice RHVoice_core RHVoice_audio
 ft8
 cw_decoder
+JS8
 )
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")

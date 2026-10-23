@@ -1,5 +1,8 @@
 /*
  *  SPDX-License-Identifier: GPL-3.0-or-later
+ *  Copyright (c) 2026 Randal Warren VE7NHW
+ *  Copyright (c) the JS8Call-improved authors (ported from their Android app)
+ *  Part of OpenX6100 (github.com/OpenX6100)
  *
  *  Tests for src/js8 (JS8 receive).
  */

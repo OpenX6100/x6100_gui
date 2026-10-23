@@ -1,5 +1,7 @@
 /*
  *  SPDX-License-Identifier: GPL-3.0-or-later
+ *  Copyright (c) 2026 Randal Warren VE7NHW
+ *  Part of OpenX6100 (github.com/OpenX6100)
  *
  *  Xiegu X6100 LVGL GUI - JS8 decoder setup: FFTW wisdom
  */
