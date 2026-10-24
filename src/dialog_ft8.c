@@ -10,6 +10,7 @@
 
 #include "app_ports.h"
 #include "ft8/worker.h"
+#include "ft8/msg_encode.h"
 #include "ft8/qso.h"
 #include "ft8/utils.h"
 #include "lvgl/lvgl.h"
@@ -231,13 +232,16 @@ static const char *udp_mode_str(void) {
 /* The QSO partner is not exposed by the qso processor, but the pending TX
  * message always starts with it ("DXCALL MYCALL ..."), except for CQ. */
 static void udp_current_dx_call(char *out, size_t out_sz) {
-    size_t i = 0;
+    size_t      i = 0;
+    const char *src = tx_msg.msg;
 
     out[0] = '\0';
-    if (tx_msg.msg[0] == '\0') return;
+    if (src[0] == '\0') return;
 
-    while (tx_msg.msg[i] && tx_msg.msg[i] != ' ' && i < out_sz - 1) {
-        out[i] = tx_msg.msg[i];
+    /* "<W1ABC> KF0QGT/6Y RR73" (a non-standard own call): W1ABC */
+    if (src[0] == '<') src++;
+    while (src[i] && src[i] != ' ' && src[i] != '>' && i < out_sz - 1) {
+        out[i] = src[i];
         i++;
     }
     out[i] = '\0';
@@ -336,6 +340,8 @@ static void worker_init() {
     qso_processor = ftx_qso_processor_init(PARAM_T_GET(cfg.callsign()), PARAM_T_GET(cfg.qth()),
                                            save_qso,
                                            param_i_get(cfg.ft8.max_repeats()));
+    ftx_qso_processor_set_local_standard(qso_processor, ftx_call_is_standard(PARAM_T_GET(cfg.callsign())));
+    ftx_worker_set_own_call(PARAM_T_GET(cfg.callsign()));
 
     audio_worker_cb_t cb = {
         .on_message  = on_message_cb,
@@ -767,6 +773,10 @@ static void tx_cq_en_dis_cb(struct button_data_t *btn_data) {
             msg_schedule_text_fmt("Call sign required");
             return;
         }
+        if (!ftx_call_is_usable(PARAM_T_GET(cfg.callsign()))) {
+            msg_schedule_text_fmt("Callsign %s is too long for FT8/FT4", PARAM_T_GET(cfg.callsign()));
+            return;
+        }
         subject_i_set(cq_enabled, true);
         subject_i_set(tx_enabled, true);
 
@@ -804,6 +814,10 @@ static void tx_call_en_dis_cb(struct button_data_t *btn_data) {
     if (!subject_i_get(tx_enabled)) {
         if (strlen(PARAM_T_GET(cfg.callsign())) == 0) {
             msg_schedule_text_fmt("Call sign required");
+            return;
+        }
+        if (!ftx_call_is_usable(PARAM_T_GET(cfg.callsign()))) {
+            msg_schedule_text_fmt("Callsign %s is too long for FT8/FT4", PARAM_T_GET(cfg.callsign()));
             return;
         }
         subject_i_set(tx_enabled, true);

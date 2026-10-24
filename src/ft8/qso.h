@@ -54,7 +54,7 @@ class Candidate {
     bool can_be_saved();
     void save_qso(save_qso_cb_t save_qso_cb);
 
-    std::string get_tx_text(std::string local_callsign, std::string local_qth);
+    std::string get_tx_text(std::string local_callsign, std::string local_qth, bool local_std = true);
 
   private:
     std::string    _remote_callsign;
@@ -86,6 +86,9 @@ class FTxQsoProcessor {
     void process_cq(ftx_msg_meta_t *meta, std::vector<std::string> &tokens, const int snr);
 
     void set_auto(bool);
+    /// @brief Own call is standard (default): false for a call like KF0QGT/6Y,
+    /// which answers in the type 4 form, "<W1ABC> KF0QGT/6Y RR73"
+    void set_local_standard(bool);
     void start_new_slot();
     void reset();
     void start_qso(ftx_msg_meta_t *meta, ftx_tx_msg_t *tx_msg);
@@ -97,6 +100,7 @@ class FTxQsoProcessor {
   private:
     bool          _auto    = true;
     bool          _have_tx = false;
+    bool          _local_std = true;
     std::string   _local_callsign;
     std::string   _local_qth;
     save_qso_cb_t _save_qso_cb;
@@ -122,6 +126,7 @@ extern void             ftx_qso_processor_delete(FTxQsoProcessor *p);
 extern void ftx_qso_processor_add_rx_text(FTxQsoProcessor *p, const char *text, const int snr, ftx_msg_meta_t *meta,
                                           ftx_tx_msg_t *tx_msg);
 extern void ftx_qso_processor_set_auto(FTxQsoProcessor *p, bool);
+extern void ftx_qso_processor_set_local_standard(FTxQsoProcessor *p, bool);
 extern void ftx_qso_processor_start_new_slot(FTxQsoProcessor *p);
 extern void ftx_qso_processor_reset(FTxQsoProcessor *p);
 extern void ftx_qso_processor_start_qso(FTxQsoProcessor *p, ftx_msg_meta_t *meta, ftx_tx_msg_t *tx_msg);

@@ -3,7 +3,7 @@
 # (linked by consumers) and LVGL for logging only.
 add_library(ft8_core STATIC
     qso.cpp worker.c utils.c gfsk.c
-    cq_scheduler.c
+    cq_scheduler.c msg_encode.c
     audio_worker.c
 )
 
