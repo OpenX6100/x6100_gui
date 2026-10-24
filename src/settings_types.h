@@ -46,6 +46,7 @@ typedef enum {
     /* The apps on their way in, with their fixed numbers (#283): each one's
      * line below its name, so they can be merged in any order. */
     /* WeFax */
+    ACTION_APP_WEFAX = 109,
     /* SSTV */
     /* JS8 */
     /* WSPR */

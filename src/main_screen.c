@@ -39,6 +39,9 @@
 #include "dialog_msg_voice.h"
 #include "dialog_swrscan.h"
 #include "dialog_ft8.h"
+#include "dialog_channels.h"
+#include "broadcast_db.h"
+#include "broadcast_overlay.h"
 #include "dialog_gps.h"
 #include "dialog_qth.h"
 #include "dialog_recorder.h"
@@ -51,6 +54,7 @@
 /* PSK31 */
 /* Olivia */
 /* WeFax */
+#include "dialog_wefax.h"
 /* SSTV */
 #include "display.h"
 #include "buttons.h"
@@ -216,6 +220,11 @@ void main_screen_start_app(press_action_t app_action) {
         /* PSK31 */
         /* Olivia */
         /* WeFax */
+        case ACTION_APP_WEFAX:
+            dialog_construct(dialog_wefax, obj);
+            voice_say_text_fmt("WeFax window");
+            break;
+
         /* SSTV */
         default:
             break;
@@ -289,6 +298,7 @@ void main_screen_action(press_action_t action) {
         /* PSK31 */
         /* Olivia */
         /* WeFax */
+        case ACTION_APP_WEFAX:
         /* SSTV */
             main_screen_start_app(action);
             break;
@@ -820,7 +830,13 @@ static void main_screen_hkey_cb(lv_event_t * e) {
         case HKEY_UP:
             if (hkey->state == HKEY_RELEASE) {
                 if (!lm_get_freq()) {
-                    freq_shift(+1, 0);
+                    if (dialog_wefax_mic_step(-1)) {
+                        /* WeFax open: previous station in its list */
+                    } else if (dialog_channels_recall_relative(-1)) {
+                        msg_update_text_fmt("%s", dialog_channels_last_recalled_name());
+                    } else if (dialog_channels_empty()) {
+                        freq_shift(+1, 0);
+                    }
                 }
             } else if (hkey->state == HKEY_LONG) {
                 if (!lm_get_band()) {
@@ -833,13 +849,45 @@ static void main_screen_hkey_cb(lv_event_t * e) {
         case HKEY_DOWN:
             if (hkey->state == HKEY_RELEASE) {
                 if (!lm_get_freq()) {
-                    freq_shift(-1, 0);
+                    if (dialog_wefax_mic_step(+1)) {
+                        /* WeFax open: next station in its list */
+                    } else if (dialog_channels_recall_relative(+1)) {
+                        msg_update_text_fmt("%s", dialog_channels_last_recalled_name());
+                    } else if (dialog_channels_empty()) {
+                        freq_shift(-1, 0);
+                    }
                 }
             } else if (hkey->state == HKEY_LONG) {
                 if (!lm_get_band()) {
                     cfg_band_load_next(false);
                 }
                 dialog_send(EVENT_BAND_DOWN, NULL);
+            }
+            break;
+
+        case HKEY_VM:
+            /* WeFax open: its stations list; otherwise open/close CHANNELS,
+             * also on top of another dialog (an overlay, see
+             * dialog_channels.c). CHANNELS already open over WeFax is still
+             * closed by V/M. As in Hany's 1KO125 firmware (#311). */
+            if (hkey->state == HKEY_RELEASE) {
+                if (dialog_channels_is_open() || !dialog_wefax_vm_toggle()) {
+                    dialog_channels_toggle(obj, dialog_running);
+                }
+            }
+            break;
+
+        case HKEY_GENE:
+            /* Broadcast Info: always available, also over app dialogs. */
+            if (hkey->state == HKEY_RELEASE) {
+                broadcast_overlay_show();
+            }
+            break;
+
+        case HKEY_NW:
+            /* Save as channel: always available, also over app dialogs. */
+            if (hkey->state == HKEY_RELEASE) {
+                broadcast_overlay_save_channel();
             }
             break;
 
