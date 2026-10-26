@@ -134,6 +134,10 @@ static void slant_auto_cb(button_data_t *data);
 static const char *denoise_label_getter(void);
 static void denoise_cb(button_data_t *data);
 static bool denoise_on = true;  /* Denoise ON/OFF, saved in slant.txt */
+static bool postproc_on = false; /* 1KO125: Denoise "Post Proc.", dialog_wefax_pp.inc */
+static void pp_queue(uint8_t *image, unsigned int rows, uint32_t row_base, int align, int tilt,
+                     const char *path);
+static void pp_poll(void);
 static void slant_load(void);
 static void slant_flush(void);
 static void slant_poll(void);
@@ -270,6 +274,7 @@ typedef struct {
     uint32_t row_base;   /* absolute number of image row 0 (Tilt anchor) */
     int align;
     int tilt;
+    bool postproc;       /* 1KO125: clean it after the save (dialog_wefax_pp.inc) */
     char path[128];
 } wefax_save_job_t;
 
@@ -1417,6 +1422,12 @@ static void *save_fax_worker(void *arg)
 
     success = true;
 
+    /* 1KO125: Post Proc. - the snapshot goes on to the postprocessing */
+    if (job->postproc) {
+        pp_queue(job->image, job->rows, job->row_base, job->align, job->tilt, job->path);
+        job->image = NULL;
+    }
+
  done:
     if (out_row) {
         free(out_row);
@@ -1488,6 +1499,7 @@ static bool save_fax_png_async(void)
     job->row_base = fax_rows_total - fax_buffer_count;
     job->align = wefax_align;
     job->tilt = wefax_tilt;
+    job->postproc = postproc_on;
 
     const size_t image_size =
         (size_t)job->rows * (size_t)WEFAX_WIDTH;
@@ -3167,6 +3179,7 @@ static void update_preview_cb(
 
     /* Consume asynchronous PNG completion in LVGL context. */
     check_async_save_completion();
+    pp_poll();
 
     /* Auto Slant: measured slant, delayed save of the Tilt per station */
     slant_poll();
@@ -3516,3 +3529,4 @@ static void update_preview_cb(
 /* Stations list and schedules ("Freq.", FAX 1:4) */
 #include "dialog_wefax_freq.inc"
 #include "dialog_wefax_slant.inc"
+#include "dialog_wefax_pp.inc"

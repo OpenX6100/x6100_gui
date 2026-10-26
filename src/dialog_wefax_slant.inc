@@ -89,6 +89,7 @@ static void slant_load(void)
     slant_nst = 0;
     slant_auto = true;              /* default, the file may say otherwise */
     denoise_on = true;
+    postproc_on = false;
     slant_last_dial = 0;            /* recall the memory of the current station */
     slant_last_key[0] = '\0';
     FILE *fp = fopen(SLANT_FILE, "r");
@@ -105,7 +106,10 @@ static void slant_load(void)
             continue;
         }
         if (strncmp(line, "denoise ", 8) == 0) {
-            denoise_on = atoi(line + 8) != 0;
+            /* 0 OFF, 1 Classic (ON), 2 Post Proc. (ON + postprocessing) */
+            const int d = atoi(line + 8);
+            denoise_on = d != 0;
+            postproc_on = d == 2;
             continue;
         }
         char *bar = strrchr(line, '|');
@@ -133,7 +137,7 @@ static void slant_save(void)
     }
     fprintf(fp, "# 1KO125 WEFAX: Auto Slant, Denoise and Tilt per station (country|place|tilt)\n");
     fprintf(fp, "auto %d\n", slant_auto ? 1 : 0);
-    fprintf(fp, "denoise %d\n", denoise_on ? 1 : 0);
+    fprintf(fp, "denoise %d\n", !denoise_on ? 0 : postproc_on ? 2 : 1);
     for (int i = 0; i < slant_nst; ++i)
         fprintf(fp, "%s|%d\n", slant_st[i].key, slant_st[i].tilt);
     fflush(fp);
@@ -326,15 +330,25 @@ static void slant_auto_cb(button_data_t *data)
 
 static const char *denoise_label_getter(void)
 {
-    return denoise_on ? "Denoise\nON" : "Denoise\nOFF";
+    return !denoise_on ? "Denoise\nOFF" : postproc_on ? "Denoise\nPost Proc." : "Denoise\nClassic";
 }
 
+/* OFF -> Classic -> Post Proc. -> OFF.  Post Proc. = Classic, and every
+ * saved fax also cleaned by the network (dialog_wefax_pp.inc). */
 static void denoise_cb(button_data_t *data)
 {
     (void)data;
-    denoise_on = !denoise_on;
+    if (!denoise_on) {
+        denoise_on = true;
+        postproc_on = false;
+    } else if (!postproc_on) {
+        postproc_on = true;
+    } else {
+        denoise_on = false;
+        postproc_on = false;
+    }
     if (decoder) wefax_decoder_set_denoise(decoder, denoise_on);
     if (btn_denoise.disp_btn) buttons_refresh(&btn_denoise);
-    msg_update_text_fmt("Denoise %s", denoise_on ? "ON" : "OFF");
+    msg_update_text_fmt("Denoise %s", !denoise_on ? "OFF" : postproc_on ? "Post Proc." : "Classic");
     slant_mark_dirty();
 }
