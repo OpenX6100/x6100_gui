@@ -272,7 +272,7 @@ static void pp_panel_create(void)
     pp_label = lv_label_create(pp_panel);
     lv_obj_set_style_text_color(pp_label, lv_color_white(), 0);
     lv_obj_set_style_text_font(pp_label, &sony_22, 0);
-    lv_label_set_long_mode(pp_label, LV_LABEL_LONG_DOT);
+    lv_label_set_long_mode(pp_label, LV_LABEL_LONG_CLIP);   /* one line, never over the bar */
     lv_obj_set_width(pp_label, PP_PANEL_W - 16);
     lv_obj_align(pp_label, LV_ALIGN_TOP_LEFT, 0, -2);
 
@@ -349,7 +349,12 @@ static void pp_poll(void)
     }
     if (busy) {
         const int v = wefax_pp_progress;
-        lv_label_set_text_fmt(pp_label, "Post Proc. %d%%  %s", v / 10, name);
+        /* wefax-YYYYMMDD-HHMMSS: only the time (UTC) of the fax */
+        const char *t = strrchr(name, '-');
+        if (t && strlen(t) == 7)
+            lv_label_set_text_fmt(pp_label, "Post Proc. %d%%  %.2s:%.2s", v / 10, t + 1, t + 3);
+        else
+            lv_label_set_text_fmt(pp_label, "Post Proc. %d%%", v / 10);
         lv_bar_set_value(pp_bar, v < 0 ? 0 : v > 1000 ? 1000 : v, LV_ANIM_OFF);
     } else {
         lv_label_set_text(pp_label, "Post Proc. saved");
