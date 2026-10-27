@@ -31,6 +31,7 @@ static lv_obj_t *fs_win = NULL;
 static lv_obj_t *fs_canvas = NULL;
 static lv_obj_t *fs_chip = NULL;
 static lv_obj_t *fs_key4 = NULL;
+static lv_obj_t *fs_help = NULL;        /* how to move: until MFK or VOL is used */
 static lv_color_t *fs_buf = NULL;
 static uint8_t *fs_row = NULL;          /* one aligned row of the fax */
 static uint8_t *fs_pp = NULL;           /* NAME_pp.png, if any */
@@ -321,6 +322,15 @@ static void fs_update_key4(void)
 
 /* ---- keys ------------------------------------------------------------------------ */
 
+/* the help goes at the first use of MFK or VOL */
+static void fs_hide_help(void)
+{
+    if (fs_help) {
+        lv_obj_del(fs_help);
+        fs_help = NULL;
+    }
+}
+
 static void fs_key_cb(lv_event_t *e)
 {
     const uint32_t key = *((uint32_t *)lv_event_get_param(e));
@@ -335,6 +345,7 @@ static void fs_key_cb(lv_event_t *e)
     case LV_KEY_ESC:            fs_close(); return;
     default:                    return;
     }
+    fs_hide_help();
     fs_render();
 }
 
@@ -342,6 +353,7 @@ static void fs_key_cb(lv_event_t *e)
 static void fs_pressed_cb(lv_event_t *e)
 {
     (void)e;
+    fs_hide_help();
     fs_zoom = (fs_zoom + 1) % fs_nzoom;
     fs_render();
     fs_show_chip();
@@ -372,6 +384,7 @@ static void fs_destroy(void)
     fs_canvas = NULL;
     fs_chip = NULL;
     fs_key4 = NULL;
+    fs_help = NULL;                     /* deleted with fs_win */
     free(fs_buf);
     fs_buf = NULL;
     free(fs_row);
@@ -451,8 +464,14 @@ static void fs_open(void)
     fs_page.items[3] = fs_pp ? &fs_btn_switch : NULL;
     buttons_load_page(&fs_page);
 
+    /* how to move, at the top, until MFK or VOL is used (the chip of
+     * the size shows from the first change on) */
+    fs_help = fs_make_chip(FS_W - 120);
+    lv_label_set_text(fs_help, "Turn MFK: scroll sideways    Turn VOL: scroll up and down\n"
+                               "Press MFK: change size");
+    lv_obj_align(fs_help, LV_ALIGN_TOP_MID, 0, 10);
+
     fs_render();
-    fs_show_chip();
 }
 
 /* F5: back to the browser as it was */
