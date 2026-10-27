@@ -444,6 +444,7 @@ static void fs_open(void)
 
     fs_chip = fs_make_chip(0);
     lv_obj_align(fs_chip, LV_ALIGN_TOP_LEFT, 8, 8);
+    lv_obj_add_flag(fs_chip, LV_OBJ_FLAG_HIDDEN);   /* until the first change */
 
     /* the two keys that work, where F4 and F5 are */
     lv_obj_t *k5 = fs_make_chip(FS_W / 5 - 12);
