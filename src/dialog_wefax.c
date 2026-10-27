@@ -94,6 +94,13 @@ static void freq_start(void);
 static void freq_stop(void);
 
 static void fax_browser_cb(button_data_t *data);
+/* 1KO125: F1/F2 of FAX 3:4 with the browser open, full-screen view
+ * (dialog_wefax_view.inc) */
+static void fax_page3_f1_cb(button_data_t *data);
+static void fax_browser_f2_cb(button_data_t *data);
+static void fs_close(void);
+static void fs_abort(void);
+static bool fax_browser_has_pp(const char *name);
 static void fix_align_cb(button_data_t *data);
 static void fix_tilt_cb(button_data_t *data);
 static void save_fax_cb(button_data_t *data);
@@ -428,13 +435,13 @@ static button_data_t btn_save = {
 static button_data_t btn_fax_page_3 = {
     .type = BTN_TEXT,
     .label = "(FAX 3:4)",
-    .press = fax_page_4_cb
+    .press = fax_page3_f1_cb        /* Close Browser while the browser is open */
 };
 
 static button_data_t btn_fax_browser = {
     .type = BTN_TEXT,
     .label = "Fax\nBrowser",
-    .press = fax_browser_cb
+    .press = fax_browser_f2_cb      /* Full Screen while the browser is open */
 };
 
 static button_data_t btn_fix_align = {
@@ -774,6 +781,7 @@ static void construct_cb(lv_obj_t *parent)
 static void destruct_cb(void)
 {
     app_radio_end();        /* 1KO125: mode, zoom and DSP of before */
+    fs_abort();             /* 1KO125: full-screen view, no page to restore */
     pp_close();             /* 1KO125: closing WEFAX stops the postprocessing */
     spectrum_clear_markers();
     app_info_abort();
@@ -1912,6 +1920,12 @@ static void fax_browser_refresh(void)
             continue;
         }
 
+        /* 1KO125: NAME_pp.png (Post Proc.) belongs to NAME.png: shown in
+         * its row and in the full-screen view, not as a fax of its own */
+        if (len > 7 && strcmp(name + len - 7, "_pp.png") == 0) {
+            continue;
+        }
+
         if (!fax_browser_ensure_file_capacity()) {
             break;
         }
@@ -1966,6 +1980,11 @@ static void fax_browser_set_editor_buttons(bool enabled)
     buttons_disabled(&btn_fix_align, true);
     buttons_disabled(&btn_fix_tilt, true);
     buttons_disabled(&btn_save_fax, fax_browser_file_count == 0);
+    if (fax_browser_open) {
+        /* 1KO125: F2 Full Screen needs a fax */
+        buttons_disabled(&btn_fax_browser, fax_browser_file_count == 0);
+        if (btn_fax_browser.disp_btn) buttons_refresh(&btn_fax_browser);
+    }
 
     if (btn_save_fax.disp_btn) {
         buttons_refresh(&btn_save_fax);
@@ -1992,6 +2011,9 @@ static void fax_browser_row_cb(void *user, int index, ui_list_row_t *row)
         snprintf(row->cell[1], UI_LIST_CELL_LEN, "%s", name);
         row->cell[2][0] = '\0';
     }
+
+    /* 1KO125: a cleaned version exists */
+    snprintf(row->cell[3], UI_LIST_CELL_LEN, "%s", fax_browser_has_pp(name) ? "Post Proc." : "");
 }
 
 
@@ -2045,6 +2067,15 @@ static void fax_browser_delete_selected(void)
     }
 
     printf("WEFAX BROWSER: deleted %s\n", path);
+
+    /* 1KO125: and its cleaned version, if any */
+    {
+        char *dot = strrchr(path, '.');
+        if (dot && (size_t)(dot - path) + 8 < sizeof(path)) {
+            strcpy(dot, "_pp.png");
+            if (unlink(path) == 0) printf("WEFAX BROWSER: deleted %s\n", path);
+        }
+    }
 
     /* The list keeps the same row number: the next fax moves up into it,
      * or the new last one is selected if the last fax was deleted. */
@@ -2359,11 +2390,12 @@ static void fax_browser_build(void)
     ui_list_cfg_t cfg = {
         .width = PREVIEW_WIDTH,
         .height = 270,
-        .col_count = 3,
+        .col_count = 4,
         .cols = {
-            { .x = 12,  .w = 44,  .align = UI_LIST_ALIGN_RIGHT, .muted = true },
-            { .x = 76,  .w = 190, .align = UI_LIST_ALIGN_LEFT },
-            { .x = 290, .w = 220, .align = UI_LIST_ALIGN_LEFT },
+            { .x = 12,  .w = 50,  .align = UI_LIST_ALIGN_RIGHT, .muted = true },
+            { .x = 84,  .w = 200, .align = UI_LIST_ALIGN_LEFT },
+            { .x = 300, .w = 170, .align = UI_LIST_ALIGN_LEFT },
+            { .x = 490, .w = 230, .align = UI_LIST_ALIGN_LEFT, .muted = true },
         },
         .row_cb = fax_browser_row_cb,
         .activate_cb = fax_browser_activate_cb,
@@ -2386,7 +2418,13 @@ static void fax_browser_build(void)
 
     fax_browser_open = true;
     fax_browser_set_editor_buttons(false);
-    btn_fax_browser.label = "Close\nBrowser";
+    /* 1KO125: F1 Close Browser, F2 Full Screen */
+    btn_fax_page_3.label = "Close\nBrowser";
+    btn_fax_browser.label = "Full\nScreen";
+    buttons_disabled(&btn_fax_browser, fax_browser_file_count == 0);
+    if (btn_fax_page_3.disp_btn) {
+        buttons_refresh(&btn_fax_page_3);
+    }
     if (btn_fax_browser.disp_btn) {
         buttons_refresh(&btn_fax_browser);
     }
@@ -2395,6 +2433,8 @@ static void fax_browser_build(void)
 
 static void fax_browser_close(void)
 {
+    fs_close();             /* 1KO125: the full-screen view first */
+
     if (fax_browser_table) {
         lv_group_remove_obj(fax_browser_table);
         lv_obj_del(fax_browser_table);
@@ -2414,6 +2454,14 @@ static void fax_browser_close(void)
     }
 
     btn_fax_browser.label = "Fax\nBrowser";
+    buttons_disabled(&btn_fax_browser, false);
+    btn_fax_page_3.label = "(FAX 3:4)";
+    if (btn_fax_page_3.disp_btn) {
+        buttons_refresh(&btn_fax_page_3);
+    }
+    if (btn_fax_browser.disp_btn) {
+        buttons_refresh(&btn_fax_browser);
+    }
 
     /*
      * If the browser temporarily promoted SMALL to BIG, restore both the
@@ -3534,3 +3582,4 @@ static void update_preview_cb(
 #include "dialog_wefax_freq.inc"
 #include "dialog_wefax_slant.inc"
 #include "dialog_wefax_pp.inc"
+#include "dialog_wefax_view.inc"
