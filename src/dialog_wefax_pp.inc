@@ -119,7 +119,7 @@ static int pp_do(const pp_job_t *j)
     pp_aligned(j, img);
 
     const double macs = wefax_pp_macs(pp_model, WEFAX_WIDTH, (int)j->rows, 0);
-    printf("WEFAX PP: %s, %u rows, base %d, %.1f G multiply-adds, %d threads, NEON %s\n", j->path, j->rows,
+    fprintf(stderr, "WEFAX PP: %s, %u rows, base %d, %.1f G multiply-adds, %d threads, NEON %s\n", j->path, j->rows,
            wefax_pp_base(pp_model), macs / 1e9, WEFAX_PP_THREADS, wefax_pp_has_neon() ? "yes" : "no");
     struct timespec t0, t1;
     clock_gettime(CLOCK_MONOTONIC, &t0);
@@ -129,12 +129,12 @@ static int pp_do(const pp_job_t *j)
     struct rusage ru;
     getrusage(RUSAGE_SELF, &ru);
     if (rc) {
-        printf("WEFAX PP: %s after %.1f s (rc %d), peak memory of the program %ld MB\n",
+        fprintf(stderr, "WEFAX PP: %s after %.1f s (rc %d), peak memory of the program %ld MB\n",
                rc == -3 ? "stopped" : "failed", secs, rc, ru.ru_maxrss / 1024);
         free(img);
         return rc == -3 ? 0 : -1;
     }
-    printf("WEFAX PP: done in %.1f s (%.2f G multiply-adds/s), peak memory of the program %ld MB\n", secs,
+    fprintf(stderr, "WEFAX PP: done in %.1f s (%.2f G multiply-adds/s), peak memory of the program %ld MB\n", secs,
            macs / 1e9 / secs, ru.ru_maxrss / 1024);
 
     /* NAME.png -> NAME_pp.png */
@@ -145,7 +145,7 @@ static int pp_do(const pp_job_t *j)
     strncat(out, "_pp.png", sizeof(out) - strlen(out) - 1);
     const bool ok = pp_write_png(out, img, j->rows);
     free(img);
-    printf("WEFAX PP: %s %s\n", ok ? "saved" : "save failed", out);
+    fprintf(stderr, "WEFAX PP: %s %s\n", ok ? "saved" : "save failed", out);
     if (ok) {
         const char *base = strrchr(out, '/');
         pthread_mutex_lock(&pp_mutex);
@@ -221,7 +221,7 @@ static void pp_queue(uint8_t *image, unsigned int rows, uint32_t row_base, int a
             pp_job_free(pp_pending);
             pp_pending = NULL;
             pthread_mutex_unlock(&pp_mutex);
-            printf("WEFAX PP: cannot start the worker\n");
+            fprintf(stderr, "WEFAX PP: cannot start the worker\n");
         }
     }
 }
