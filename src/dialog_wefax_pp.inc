@@ -8,7 +8,7 @@
  * 1KO125 WEFAX postprocessing (included by dialog_wefax.c).
  *
  * With Denoise set to "Post Proc." every saved fax is also cleaned by the
- * WEFAX denoiser network (wefax/wefax_pp.c) and saved next to it as
+ * WEFAX post-processing network (wefax/wefax_pp.c) and saved next to it as
  * NAME_pp.png; the fax as received is always kept.
  *
  * The work runs in a worker thread of its own, at low priority (nice), so

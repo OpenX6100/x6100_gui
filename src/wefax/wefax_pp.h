@@ -4,8 +4,8 @@
  */
 
 /*
- * WEFAX postprocessing: the received fax through the WEFAX denoiser network
- * (a small U-Net, trained by tests/wefax/ml), in plain C, no libraries.  The
+ * WEFAX postprocessing: the received fax through the WEFAX post-processing
+ * network (a small U-Net, trained by tests/wefax/ml), in plain C.  The
  * same file runs in the firmware and in the test program on the computer.
  *
  * The network: 3x3 convolutions with ReLU in blocks of two, 2x2 max pooling
