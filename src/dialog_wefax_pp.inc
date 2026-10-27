@@ -13,9 +13,12 @@
  *
  * The work runs in a worker thread of its own, at low priority (nice), so
  * that the reception and the screen go on; a new fax saved meanwhile stops
- * the one in course (the new one is cleaned instead).  The model is read
- * once, when first needed, from WEFAX_PP_MODEL.  Time, multiply-adds and
- * memory go to the log.
+ * the one in course (the new one is cleaned instead), and closing WEFAX
+ * stops it.  While it runs a small panel at the top left shows the fax and
+ * a progress bar, over the spectrum (View Size Small) or over the fax (Big,
+ * Full); it is hidden under the Fax Browser and the station list.  The
+ * model is read once, when first needed, from WEFAX_PP_MODEL.  Time,
+ * multiply-adds and memory go to the log.
  */
 
 #include "wefax/wefax_pp.h"
@@ -43,7 +46,14 @@ static int  pp_result = 0;            /* 1 saved, -1 failed, -2 no model; read b
 static char pp_result_name[64];
 static wefax_pp_t *pp_model = NULL;
 static bool pp_model_tried = false;
-static int  pp_shown = -1;            /* progress shown, in steps of 10 % */
+static bool pp_enabled = false;       /* WEFAX open: new jobs accepted */
+static char pp_cur_name[64];          /* the fax being cleaned, for the panel */
+
+/* the progress panel (LVGL thread only) */
+static lv_obj_t *pp_panel = NULL;
+static lv_obj_t *pp_label = NULL;
+static lv_obj_t *pp_bar = NULL;
+static uint32_t  pp_done_ms = 0;      /* "saved" shown until then, 0 = no */
 
 static void pp_job_free(pp_job_t *j)
 {
@@ -174,6 +184,12 @@ static void *pp_worker(void *arg)
         wefax_pp_cancel = 0;
         wefax_pp_progress = 0;
         pp_busy = true;
+        {
+            const char *b = strrchr(j->path, '/');
+            snprintf(pp_cur_name, sizeof(pp_cur_name), "%s", b ? b + 1 : j->path);
+            char *dot = strrchr(pp_cur_name, '.');
+            if (dot) *dot = '\0';
+        }
         pthread_mutex_unlock(&pp_mutex);
 
         const int r = pp_do(j);
@@ -204,6 +220,11 @@ static void pp_queue(uint8_t *image, unsigned int rows, uint32_t row_base, int a
     snprintf(j->path, sizeof(j->path), "%s", path);
 
     pthread_mutex_lock(&pp_mutex);
+    if (!pp_enabled) {                  /* WEFAX closed meanwhile */
+        pthread_mutex_unlock(&pp_mutex);
+        pp_job_free(j);
+        return;
+    }
     pp_job_free(pp_pending);
     pp_pending = j;
     if (pp_busy) wefax_pp_cancel = 1;
@@ -226,27 +247,117 @@ static void pp_queue(uint8_t *image, unsigned int rows, uint32_t row_base, int a
     }
 }
 
+/* ---- the progress panel (LVGL thread) ------------------------------------------- */
+
+#define PP_PANEL_W     260
+#define PP_PANEL_H      58
+#define PP_DONE_MS    2500
+
+static void pp_panel_create(void)
+{
+    if (pp_panel || !dialog.obj) return;
+    pp_panel = lv_obj_create(lv_obj_get_parent(dialog.obj));
+    lv_obj_remove_style_all(pp_panel);
+    lv_obj_set_size(pp_panel, PP_PANEL_W, PP_PANEL_H);
+    lv_obj_set_style_bg_color(pp_panel, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(pp_panel, LV_OPA_80, 0);
+    lv_obj_set_style_radius(pp_panel, 8, 0);
+    lv_obj_set_style_border_color(pp_panel, lv_color_white(), 0);
+    lv_obj_set_style_border_opa(pp_panel, LV_OPA_40, 0);
+    lv_obj_set_style_border_width(pp_panel, 1, 0);
+    lv_obj_set_style_pad_all(pp_panel, 8, 0);
+    lv_obj_clear_flag(pp_panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(pp_panel, LV_OBJ_FLAG_CLICKABLE);
+
+    pp_label = lv_label_create(pp_panel);
+    lv_obj_set_style_text_color(pp_label, lv_color_white(), 0);
+    lv_obj_set_style_text_font(pp_label, &sony_22, 0);
+    lv_label_set_long_mode(pp_label, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(pp_label, PP_PANEL_W - 16);
+    lv_obj_align(pp_label, LV_ALIGN_TOP_LEFT, 0, -2);
+
+    pp_bar = lv_bar_create(pp_panel);
+    lv_obj_set_size(pp_bar, PP_PANEL_W - 16, 12);
+    lv_obj_align(pp_bar, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+    lv_bar_set_range(pp_bar, 0, 1000);
+    lv_bar_set_value(pp_bar, 0, LV_ANIM_OFF);
+
+    lv_obj_add_flag(pp_panel, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void pp_panel_delete(void)
+{
+    if (pp_panel) lv_obj_del(pp_panel);
+    pp_panel = NULL;
+    pp_label = NULL;
+    pp_bar = NULL;
+    pp_done_ms = 0;
+}
+
+/* WEFAX opens: new jobs accepted */
+static void pp_open(void)
+{
+    pthread_mutex_lock(&pp_mutex);
+    pp_enabled = true;
+    pp_result = 0;
+    pthread_mutex_unlock(&pp_mutex);
+}
+
+/* WEFAX closes: the job in course is stopped, the next one dropped (the
+ * worker ends by itself); the panel goes */
+static void pp_close(void)
+{
+    pthread_mutex_lock(&pp_mutex);
+    pp_enabled = false;
+    pp_job_free(pp_pending);
+    pp_pending = NULL;
+    if (pp_busy) wefax_pp_cancel = 1;
+    pp_result = 0;
+    pthread_mutex_unlock(&pp_mutex);
+    pp_panel_delete();
+}
+
 /* LVGL thread (update_preview_cb): progress and result on the screen */
 static void pp_poll(void)
 {
     pthread_mutex_lock(&pp_mutex);
     const bool busy = pp_busy;
     const int result = pp_result;
-    char name[sizeof(pp_result_name)];
-    snprintf(name, sizeof(name), "%s", pp_result_name);
+    char name[sizeof(pp_cur_name)];
+    snprintf(name, sizeof(name), "%s", pp_cur_name);
     pp_result = 0;
     pthread_mutex_unlock(&pp_mutex);
 
-    if (busy) {
-        const int step = wefax_pp_progress / 100;
-        if (step != pp_shown) {
-            pp_shown = step;
-            msg_update_text_fmt("Post Proc. %d%%", step * 10);
-        }
-    } else {
-        pp_shown = -1;
-    }
-    if (result == 1) msg_schedule_text_fmt("Post Proc. saved\n%s", name);
+    const uint32_t now = lv_tick_get();
+    if (result == 1) pp_done_ms = now + PP_DONE_MS;
     else if (result == -1) msg_schedule_text_fmt("Post Proc. failed");
     else if (result == -2) msg_schedule_text_fmt("Post Proc.: no model\n" WEFAX_PP_MODEL);
+
+    const bool done = pp_done_ms && (int32_t)(pp_done_ms - now) > 0;
+    if (!done) pp_done_ms = 0;
+    if (!busy && !done) {
+        if (pp_panel) lv_obj_add_flag(pp_panel, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+
+    pp_panel_create();
+    if (!pp_panel) return;
+    /* under the Fax Browser and the station list */
+    if (fax_browser_open || freq_win) {
+        lv_obj_add_flag(pp_panel, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    if (busy) {
+        const int v = wefax_pp_progress;
+        lv_label_set_text_fmt(pp_label, "Post Proc. %d%%  %s", v / 10, name);
+        lv_bar_set_value(pp_bar, v < 0 ? 0 : v > 1000 ? 1000 : v, LV_ANIM_OFF);
+    } else {
+        lv_label_set_text(pp_label, "Post Proc. saved");
+        lv_bar_set_value(pp_bar, 1000, LV_ANIM_OFF);
+    }
+    /* top left of the WEFAX area: over the spectrum in Small, over the fax
+     * in Big and Full */
+    lv_obj_align_to(pp_panel, dialog.obj, LV_ALIGN_TOP_LEFT, 10, 10);
+    lv_obj_move_foreground(pp_panel);
+    lv_obj_clear_flag(pp_panel, LV_OBJ_FLAG_HIDDEN);
 }

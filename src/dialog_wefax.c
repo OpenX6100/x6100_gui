@@ -138,6 +138,8 @@ static bool postproc_on = false; /* 1KO125: Denoise "Post Proc.", dialog_wefax_p
 static void pp_queue(uint8_t *image, unsigned int rows, uint32_t row_base, int align, int tilt,
                      const char *path);
 static void pp_poll(void);
+static void pp_open(void);
+static void pp_close(void);
 static void slant_load(void);
 static void slant_flush(void);
 static void slant_poll(void);
@@ -645,6 +647,7 @@ static void construct_cb(lv_obj_t *parent)
     dsp_audio_set_active(dsp_audio_sub_id, true);
 
     dialog.obj = dialog_init(parent);
+    pp_open();
     freq_start();
     rx_buttons_sync(true);
 
@@ -771,6 +774,7 @@ static void construct_cb(lv_obj_t *parent)
 static void destruct_cb(void)
 {
     app_radio_end();        /* 1KO125: mode, zoom and DSP of before */
+    pp_close();             /* 1KO125: closing WEFAX stops the postprocessing */
     spectrum_clear_markers();
     app_info_abort();
     dsp_audio_set_active(dsp_audio_sub_id, false);
