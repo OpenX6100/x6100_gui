@@ -101,6 +101,7 @@ static void fax_browser_f2_cb(button_data_t *data);
 static void fs_close(void);
 static void fs_abort(void);
 static bool fax_browser_has_pp(const char *name);
+static void fax_browser_save_pp_too(void);
 static void fix_align_cb(button_data_t *data);
 static void fix_tilt_cb(button_data_t *data);
 static void save_fax_cb(button_data_t *data);
@@ -2690,6 +2691,9 @@ static bool fax_browser_save_edited_png(void)
         fax_browser_align,
         fax_browser_tilt
     );
+
+    /* 1KO125: the same Align and Tilt on the cleaned version */
+    fax_browser_save_pp_too();
 
     return true;
 }

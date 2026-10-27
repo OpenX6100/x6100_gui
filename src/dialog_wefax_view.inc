@@ -109,6 +109,62 @@ fail:
     return img;
 }
 
+/* Save Fax in the browser: the Align and Tilt just saved in NAME.png are
+ * applied to NAME_pp.png too, so the two versions stay the same picture */
+static void fax_browser_save_pp_too(void)
+{
+    char path[300], tmp[310];
+    if (!fs_pp_path(fax_browser_image_path, path, sizeof(path)) || access(path, F_OK) != 0) return;
+    if (fax_browser_align == 0 && fax_browser_tilt == 0) return;
+    unsigned int w, h;
+    uint8_t *img = fs_load_png(path, &w, &h);
+    if (!img) return;
+    uint8_t *out = malloc((size_t)w * h);
+    if (!out) {
+        free(img);
+        return;
+    }
+    for (unsigned int y = 0; y < h; y++) {
+        /* as fax_browser_save_edited_png() */
+        const int64_t row_from_newest = (int64_t)y - (int64_t)(h - 1);
+        const int tilt_shift =
+            (int)((row_from_newest * (int64_t)fax_browser_tilt * (int64_t)PREVIEW_WIDTH) / (1000LL * (int64_t)w));
+        const uint8_t *src = img + (size_t)y * w;
+        uint8_t *dst = out + (size_t)y * w;
+        for (unsigned int x = 0; x < w; x++) {
+            int sx = (int)x - fax_browser_align - tilt_shift;
+            while (sx < 0) sx += (int)w;
+            while (sx >= (int)w) sx -= (int)w;
+            dst[x] = src[sx];
+        }
+    }
+    free(img);
+
+    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+    volatile bool ok = false;           /* set after setjmp() */
+    FILE *fp = fopen(tmp, "wb");
+    png_structp png = fp ? png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL) : NULL;
+    png_infop info = png ? png_create_info_struct(png) : NULL;
+    if (png && info && !setjmp(png_jmpbuf(png))) {
+        png_init_io(png, fp);
+        png_set_IHDR(png, info, w, h, 8, PNG_COLOR_TYPE_GRAY, PNG_INTERLACE_NONE, PNG_COMPRESSION_TYPE_DEFAULT,
+                     PNG_FILTER_TYPE_DEFAULT);
+        png_write_info(png, info);
+        for (unsigned int y = 0; y < h; y++) png_write_row(png, (png_bytep)(out + (size_t)y * w));
+        png_write_end(png, NULL);
+        ok = true;
+    }
+    if (png) png_destroy_write_struct(&png, info ? &info : NULL);
+    if (fp && fclose(fp) != 0) ok = false;
+    free(out);
+    if (ok && rename(tmp, path) == 0) {
+        printf("WEFAX BROWSER SAVE: saved %s too, align=%d tilt=%d\n", path, fax_browser_align, fax_browser_tilt);
+    } else {
+        remove(tmp);
+        printf("WEFAX BROWSER SAVE: %s not updated\n", path);
+    }
+}
+
 /* ---- drawing --------------------------------------------------------------------- */
 
 static void fs_source(const uint8_t **img, unsigned int *w, unsigned int *h)
