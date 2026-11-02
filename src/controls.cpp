@@ -14,6 +14,8 @@ extern "C" {
 #include "radio.h"
 #include "msg.h"
 #include "rtty.h"
+#include "rtty_sql.h"
+#include "digi_qso.h"
 }
 
 template <typename T>
@@ -74,6 +76,9 @@ static std::map<cfg_ctrl_t, std::string> control_name_voice{
     {CTRL_RTTY_SHIFT, "Teletype frequency shift"},
     {CTRL_RTTY_CENTER, "Teletype frequency center"},
     {CTRL_RTTY_REVERSE, "Teletype reverse switcher"},
+    {CTRL_RTTY_SQUELCH, "Teletype squelch"},
+    {CTRL_RTTY_RST_SENT, "Teletype RST sent"},
+    {CTRL_RTTY_RST_RCVD, "Teletype RST received"},
     {CTRL_IF_SHIFT, "IF shift control"},
     {CTRL_CW_PEAK_ON, "CW peak switcher"},
     {CTRL_CW_PEAK_Q, "CW peak Q"},
@@ -677,6 +682,37 @@ void controls_encoder_update(cfg_ctrl_t ctrl, int32_t diff, std::string &msg) {
 
             if (diff) {
                 voice_say_float("CW decoder SNR level", f);
+            }
+            break;
+
+        case CTRL_RTTY_SQUELCH: {
+            uint8_t sq = rtty_change_squelch(diff);
+            int lvl = (int)(rtty_get_level_db() + 0.5f);
+
+            if (sq == 0) {
+                snprintf(msg.data(), msg.capacity(), "RTTY squelch: off (level %i)", lvl);
+            } else {
+                snprintf(msg.data(), msg.capacity(), "RTTY squelch: %u  (level %i)", sq, lvl);
+            }
+            if (diff) {
+                voice_say_int("Teletype squelch", sq);
+            }
+            break;
+        }
+
+        case CTRL_RTTY_RST_SENT:
+            i = digi_qso_change_rst_sent(diff);
+            snprintf(msg.data(), msg.capacity(), "RST sent: %s", digi_qso_rst_sent());
+            if (diff) {
+                voice_say_int("Report sent", i);
+            }
+            break;
+
+        case CTRL_RTTY_RST_RCVD:
+            i = digi_qso_change_rst_rcvd(diff);
+            snprintf(msg.data(), msg.capacity(), "RST received: %s", digi_qso_rst_rcvd());
+            if (diff) {
+                voice_say_int("Report received", i);
             }
             break;
 
