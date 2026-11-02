@@ -524,3 +524,38 @@ TEST_CASE("Check reset", "[ft8_qso]") {
     REQUIRE_THAT(tx_msg.msg, Equals("EA1DX R2RFE +07"));
     qso_vec.clear();
 }
+
+TEST_CASE("Non-standard own callsign", "[ft8_qso]") {
+    FTxQsoProcessor q = FTxQsoProcessor("KF0QGT/6Y", "FK48", save_qso);
+    ftx_msg_meta_t  meta;
+    ftx_tx_msg_t    tx_msg = {.msg = "PREV MSG", .repeats = -100};
+    q.set_local_standard(false);
+
+    SECTION("answering a CQ: type 4, call in plain text, no grid") {
+        q.add_rx_text("CQ W1ABC FN42", -12, &meta, &tx_msg);
+        q.start_qso(&meta, &tx_msg);
+        REQUIRE_THAT(tx_msg.msg, Equals("<W1ABC> KF0QGT/6Y"));
+        q.add_rx_text("<KF0QGT/6Y> W1ABC -05", -12, &meta, &tx_msg);
+        REQUIRE(meta.to_me);
+        REQUIRE_THAT(tx_msg.msg, Equals("W1ABC KF0QGT/6Y R-12"));
+        q.add_rx_text("<KF0QGT/6Y> W1ABC RR73", -12, &meta, &tx_msg);
+        REQUIRE_THAT(tx_msg.msg, Equals("<W1ABC> KF0QGT/6Y 73"));
+    }
+    SECTION("after own CQ: reports as type 1, RR73 as type 4") {
+        q.add_rx_text("<KF0QGT/6Y> W1ABC FN42", -8, &meta, &tx_msg);
+        REQUIRE_THAT(tx_msg.msg, Equals("W1ABC KF0QGT/6Y -08"));
+        q.add_rx_text("<KF0QGT/6Y> W1ABC R-03", -8, &meta, &tx_msg);
+        REQUIRE_THAT(tx_msg.msg, Equals("<W1ABC> KF0QGT/6Y RR73"));
+    }
+    qso_vec.clear();
+}
+
+TEST_CASE("Standard own callsign with /P keeps the grid", "[ft8_qso]") {
+    FTxQsoProcessor q = FTxQsoProcessor("SP2KMO/P", "JO94", save_qso);
+    ftx_msg_meta_t  meta;
+    ftx_tx_msg_t    tx_msg = {.msg = "PREV MSG", .repeats = -100};
+    q.add_rx_text("CQ W1ABC FN42", -12, &meta, &tx_msg);
+    q.start_qso(&meta, &tx_msg);
+    REQUIRE_THAT(tx_msg.msg, Equals("W1ABC SP2KMO/P JO94"));
+    qso_vec.clear();
+}

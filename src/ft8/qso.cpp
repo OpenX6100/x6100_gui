@@ -10,7 +10,8 @@ extern "C" {
 }
 
 static std::string make_answer_text(ftx_msg_type_t last_rx_type, std::string remote_callsign,
-                                    std::string local_callsign, const int local_snr, std::string grid);
+                                    std::string local_callsign, const int local_snr, std::string grid,
+                                    bool local_std);
 
 std::vector<std::string> split_text(std::string text) {
     std::vector<std::string> tokens;
@@ -67,8 +68,9 @@ bool Candidate::can_be_saved() {
     return (!_remote_callsign.empty()) && (_rcvd_snr != DEFAULT_SNR) && (_sent_snr != DEFAULT_SNR) && !_saved;
 }
 
-std::string Candidate::get_tx_text(std::string local_callsign, std::string local_qth) {
-    std::string answer = make_answer_text(_last_rx_type, _remote_callsign, local_callsign, _local_snr, local_qth);
+std::string Candidate::get_tx_text(std::string local_callsign, std::string local_qth, bool local_std) {
+    std::string answer =
+        make_answer_text(_last_rx_type, _remote_callsign, local_callsign, _local_snr, local_qth, local_std);
     if ((_last_rx_type == FTX_MSG_TYPE_GRID) || (_last_rx_type == FTX_MSG_TYPE_REPORT)) {
         _sent_snr = _local_snr;
     }
@@ -167,7 +169,7 @@ void FTxQsoProcessor::process_grid(ftx_msg_meta_t *meta, std::vector<std::string
             (*candidate_to_update)->set_grid(grid);
             if ((*candidate_to_update == _cur_candidate) && _auto) {
                 tx_msg.repeats = _max_repeats;
-                strcpy(tx_msg.msg, _cur_candidate->get_tx_text(_local_callsign, _local_qth).c_str());
+                strcpy(tx_msg.msg, _cur_candidate->get_tx_text(_local_callsign, _local_qth, _local_std).c_str());
             }
         }
     }
@@ -190,7 +192,7 @@ void FTxQsoProcessor::process_report(ftx_msg_meta_t *meta, std::vector<std::stri
             (*candidate_to_update)->set_rcvd_snr(rcvd_snr);
             if ((*candidate_to_update == _cur_candidate) && _auto) {
                 tx_msg.repeats = _max_repeats;
-                strcpy(tx_msg.msg, _cur_candidate->get_tx_text(_local_callsign, _local_qth).c_str());
+                strcpy(tx_msg.msg, _cur_candidate->get_tx_text(_local_callsign, _local_qth, _local_std).c_str());
             }
         }
     }
@@ -213,7 +215,7 @@ void FTxQsoProcessor::process_r_report(ftx_msg_meta_t *meta, std::vector<std::st
             _cur_candidate->save_qso(_save_qso_cb);
             if (_auto) {
                 tx_msg.repeats = 1;
-                strcpy(tx_msg.msg, _cur_candidate->get_tx_text(_local_callsign, _local_qth).c_str());
+                strcpy(tx_msg.msg, _cur_candidate->get_tx_text(_local_callsign, _local_qth, _local_std).c_str());
             }
         }
     }
@@ -233,7 +235,7 @@ void FTxQsoProcessor::process_rr73(ftx_msg_meta_t *meta, std::vector<std::string
             _cur_candidate->save_qso(_save_qso_cb);
             if (_auto) {
                 tx_msg.repeats = 1;
-                strcpy(tx_msg.msg, _cur_candidate->get_tx_text(_local_callsign, _local_qth).c_str());
+                strcpy(tx_msg.msg, _cur_candidate->get_tx_text(_local_callsign, _local_qth, _local_std).c_str());
             }
         }
     }
@@ -254,7 +256,7 @@ void FTxQsoProcessor::process_73(ftx_msg_meta_t *meta, std::vector<std::string> 
                 _next_candidate = NULL;
                 if (_auto) {
                     tx_msg.repeats = 1;
-                    strcpy(tx_msg.msg, _cur_candidate->get_tx_text(_local_callsign, _local_qth).c_str());
+                    strcpy(tx_msg.msg, _cur_candidate->get_tx_text(_local_callsign, _local_qth, _local_std).c_str());
                 }
             } else {
                 _cur_candidate = NULL;
@@ -279,6 +281,10 @@ void FTxQsoProcessor::process_cq(ftx_msg_meta_t *meta, std::vector<std::string> 
 
 void FTxQsoProcessor::set_auto(bool val) {
     _auto = val;
+}
+
+void FTxQsoProcessor::set_local_standard(bool val) {
+    _local_std = val;
 }
 
 void FTxQsoProcessor::start_new_slot() {
@@ -328,7 +334,7 @@ void FTxQsoProcessor::start_qso(ftx_msg_meta_t *meta, ftx_tx_msg_t *tx_msg) {
     default:
         break;
     }
-    strcpy(tx_msg->msg, _cur_candidate->get_tx_text(_local_callsign, _local_qth).c_str());
+    strcpy(tx_msg->msg, _cur_candidate->get_tx_text(_local_callsign, _local_qth, _local_std).c_str());
 }
 
 bool FTxQsoProcessor::can_save_qso() {
@@ -377,12 +383,24 @@ bool FTxQsoProcessor::has_current() {
     return _cur_candidate != NULL;
 }
 
+/*
+ * With a non-standard own call (KF0QGT/6Y) the answers follow WSJT-X: the
+ * messages without a report go as type 4, "<W1ABC> KF0QGT/6Y RR73", with
+ * our call in plain text, so a station that has not heard us before learns
+ * it. The reports go as type 1 with our call as a hash, "W1ABC <KF0QGT/6Y>
+ * -05"; there is no grid.
+ */
 static std::string make_answer_text(ftx_msg_type_t last_rx_type, std::string remote_callsign,
-                                    std::string local_callsign, const int local_snr, std::string grid) {
+                                    std::string local_callsign, const int local_snr, std::string grid,
+                                    bool local_std) {
     char answer[35];
     int  len = 0;
     switch (last_rx_type) {
     case FTX_MSG_TYPE_CQ:
+        if (!local_std) {
+            len = snprintf(answer, 35, "<%s> %s", remote_callsign.c_str(), local_callsign.c_str());
+            break;
+        }
         len = snprintf(answer, 35, "%s %s %s", remote_callsign.c_str(), local_callsign.c_str(), grid.c_str());
         break;
     case FTX_MSG_TYPE_GRID:
@@ -392,10 +410,12 @@ static std::string make_answer_text(ftx_msg_type_t last_rx_type, std::string rem
         len = snprintf(answer, 35, "%s %s R%+03d", remote_callsign.c_str(), local_callsign.c_str(), local_snr);
         break;
     case FTX_MSG_TYPE_R_REPORT:
-        len = snprintf(answer, 35, "%s %s RR73", remote_callsign.c_str(), local_callsign.c_str());
+        len = snprintf(answer, 35, local_std ? "%s %s RR73" : "<%s> %s RR73", remote_callsign.c_str(),
+                       local_callsign.c_str());
         break;
     case FTX_MSG_TYPE_RR73:
-        len = snprintf(answer, 35, "%s %s 73", remote_callsign.c_str(), local_callsign.c_str());
+        len = snprintf(answer, 35, local_std ? "%s %s 73" : "<%s> %s 73", remote_callsign.c_str(),
+                       local_callsign.c_str());
         break;
     }
     return std::string(answer, len);
@@ -412,6 +432,10 @@ void ftx_qso_processor_delete(FTxQsoProcessor *p) {
 
 void ftx_qso_processor_set_auto(FTxQsoProcessor *p, bool val) {
     p->set_auto(val);
+}
+
+void ftx_qso_processor_set_local_standard(FTxQsoProcessor *p, bool val) {
+    p->set_local_standard(val);
 }
 
 void ftx_qso_processor_start_new_slot(FTxQsoProcessor *p) {

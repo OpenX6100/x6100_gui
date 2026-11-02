@@ -249,6 +249,15 @@ const char *wspr_app_tx_blocked_reason(void)
     if (call[0] == '\0')
         return "no callsign";
 
+    /*
+     * The type 1 message holds a plain call of up to six characters. A
+     * call with a prefix or suffix (SP2KMO/P, HA/SP2KMO, as the Callsign
+     * list now offers) needs the type 2 and 3 messages, which aren't sent
+     * yet: wspr_encode() would fail every slot without a word.
+     */
+    if (wspr_pack_callsign(call) < 0)
+        return "plain call only";
+
     get_locator(loc, sizeof(loc));
     if (strlen(loc) != 4)
         return "no locator";
