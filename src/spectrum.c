@@ -78,6 +78,11 @@ static int32_t dnf_width;
 
 static bool center_line_show = true;
 
+/* Tuning markers set by an app (spectrum_set_markers), audio Hz */
+static bool    app_markers_show = false;
+static int32_t app_marker_from;
+static int32_t app_marker_to;
+
 static int32_t cur_base_lo_freq;
 static uint8_t prev_fft_dec = 1;
 static int16_t freq_mod;
@@ -249,6 +254,28 @@ static void spectrum_overlay_draw_cb(lv_event_t *e) {
         lv_draw_line(draw_ctx, &line_dsc, &a, &b);
     }
 
+    /* App tuning markers (spectrum_set_markers) */
+
+    if (app_markers_show) {
+        int32_t from = sign_from * app_marker_from;
+        int32_t to   = sign_to * app_marker_to;
+
+        f1 = (int64_t)(w * from) / width_hz;
+        f2 = (int64_t)(w * to) / width_hz;
+
+        lv_point_t a, b;
+
+        a.x = x1 + markers_offset + w / 2 + f1;
+        a.y = y1;
+        b.x = a.x;
+        b.y = y1 + h;
+        lv_draw_line(draw_ctx, &line_dsc, &a, &b);
+
+        a.x = x1 + markers_offset + w / 2 + f2;
+        b.x = a.x;
+        lv_draw_line(draw_ctx, &line_dsc, &a, &b);
+    }
+
     /* Center */
 
     line_dsc.width = 1;
@@ -266,6 +293,25 @@ static void spectrum_overlay_draw_cb(lv_event_t *e) {
     }
     if (center_line_show) {
         lv_draw_line(draw_ctx, &line_dsc, &c, &d);
+    }
+}
+
+void spectrum_set_markers(int32_t from_hz, int32_t to_hz) {
+    app_marker_from  = from_hz;
+    app_marker_to    = to_hz;
+    app_markers_show = true;
+    if (obj) {
+        lv_obj_invalidate(obj);
+    }
+}
+
+void spectrum_clear_markers(void) {
+    if (!app_markers_show) {
+        return;
+    }
+    app_markers_show = false;
+    if (obj) {
+        lv_obj_invalidate(obj);
     }
 }
 

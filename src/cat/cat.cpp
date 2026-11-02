@@ -7,6 +7,7 @@
  */
 
 #include "cat.h"
+#include "../diag_log.h"
 #include "civ_processor.h"
 #include "civ_protocol.h"
 #include "scope_streamer.h"
@@ -134,6 +135,7 @@ class Connection {
 };
 
 static void cat_thread() {
+    diag_set_source("CAT USB/BT");
     Connection conn_wire{&fd_wire};
     Connection conn_bt{&fd_bt};
 

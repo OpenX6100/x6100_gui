@@ -41,12 +41,25 @@
 #include "dialog_msg_voice.h"
 #include "dialog_swrscan.h"
 #include "dialog_ft8.h"
+#include "dialog_channels.h"
+#include "broadcast_db.h"
+#include "broadcast_overlay.h"
 #include "dialog_gps.h"
 #include "dialog_qth.h"
 #include "dialog_recorder.h"
 #include "dialog_callsign.h"
 #include "dialog_wifi.h"
 #include "dialog_bt.h"
+/* The apps on their way in: each one's include below its name */
+/* WSPR */
+/* JS8 */
+#include "dialog_js8.h"
+/* PSK31 */
+/* Olivia */
+/* WeFax */
+#include "dialog_wefax.h"
+/* SSTV */
+#include "dialog_sstv.h"
 #include "display.h"
 #include "buttons.h"
 #include "recorder.h"
@@ -58,6 +71,7 @@
 #include "indicators.h"
 #include "freq_info.h"
 #include "lock_manager.h"
+#include "diag_log.h"
 
 #include <unistd.h>
 #include <stdint.h>
@@ -211,6 +225,28 @@ void main_screen_start_app(press_action_t app_action) {
             voice_say_text_fmt("Bluetooth window");
             break;
 
+        /* The apps on their way in: each one's case below its name */
+        /* WSPR */
+        /* JS8 */
+        case ACTION_APP_JS8:
+            dialog_construct(dialog_js8, obj);
+            voice_say_text_fmt("JS8 window");
+            break;
+
+        /* PSK31 */
+        /* Olivia */
+        /* WeFax */
+        case ACTION_APP_WEFAX:
+            dialog_construct(dialog_wefax, obj);
+            voice_say_text_fmt("WeFax window");
+            break;
+
+        /* SSTV */
+        case ACTION_APP_SSTV:
+            dialog_construct(dialog_sstv, obj);
+            voice_say_text_fmt("SSTV window");
+            break;
+
         default:
             break;
     }
@@ -278,6 +314,15 @@ void main_screen_action(press_action_t action) {
         case ACTION_APP_RECORDER:
         case ACTION_APP_WIFI:
         case ACTION_APP_BT:
+        /* WSPR */
+        /* JS8 */
+        case ACTION_APP_JS8:
+        /* PSK31 */
+        /* Olivia */
+        /* WeFax */
+        case ACTION_APP_WEFAX:
+        /* SSTV */
+        case ACTION_APP_SSTV:
             main_screen_start_app(action);
             break;
 
@@ -289,6 +334,12 @@ void main_screen_action(press_action_t action) {
         case ACTION_APP_CALLSIGN:
             dialog_construct(dialog_callsign, obj);
             voice_say_text_fmt("Callsign window");
+            break;
+
+        case ACTION_APP_CHANNELS:
+            /* As the hand mic's V/M key: over a running app it opens as
+             * an overlay (dialog_channels.c). */
+            dialog_channels_toggle(obj, dialog_running);
             break;
     }
 }
@@ -619,7 +670,9 @@ static void keypad_lock(const event_keypad_t *kp) {
 static void keypad_ptt(const event_keypad_t *kp) {
     switch (kp->state) {
         case KEYPAD_PRESS:
+            diag_set_source("front PTT key");
             radio_set_ptt(true);
+            diag_set_source("UI");
 
             switch (cparam_i_get(cfg.cur.mode())) {
                 case x6100_mode_cw:
@@ -638,7 +691,9 @@ static void keypad_ptt(const event_keypad_t *kp) {
                     break;
             }
 
+            diag_set_source("front PTT key");
             radio_set_ptt(false);
+            diag_set_source("UI");
             break;
         default:
             break;
@@ -654,6 +709,11 @@ static void keypad_vm(const event_keypad_t *kp) {
 
 static void main_screen_keypad_cb(lv_event_t *e) {
     const event_keypad_t *kp = lv_event_get_param(e);
+
+    /* Any front-panel key (MFK excluded: it is not a keypad key) closes the SSTV
+     * target-callsign keyboard before the key is processed. */
+    if (kp->state == KEYPAD_PRESS)
+        dialog_sstv_keyboard_dismiss();
 
     switch (kp->key) {
         case KEYPAD_PRE:
@@ -758,6 +818,10 @@ static void main_screen_keypad_cb(lv_event_t *e) {
 
 static void main_screen_hkey_cb(lv_event_t * e) {
     event_hkey_t *hkey = lv_event_get_param(e);
+
+    /* Same for microphone keys.  FINP confirms the keyboard, so it is skipped. */
+    if (hkey->state == HKEY_PRESS && hkey->key != HKEY_FINP)
+        dialog_sstv_keyboard_dismiss();
     switch (hkey->key) {
         case HKEY_1:
         case HKEY_2:
@@ -804,7 +868,13 @@ static void main_screen_hkey_cb(lv_event_t * e) {
         case HKEY_UP:
             if (hkey->state == HKEY_RELEASE) {
                 if (!lm_get_freq()) {
-                    freq_shift(+1, 0);
+                    if (dialog_wefax_mic_step(-1)) {
+                        /* WeFax open: previous station in its list */
+                    } else if (dialog_channels_recall_relative(-1)) {
+                        msg_update_text_fmt("%s", dialog_channels_last_recalled_name());
+                    } else if (dialog_channels_empty()) {
+                        freq_shift(+1, 0);
+                    }
                 }
             } else if (hkey->state == HKEY_LONG) {
                 if (!lm_get_band()) {
@@ -817,13 +887,45 @@ static void main_screen_hkey_cb(lv_event_t * e) {
         case HKEY_DOWN:
             if (hkey->state == HKEY_RELEASE) {
                 if (!lm_get_freq()) {
-                    freq_shift(-1, 0);
+                    if (dialog_wefax_mic_step(+1)) {
+                        /* WeFax open: next station in its list */
+                    } else if (dialog_channels_recall_relative(+1)) {
+                        msg_update_text_fmt("%s", dialog_channels_last_recalled_name());
+                    } else if (dialog_channels_empty()) {
+                        freq_shift(-1, 0);
+                    }
                 }
             } else if (hkey->state == HKEY_LONG) {
                 if (!lm_get_band()) {
                     cfg_band_load_next(false);
                 }
                 dialog_send(EVENT_BAND_DOWN, NULL);
+            }
+            break;
+
+        case HKEY_VM:
+            /* WeFax open: its stations list; otherwise open/close CHANNELS,
+             * also on top of another dialog (an overlay, see
+             * dialog_channels.c). CHANNELS already open over WeFax is still
+             * closed by V/M. As in Hany's 1KO125 firmware (#311). */
+            if (hkey->state == HKEY_RELEASE) {
+                if (dialog_channels_is_open() || !dialog_wefax_vm_toggle()) {
+                    dialog_channels_toggle(obj, dialog_running);
+                }
+            }
+            break;
+
+        case HKEY_GENE:
+            /* Broadcast Info: always available, also over app dialogs. */
+            if (hkey->state == HKEY_RELEASE) {
+                broadcast_overlay_show();
+            }
+            break;
+
+        case HKEY_NW:
+            /* Save as channel: always available, also over app dialogs. */
+            if (hkey->state == HKEY_RELEASE) {
+                broadcast_overlay_save_channel();
             }
             break;
 
@@ -938,8 +1040,7 @@ static void main_screen_rotary_cb(lv_event_t * e) {
     rotary_data_t *data = (rotary_data_t *) lv_event_get_param(e);
 
     freq_shift(data->diff, data->dt);
-    // TODO: add dt support
-    dialog_rotary(data->diff);
+    dialog_rotary(data->diff, data->dt);
     free(data);
 }
 

@@ -35,6 +35,13 @@ void spectrum_set_enabled(bool enabled);
 /* Repaint the overlay (filter, notch, RTTY markers). UI thread only. */
 void spectrum_refresh_overlay(void);
 
+/* Tuning markers for an app: two lines at these audio frequencies (Hz above
+ * the carrier, e.g. WEFAX 1075 / 1925), drawn on the sideband's side like the
+ * RTTY markers. The app sets them when it opens and clears them when it
+ * closes; one pair at a time. LVGL thread only. */
+void spectrum_set_markers(int32_t from_hz, int32_t to_hz);
+void spectrum_clear_markers(void);
+
 /* Direct-render entry point. Call from the main loop between lv_timer_handler()
  * and drm_flip(). Renders the spectrum into the DRM primary back-buffer when new
  * data arrived or the render conditions changed. Returns true if it rendered. */

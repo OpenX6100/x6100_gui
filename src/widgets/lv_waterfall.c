@@ -10,10 +10,30 @@
 
 #include "lv_waterfall.h"
 
+#include <stdlib.h>     /* 1KO125: qsort */
+#include <string.h>
+
 /*********************
  *      DEFINES
  *********************/
 #define MY_CLASS &lv_waterfall_class
+
+/* 1KO125: the colours follow the noise floor of the audio, as the main
+ * waterfall does with the RF spectrum.  The FT8 audio comes after the AGC,
+ * which moves the floor at every 15-s slot (a strong station lowers the gain):
+ * with fixed levels the background changed colour slot by slot.  The floor
+ * is a low percentile of each line, smoothed; it sits FLOOR_BELOW_DB above
+ * the bottom of a RANGE_DB scale, like the main waterfall (5 dB of 48). */
+#define FLOOR_PERCENTILE  0.25f
+#define FLOOR_SMOOTH      0.5f      /* per line (5 lines/s) */
+#define FLOOR_BELOW_DB    5.0f
+#define RANGE_DB          48.0f
+
+static int cmp_float(const void *a, const void *b)
+{
+    float x = *(const float *)a, y = *(const float *)b;
+    return (x > y) - (x < y);
+}
 
 /**********************
  *  STATIC PROTOTYPES
@@ -122,6 +142,7 @@ void lv_waterfall_clear_data(lv_obj_t * obj) {
         return;
     }
     clear_ring(waterfall);
+    waterfall->floor_valid = false;     /* 1KO125 */
     lv_img_cache_invalidate_src(waterfall->dsc);
     invalidate_exact(obj);
 }
@@ -147,6 +168,30 @@ void lv_waterfall_add_data_with_ts(lv_obj_t * obj, float * data, uint16_t cnt, s
     uint32_t        line_len = waterfall->line_len;
     uint32_t        h = dsc->header.h;
 
+    /* 1KO125: levels from the noise floor of this line */
+    float           lo = waterfall->min, hi = waterfall->max;
+
+    if (waterfall->auto_levels && cnt > 0) {
+        if (waterfall->floor_buf_cnt < cnt) {
+            waterfall->floor_buf = lv_mem_realloc(waterfall->floor_buf, cnt * sizeof(float));
+            waterfall->floor_buf_cnt = waterfall->floor_buf ? cnt : 0;
+        }
+        if (waterfall->floor_buf) {
+            float    *b = waterfall->floor_buf;
+            uint32_t k = (uint32_t)(FLOOR_PERCENTILE * (cnt - 1));
+
+            memcpy(b, data, cnt * sizeof(float));
+            qsort(b, cnt, sizeof(float), cmp_float);   /* a few hundred bins, 5 lines/s */
+            if (waterfall->floor_valid)
+                waterfall->floor_db += FLOOR_SMOOTH * (b[k] - waterfall->floor_db);
+            else
+                waterfall->floor_db = b[k];
+            waterfall->floor_valid = true;
+            lo = waterfall->floor_db - FLOOR_BELOW_DB;
+            hi = lo + RANGE_DB;
+        }
+    }
+
     /* Scroll down: the window now starts one line up */
 
     waterfall->head = (waterfall->head + h - 1) % h;
@@ -157,7 +202,7 @@ void lv_waterfall_add_data_with_ts(lv_obj_t * obj, float * data, uint16_t cnt, s
     for (uint32_t x = 0; x < dsc->header.w; x++) {
         uint32_t    index = x * cnt / dsc->header.w;
         float       d = data[index];
-        float       v = (d - waterfall->min) / (waterfall->max - waterfall->min);
+        float       v = (d - lo) / (hi - lo);
 
         if (v < 0.0f) {
             v = 0.0f;
@@ -192,6 +237,13 @@ void lv_waterfall_set_max(lv_obj_t * obj, int16_t val) {
     waterfall->max = val;
 }
 
+void lv_waterfall_set_auto_levels(lv_obj_t * obj, bool on) {
+    LV_ASSERT_OBJ(obj, MY_CLASS);
+    lv_waterfall_t * waterfall = (lv_waterfall_t *)obj;
+    waterfall->auto_levels = on;
+    waterfall->floor_valid = false;
+}
+
 /**********************
  *   STATIC FUNCTIONS
  **********************/
@@ -211,6 +263,11 @@ static void lv_waterfall_constructor(const lv_obj_class_t * class_p, lv_obj_t * 
     waterfall->line_buf = NULL;
     waterfall->min = -40;
     waterfall->max = 0;
+    waterfall->auto_levels = false;     /* 1KO125 */
+    waterfall->floor_buf = NULL;
+    waterfall->floor_buf_cnt = 0;
+    waterfall->floor_db = 0.0f;
+    waterfall->floor_valid = false;
 
     LV_TRACE_OBJ_CREATE("finished");
 }
@@ -235,6 +292,7 @@ static void lv_waterfall_destructor(const lv_obj_class_t * class_p, lv_obj_t * o
 
     if (waterfall->palette) lv_mem_free(waterfall->palette);
     if (waterfall->line_buf) lv_mem_free(waterfall->line_buf);
+    if (waterfall->floor_buf) lv_mem_free(waterfall->floor_buf);     /* 1KO125 */
     free_buffers(waterfall); /* the image used to be left behind: 1 MB per JS8 open */
 }
 
