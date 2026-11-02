@@ -381,6 +381,12 @@ class SettingsManager {
     Parameter<int32_t> p_js8_custom_hz{"js8_custom_hz", 0, {},
         StorageType::GLOBAL, pending_writes_, {}, &global_params_}; // last custom dial frequency, 0 = none
 
+    // JTTY
+    Parameter<int32_t> p_jtty_serial{"jtty_serial", 1, 1, 131071,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // next serial number sent with %E
+    Parameter<int32_t> p_jtty_tx_freq{"jtty_tx_freq", 1500, 200, 2800,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // our audio offset (tone 0), Hz
+
     // Station identity
     Parameter<std::string> p_qth{"qth", "", {},
         StorageType::GLOBAL, pending_writes_, {}, &global_params_};

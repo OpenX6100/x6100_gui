@@ -217,6 +217,8 @@ static ParamInt *cfg_js8_ultra(void) { return param_ref<ParamInt>(cfg_instance()
 static ParamInt *cfg_js8_ghostnet(void) { return param_ref<ParamInt>(cfg_instance().p_js8_ghostnet); }
 static ParamInt *cfg_js8_custom_on(void) { return param_ref<ParamInt>(cfg_instance().p_js8_custom_on); }
 static ParamInt *cfg_js8_custom_hz(void) { return param_ref<ParamInt>(cfg_instance().p_js8_custom_hz); }
+static ParamInt *cfg_jtty_serial(void) { return param_ref<ParamInt>(cfg_instance().p_jtty_serial); }
+static ParamInt *cfg_jtty_tx_freq(void) { return param_ref<ParamInt>(cfg_instance().p_jtty_tx_freq); }
 static ParamInt *cfg_theme(void) { return param_ref<ParamInt>(cfg_instance().p_theme); }
 static ParamInt *cfg_meter_color(void) { return param_ref<ParamInt>(cfg_instance().p_meter_color); }
 static ParamInt *cfg_ft8_info(void) { return param_ref<ParamInt>(cfg_instance().p_ft8_info); }
@@ -472,6 +474,10 @@ extern "C" const cfg_refs_t cfg = {
         .ghostnet = &cfg_js8_ghostnet,
         .custom_on = &cfg_js8_custom_on,
         .custom_hz = &cfg_js8_custom_hz,
+    },
+    .jtty = {
+        .serial = &cfg_jtty_serial,
+        .tx_freq = &cfg_jtty_tx_freq,
     },
 };
 
