@@ -54,6 +54,7 @@ typedef enum {
      * so its number is never stored. */
     ACTION_APP_JS8 = 112,
     /* WSPR */
+    ACTION_APP_WSPR = 113,
     /* PSK31 */
     /* Olivia */
     ACTION_APP_BT = 116,

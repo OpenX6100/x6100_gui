@@ -329,6 +329,7 @@ static button_data_t  btn_bt     = make_app_btn("Bluetooth", ACTION_APP_BT);
  * app per line, so they can be merged in any order without touching each
  * other's lines. Their places on the pages are fixed below. */
 /* WSPR */
+static button_data_t  btn_wspr   = make_app_btn("WSPR", ACTION_APP_WSPR);
 /* JS8 */
 static button_data_t  btn_js8    = make_app_btn("JS8", ACTION_APP_JS8);
 /* PSK31 */
@@ -474,9 +475,16 @@ static buttons_page_t page_app_2 = {
 static buttons_page_t page_app_3 = {
     {&btn_app_p3, &btn_wifi, &btn_bt, &btn_js8, &btn_wefax}
 };
-static buttons_page_t page_app_4 = {
-    {&btn_app_p4, &btn_sstv, &btn_channels}
-};
+/* Each app on its way in adds its button below its own name line, so they
+ * merge in any order (#313). */
+static buttons_page_t page_app_4 = {{
+    &btn_app_p4,
+    &btn_sstv,
+    &btn_channels,
+    /* WSPR */
+    &btn_wspr,
+    /* PSK31 */
+}};
 
 /* RTTY */
 

@@ -299,8 +299,13 @@ static void draw_part_end_cb(lv_event_t *e) {
         } else {
             snprintf(buf, sizeof(buf), "%i km", cd->dist);
         }
-        lv_draw_label(dsc->draw_ctx, dsc->label_dsc, &area, buf, NULL);
-        right = area.x2 - text_width(buf, dsc->label_dsc) - 16;
+        /* Only where it does not run into the message (a long WSPR line,
+         * a big font). */
+        lv_coord_t w = text_width(buf, dsc->label_dsc);
+        if (area.x2 - w >= text_end + 8) {
+            lv_draw_label(dsc->draw_ctx, dsc->label_dsc, &area, buf, NULL);
+            right = area.x2 - w - 16;
+        }
     }
 
     if (s_info >= TABLE_INFO_COUNTRY) {
