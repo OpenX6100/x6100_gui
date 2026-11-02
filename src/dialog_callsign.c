@@ -4,7 +4,7 @@
  *  Xiegu X6100 LVGL GUI
  *
  *  Copyright (c) 2022-2023 Belousov Oleg aka R1CBU
- *  Copyright (c) 2026 Kris SP2KMO (suffix list)
+ *  Copyright (c) 2026 Krzysztof Myszkowski SP2KMO (suffix list)
  */
 
 #include "dialog_callsign.h"
