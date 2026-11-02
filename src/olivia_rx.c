@@ -1,7 +1,7 @@
 /*
  * olivia_rx.c - Olivia receiver: synchronisation + decoding
  * SPDX-License-Identifier: GPL-3.0-or-later
- * Copyright (c) 2026 Krzysztof Myszkowski SP2KMO
+ * Copyright (c) 2026 Kris SP2KMO
  * Part of OpenX6100 (github.com/OpenX6100)
  *
  * The core of the synchronisation:
