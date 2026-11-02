@@ -127,6 +127,17 @@ static void transmit(audio_player_t *player)
     float stored;
     int   counter = 0;
     job_t j;
+    bool  go;
+
+    /* ESC may have emptied the queue since the worker woke up: then the
+     * transmitter is not keyed at all (no 250 ms of keyed silence, no
+     * relay click). */
+    pthread_mutex_lock(&S.lock);
+    go = S.nqueue > 0 && !atomic_load(&S.abort_req);
+    pthread_mutex_unlock(&S.lock);
+    if (!go) {
+        return;
+    }
 
     radio_set_pwr(target_pwr);
     if (x6100_control_get_base_ver().rev >= 3) {
@@ -153,7 +164,8 @@ static void transmit(audio_player_t *player)
         int16_t silence[CHUNK];
 
         memset(silence, 0, sizeof(silence));
-        for (int left = TX_RATE * LEAD_IN_MS / 1000; left > 0; left -= CHUNK) {
+        for (int left = TX_RATE * LEAD_IN_MS / 1000; left > 0 && !atomic_load(&S.abort_req);
+             left -= CHUNK) {
             audio_player_send(player, silence, (size_t)(left < CHUNK ? left : CHUNK));
         }
     }
@@ -232,12 +244,15 @@ static void *worker(void *arg)
         while (!atomic_load(&S.quit) && S.nqueue == 0) {
             pthread_cond_wait(&S.cv, &S.lock);
         }
-        pthread_mutex_unlock(&S.lock);
-        if (atomic_load(&S.quit)) {
-            break;
-        }
+        /* cleared under the lock, while there is still something to send:
+         * an ESC after this point stays set and is seen by transmit() */
         atomic_store(&S.abort_req, false);
         atomic_store(&S.busy, true);
+        pthread_mutex_unlock(&S.lock);
+        if (atomic_load(&S.quit)) {
+            atomic_store(&S.busy, false);
+            break;
+        }
         if (player != NULL) {
             transmit(player);
         }
