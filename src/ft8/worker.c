@@ -9,6 +9,7 @@
 #include "worker.h"
 
 #include "gfsk.h"
+#include "msg_encode.h"
 
 #include "lvgl/lvgl.h"
 #include <ft8lib/constants.h>
@@ -20,6 +21,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <stdint.h>
 #include <errno.h>
 #include <ctype.h>
@@ -85,12 +87,40 @@ static ftx_message_t   decoded[MAX_DECODED_MESSAGES];
 static ftx_message_t  *decoded_hashtable[MAX_DECODED_MESSAGES];
 static ftx_waterfall_t wf;
 static int             find_candidates_at;
+static char            own_call[12]; /* kept in the hash table, see remember_own_call() */
 
 static void decode_messages(const ftx_waterfall_t *wf, int *num_candidates, ftx_candidate_t *candidate_list,
                             ftx_message_t *decoded, ftx_message_t **decoded_hashtable, int ldpc_iterations,
                             decoded_msg_cb msg_cb, void *user_data);
 
 static int get_message_snr(const ftx_waterfall_t *wf, const ftx_candidate_t *candidate, ftx_message_t *msg);
+
+/*
+ * A station answering a non-standard call (KF0QGT/6Y) sends it as a hash:
+ * "<KF0QGT/6Y> W1ABC -05". It decodes only with that hash in the table,
+ * and the table forgets a call after a few slots. Encoding "CQ <own call>"
+ * puts it there; done every slot, so a call to us decodes even before our
+ * first transmission and after a long pause.
+ */
+static void remember_own_call(void) {
+    ftx_message_t msg;
+    char          text[20];
+
+    if (own_call[0] == '\0') {
+        return;
+    }
+    snprintf(text, sizeof(text), "CQ %s", own_call);
+    ftx_message_init(&msg);
+    ftx_message_encode(&msg, &hash_if, text);
+}
+
+void ftx_worker_set_own_call(const char *call) {
+    if (call == NULL || strlen(call) >= sizeof(own_call)) {
+        own_call[0] = '\0';
+        return;
+    }
+    strcpy(own_call, call);
+}
 
 /**
  * Init worker
@@ -119,6 +149,7 @@ void ftx_worker_init(int sample_rate, ftx_protocol_t protocol) {
     int num_samples = slot_period * sample_rate;
 
     hashtable_init(256);
+    remember_own_call();
 
     /* FT8 decoder */
 
@@ -218,6 +249,7 @@ void ftx_worker_free() {
  */
 void ftx_worker_reset() {
     hashtable_cleanup(10);
+    remember_own_call();
     wf.num_blocks = 0;
     num_candidates = 0;
     // Initialize hash table pointers
@@ -230,7 +262,7 @@ bool ftx_worker_generate_tx_samples(const char *text, const uint16_t signal_freq
                                     int16_t **samples, uint32_t *n_samples) {
     ftx_message_t msg;
     ftx_message_init(&msg);
-    ftx_message_rc_t rc = ftx_message_encode(&msg, &hash_if, text);
+    ftx_message_rc_t rc = ftx_encode_text(&msg, &hash_if, text);
 
     if (rc != FTX_MESSAGE_RC_OK) {
         LV_LOG_ERROR("Cannot parse message %i", rc);

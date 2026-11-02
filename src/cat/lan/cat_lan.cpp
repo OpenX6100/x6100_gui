@@ -1,4 +1,5 @@
 #include "cat_lan.h"
+#include "../../diag_log.h"
 #include "cat_lan_packets.h"
 #include "cat/cat.h"
 #include "cat/civ_protocol.h"
@@ -840,6 +841,7 @@ static void on_vfo_change_cb(Subject *s, void *user_data) {
 // ---- Thread ---------------------------------------------------------------
 
 static void cat_lan_thread() {
+    diag_set_source("CAT LAN");
     uint8_t recv_buf[65536];
 
     uint8_t tx_buf[64];

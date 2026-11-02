@@ -40,6 +40,12 @@ typedef struct {
     int16_t         max;
 
     struct timespec frame_ts;   /* wall-clock timestamp of most recent PSD frame */
+    /* 1KO125: noise floor of the lines, see lv_waterfall_add_data_with_ts() */
+    bool            auto_levels;    /* off: the fixed min/max levels */
+    float           *floor_buf;
+    uint16_t        floor_buf_cnt;
+    float           floor_db;
+    bool            floor_valid;
 } lv_waterfall_t;
 
 extern const lv_obj_class_t lv_waterfall_class;
@@ -68,6 +74,9 @@ struct timespec lv_waterfall_get_frame_ts(lv_obj_t * obj);
 
 void lv_waterfall_set_min(lv_obj_t *obj, int16_t val);
 void lv_waterfall_set_max(lv_obj_t *obj, int16_t val);
+/* 1KO125: colours follow the noise floor of the data instead of min/max
+ * (for audio after the AGC, as FT8's). Off by default. */
+void lv_waterfall_set_auto_levels(lv_obj_t *obj, bool on);
 
 #ifdef __cplusplus
 } /*extern "C"*/

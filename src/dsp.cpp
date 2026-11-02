@@ -106,6 +106,8 @@ static float noise_level = S_MIN;
 static std::atomic<bool>  s_meter_pre{false};
 static std::atomic<bool>  s_meter_att{false};
 static std::atomic<float> s_meter_db_raw{S1};
+/* 1KO125: user calibration offset (dB), cfg.ui.s_meter_offset */
+static std::atomic<int32_t> s_meter_offset_db{0};
 
 /* Audio subscriptions for audio from BASE */
 
@@ -193,6 +195,7 @@ static void update_filters(Subject *subj, void *user_data);
 static void update_cur_mode(Subject *subj, void *user_data);
 static void on_cur_freq_change(Subject *subj, void *user_data);
 static void on_pre_att_change(Subject *subj, void *user_data);
+static void on_s_meter_offset_change(Subject *subj, void *user_data);
 
 
 class ChunkedSpgram {
@@ -336,6 +339,7 @@ void dsp_init() {
 
     cfg.cur.pre()->subscribe_and_notify(on_pre_att_change, &s_meter_pre);
     cfg.cur.att()->subscribe_and_notify(on_pre_att_change, &s_meter_att);
+    cfg.ui.s_meter_offset()->subscribe_and_notify(on_s_meter_offset_change);
 
     cfg.cur.fg_freq()->subscribe(on_cur_freq_change);
     ready = true;
@@ -541,6 +545,7 @@ static void update_s_meter(float *lin) {
     if (s_meter_pre.load()) {
         sum_db -= DSP_PRE_DB;
     }
+    sum_db += (float)s_meter_offset_db.load();
     s_meter_db_raw.store(sum_db);
 
     // TODO: use subscription
@@ -611,6 +616,7 @@ static void update_noise_and_levels(float *lin, uint16_t size, bool update_level
     if (s_meter_pre.load()) {
         noise_db -= DSP_PRE_DB;
     }
+    noise_db += (float)s_meter_offset_db.load();
     meter_set_noise(noise_db);
 
     if (!update_levels) {
@@ -802,6 +808,11 @@ static void update_cur_mode(Subject *subj, void *user_data) {
 static void on_pre_att_change(Subject *subj, void *user_data) {
     std::atomic<bool> *flag = static_cast<std::atomic<bool> *>(user_data);
     flag->store(static_cast<SubjectT<int32_t> *>(subj)->get() != 0);
+}
+
+static void on_s_meter_offset_change(Subject *subj, void *user_data) {
+    (void)user_data;
+    s_meter_offset_db.store(static_cast<SubjectT<int32_t> *>(subj)->get());
 }
 
 static void on_cur_freq_change(Subject *subj, void *user_data) {

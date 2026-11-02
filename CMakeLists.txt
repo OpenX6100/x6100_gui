@@ -53,7 +53,9 @@ else()
                 USE_SOURCE_PERMISSIONS
         )
         install(DIRECTORY images DESTINATION share/x6100)
-        # Callsign -> country for the FT8/FT4 table (AD1C, country-files.com)
+        # JS8's base map (tools/map_data)
+        install(FILES tools/map_data/js8_map.bin DESTINATION share/x6100/js8)
+        # Callsign -> country for the FT8/FT4 table and JS8's map (AD1C, country-files.com)
         install(FILES third-party/cty/cty.dat DESTINATION share/x6100)
 endif()
 

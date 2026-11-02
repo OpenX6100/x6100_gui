@@ -50,6 +50,7 @@ static ParamInt *cfg_ant_id(void) { return param_ref<ParamInt>(cfg_instance().p_
 static ParamInt *cfg_atu_enabled(void) { return param_ref<ParamInt>(cfg_instance().p_atu_enabled); }
 static ParamInt *cfg_cat_baud(void) { return param_ref<ParamInt>(cfg_instance().p_cat_baud); }
 static ParamInt *cfg_show_meter_values(void) { return param_ref<ParamInt>(cfg_instance().p_show_meter_values); }
+static ParamInt *cfg_s_meter_offset(void) { return param_ref<ParamInt>(cfg_instance().p_s_meter_offset); }
 static ParamInt *cfg_display_invert(void) { return param_ref<ParamInt>(cfg_instance().p_display_invert); }
 static ParamInt *cfg_auto_level_enabled(void) { return param_ref<ParamInt>(cfg_instance().p_auto_level_enabled); }
 static ParamFloat *cfg_auto_level_offset(void) { return param_ref<ParamFloat>(cfg_instance().p_auto_level_offset); }
@@ -268,6 +269,7 @@ extern "C" const cfg_refs_t cfg = {
         .waterfall_center_line = &cfg_waterfall_center_line,
 
         .show_meter_value = &cfg_show_meter_values,
+        .s_meter_offset = &cfg_s_meter_offset,
 
         .mag_freq = &cfg_mag_freq,
         .mag_info = &cfg_mag_info,

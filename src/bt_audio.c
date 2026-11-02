@@ -1,4 +1,8 @@
 /*
+ *  SPDX-License-Identifier: LGPL-2.1-or-later
+ *  Copyright (c) 2026 Krzysztof Myszkowski SP2KMO
+ *  Part of OpenX6100 (github.com/OpenX6100)
+ *
  * bt_audio.c - Bluetooth headset audio: listening and PTT.
  *
  * Everything here shells out to pactl, and every one of those calls can
@@ -54,6 +58,7 @@
 #include "cfg/cfg_api.h"
 #include "msg.h"
 #include "radio.h"
+#include "diag_log.h"
 
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/hci.h>
@@ -924,7 +929,9 @@ static void do_ptt_on(void)
     pthread_mutex_unlock(&S.lock);
 
     /* Audio path first, carrier last. */
+    const char *src = diag_set_source("Bluetooth PTT");
     radio_set_modem(true);
+    diag_set_source(src);
 
     pthread_mutex_lock(&S.lock);
     S.ptt_on = true;
@@ -940,7 +947,9 @@ static void do_ptt_off(bt_ptt_state_t final_state)
     set_ptt_state(BT_PTT_UNKEYING);
 
     /* Carrier first, audio path last. */
+    const char *src = diag_set_source("Bluetooth PTT");
     radio_set_modem(false);
+    diag_set_source(src);
     unload_module(&S.tx_module_idx);
 
     pthread_mutex_lock(&S.lock);

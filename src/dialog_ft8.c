@@ -10,6 +10,7 @@
 
 #include "app_ports.h"
 #include "ft8/worker.h"
+#include "ft8/msg_encode.h"
 #include "ft8/qso.h"
 #include "ft8/utils.h"
 #include "lvgl/lvgl.h"
@@ -118,7 +119,7 @@ static void construct_cb(lv_obj_t *parent);
 static void key_cb(lv_event_t * e);
 static void destruct_cb();
 static void audio_cb(unsigned int n, float *samples);
-static void rotary_cb(int32_t diff);
+static void rotary_cb(int32_t diff, uint16_t dt);
 
 /* audio_worker callbacks (run on worker thread). UI mutations must go
  * through scheduler_put() to land on the LVGL task. */
@@ -231,13 +232,16 @@ static const char *udp_mode_str(void) {
 /* The QSO partner is not exposed by the qso processor, but the pending TX
  * message always starts with it ("DXCALL MYCALL ..."), except for CQ. */
 static void udp_current_dx_call(char *out, size_t out_sz) {
-    size_t i = 0;
+    size_t      i = 0;
+    const char *src = tx_msg.msg;
 
     out[0] = '\0';
-    if (tx_msg.msg[0] == '\0') return;
+    if (src[0] == '\0') return;
 
-    while (tx_msg.msg[i] && tx_msg.msg[i] != ' ' && i < out_sz - 1) {
-        out[i] = tx_msg.msg[i];
+    /* "<W1ABC> KF0QGT/6Y RR73" (a non-standard own call): W1ABC */
+    if (src[0] == '<') src++;
+    while (src[i] && src[i] != ' ' && src[i] != '>' && i < out_sz - 1) {
+        out[i] = src[i];
         i++;
     }
     out[i] = '\0';
@@ -336,6 +340,8 @@ static void worker_init() {
     qso_processor = ftx_qso_processor_init(PARAM_T_GET(cfg.callsign()), PARAM_T_GET(cfg.qth()),
                                            save_qso,
                                            param_i_get(cfg.ft8.max_repeats()));
+    ftx_qso_processor_set_local_standard(qso_processor, ftx_call_is_standard(PARAM_T_GET(cfg.callsign())));
+    ftx_worker_set_own_call(PARAM_T_GET(cfg.callsign()));
 
     audio_worker_cb_t cb = {
         .on_message  = on_message_cb,
@@ -500,10 +506,14 @@ static void set_freq(uint32_t freq) {
     lv_obj_invalidate(finder);
 }
 
-static void rotary_cb(int32_t diff) {
-    uint32_t abs_diff = abs(diff);
-    if (abs_diff > 3) {
-        diff *= (abs_diff < 6) ? 5 : 10;
+static void rotary_cb(int32_t diff, uint16_t dt) {
+    /* Faster turns move further, as before the knob handed over each click
+     * on its own (then 4-5 clicks in 30 ms moved 5 Hz each, 6 or more
+     * 10 Hz). dt is the time per click in ms, 0 when unknown. */
+    if (dt > 0 && dt <= 5) {
+        diff *= 10;
+    } else if (dt > 0 && dt < 8) {
+        diff *= 5;
     }
     uint32_t f = param_i_get(cfg.ft8.tx_freq()) + diff;
     f = limit(f, filter_low, filter_high - (param_i_get(cfg.ft8.protocol()) == FTX_PROTOCOL_FT8 ? FT8_WIDTH_HZ : FT4_WIDTH_HZ));
@@ -568,6 +578,7 @@ static void construct_cb(lv_obj_t *parent) {
     lv_waterfall_set_palette(waterfall, (lv_color_t*)style.wf_palette, 256);
     lv_waterfall_set_size(waterfall, WIDTH, 325);
     lv_waterfall_set_min(waterfall, -60);
+    lv_waterfall_set_auto_levels(waterfall, true);   /* 1KO125: colours follow the noise floor */
 
     lv_obj_set_pos(waterfall, 13, 13);
 
@@ -762,6 +773,10 @@ static void tx_cq_en_dis_cb(struct button_data_t *btn_data) {
             msg_schedule_text_fmt("Call sign required");
             return;
         }
+        if (!ftx_call_is_usable(PARAM_T_GET(cfg.callsign()))) {
+            msg_schedule_text_fmt("Callsign %s is too long for FT8/FT4", PARAM_T_GET(cfg.callsign()));
+            return;
+        }
         subject_i_set(cq_enabled, true);
         subject_i_set(tx_enabled, true);
 
@@ -799,6 +814,10 @@ static void tx_call_en_dis_cb(struct button_data_t *btn_data) {
     if (!subject_i_get(tx_enabled)) {
         if (strlen(PARAM_T_GET(cfg.callsign())) == 0) {
             msg_schedule_text_fmt("Call sign required");
+            return;
+        }
+        if (!ftx_call_is_usable(PARAM_T_GET(cfg.callsign()))) {
+            msg_schedule_text_fmt("Callsign %s is too long for FT8/FT4", PARAM_T_GET(cfg.callsign()));
             return;
         }
         subject_i_set(tx_enabled, true);

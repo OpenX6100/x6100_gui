@@ -1,0 +1,2 @@
+python3 src/wefax/make_wefax_db.py wefax_site/weatherfax.com rootfs/usr/share/x6100/wefax_stations.txt
+
