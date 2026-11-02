@@ -33,7 +33,7 @@ typedef enum {
     /* The ACTION_APP_* values are saved on the card (long-press keys), so
      * each is written out and never reused or changed; a new app takes
      * the next free number. 109 WeFax, 110 NavTex, 111 SSTV (Murus),
-     * 112 JS8 are taken. */
+     * 112 JS8, 117 Channels are taken. */
     ACTION_APP_RTTY = 100,
     ACTION_APP_FT8,
     ACTION_APP_SWRSCAN,
@@ -46,13 +46,20 @@ typedef enum {
     /* The apps on their way in, with their fixed numbers (#283): each one's
      * line below its name, so they can be merged in any order. */
     /* WeFax */
+    ACTION_APP_WEFAX = 109,
     /* SSTV */
+    ACTION_APP_SSTV = 111,
     /* JS8 */
+    /* JS8 opens from the APP menu only, not as a long-press action (#283),
+     * so its number is never stored. */
+    ACTION_APP_JS8 = 112,
     /* WSPR */
     /* PSK31 */
     /* Olivia */
     ACTION_APP_OLIVIA = 115,
     ACTION_APP_BT = 116,
+    /* Channels: Hany's Channel List, also without the hand mic's V/M key */
+    ACTION_APP_CHANNELS = 117,
 } press_action_t;
 
 typedef enum {

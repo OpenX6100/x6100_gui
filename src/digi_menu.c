@@ -72,6 +72,18 @@ static void key_cb(lv_event_t *e)
     digi_menu_cb_t cb = pick_cb;
     void          *ctx = pick_ctx;
 
+    /* The list is deleted while its key is still down, which resets the
+     * keypad: LVGL would then see a long press and send the key again to
+     * whatever has the focus next (VOL press = ESC closing the window
+     * behind). Ignore the key until it is let go. */
+    if (key == LV_KEY_ENTER || key == LV_KEY_ESC) {
+        lv_indev_t *indev = lv_indev_get_act();
+
+        if (indev != NULL) {
+            lv_indev_wait_release(indev);
+        }
+    }
+
     switch (key) {
         case LV_KEY_ENTER:
             lv_table_get_selected_cell(list, &row, &col);

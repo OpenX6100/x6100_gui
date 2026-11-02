@@ -18,6 +18,14 @@ target_link_libraries(test_ft8_qso PRIVATE ft8_core QTH aether_x6100_control Cat
 add_test(NAME test_ft8_qso COMMAND $<TARGET_FILE:test_ft8_qso> --colour-mode=ansi )
 
 
+add_subdirectory(../third-party/js8core ${CMAKE_BINARY_DIR}/third-party/js8core)
+add_subdirectory(../src/js8 ${CMAKE_BINARY_DIR}/src/js8)
+add_executable(test_js8 test_js8.cpp)
+target_include_directories(test_js8 PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(test_js8 PRIVATE JS8 JS8TestSignal js8core Catch2::Catch2WithMain)
+target_compile_definitions(test_js8 PRIVATE CTY_DAT_PATH="${PROJECT_SOURCE_DIR}/third-party/cty/cty.dat"
+                                           MAP_BIN_PATH="${PROJECT_SOURCE_DIR}/tools/map_data/js8_map.bin")
+add_test(NAME test_js8 COMMAND $<TARGET_FILE:test_js8> --colour-mode=ansi )
 # test_js8_db: params.db for every kind of card (src/cfg/js8_db.c with
 # migrations.c; plain C, sqlite3 only). Its own binary: it stands in for
 # db.cpp's cfg_db_get(), which test_cfg links.
