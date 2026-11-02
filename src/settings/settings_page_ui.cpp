@@ -459,7 +459,7 @@ static void make_s_meter_offset(SettingsPage &page) {
     page.label("S-meter offset");
 
     lv_obj_t *obj = page.cell(1, 6, SMALL_6);
-    obj           = page.slider_int(obj, *cfg.ui.s_meter_offset(), -30, 30, 1, SMALL_6 - 120, "%d dB");
+    obj           = page.slider_int(obj, *cfg.ui.s_meter_offset(), -10, 10, 1, SMALL_6 - 120, "%d dB");
 
     lv_obj_add_event_cb(obj, settings_change_bg_opa_cb, LV_EVENT_FOCUSED, &page);
     lv_obj_add_event_cb(obj, settings_change_bg_opa_cb, LV_EVENT_DEFOCUSED, &page);

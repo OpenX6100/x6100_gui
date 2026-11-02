@@ -125,7 +125,7 @@ class SettingsManager {
     Parameter<int32_t> p_show_meter_values{"show_meter_values", false, 0, 1,
         StorageType::GLOBAL, pending_writes_, &global_params_};
     // 1KO125: S-meter calibration offset in dB (display and CAT)
-    Parameter<int32_t> p_s_meter_offset{"s_meter_offset", 0, -30, 30,
+    Parameter<int32_t> p_s_meter_offset{"s_meter_offset", 0, -10, 10,
         StorageType::GLOBAL, pending_writes_, &global_params_};
 
     // VOX
