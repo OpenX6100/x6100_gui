@@ -333,6 +333,7 @@ static button_data_t  btn_wspr   = make_app_btn("WSPR", ACTION_APP_WSPR);
 /* JS8 */
 static button_data_t  btn_js8    = make_app_btn("JS8", ACTION_APP_JS8);
 /* PSK31 */
+static button_data_t  btn_psk    = make_app_btn("PSK31", ACTION_APP_PSK);
 /* Olivia */
 /* WeFax */
 static button_data_t  btn_wefax  = make_app_btn("WeFax", ACTION_APP_WEFAX);
@@ -484,6 +485,7 @@ static buttons_page_t page_app_4 = {{
     /* WSPR */
     &btn_wspr,
     /* PSK31 */
+    &btn_psk,
 }};
 
 /* RTTY */

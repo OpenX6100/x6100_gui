@@ -56,6 +56,7 @@ typedef enum {
     /* WSPR */
     ACTION_APP_WSPR = 113,
     /* PSK31 */
+    ACTION_APP_PSK = 114,
     /* Olivia */
     ACTION_APP_BT = 116,
     /* Channels: Hany's Channel List, also without the hand mic's V/M key */
