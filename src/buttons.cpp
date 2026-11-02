@@ -489,6 +489,7 @@ static buttons_page_t page_app_5 = {{
     &btn_app_p5,
     /* Olivia */
     &btn_olivia,
+    /* JTTY */
 }};
 
 /* RTTY */
