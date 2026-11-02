@@ -104,8 +104,8 @@ TEST_CASE("SettingsManager init_load loads global/band/mode params", "[manager]"
     // Pre-populate the DB with known values for band 5 / MODE_GROUP_DIGI.
     {
         REQUIRE(store_save<int32_t>(StorageType::GLOBAL, 0, "vol", 45) == SUCCESS);
-        REQUIRE(store_save<int32_t>(StorageType::BAND, 5, "vfoa_freq", 7100) == SUCCESS);
-        REQUIRE(store_save<int32_t>(StorageType::BAND, 5, "vfob_freq", 14300) == SUCCESS);
+        REQUIRE(store_save<int32_t>(StorageType::BAND, 5, "vfoa_freq", 7'100'000) == SUCCESS);
+        REQUIRE(store_save<int32_t>(StorageType::BAND, 5, "vfob_freq", 14'300'000) == SUCCESS);
         REQUIRE(store_save<int32_t>(StorageType::BAND, 5, "vfo", X6100_VFO_B) == SUCCESS);
         // The starting mode is derived from the active VFO (B) -> 3.
         REQUIRE(store_save<int32_t>(StorageType::BAND, 5, "vfob_mode", x6100_mode_usb_dig) == SUCCESS);
@@ -120,13 +120,13 @@ TEST_CASE("SettingsManager init_load loads global/band/mode params", "[manager]"
     REQUIRE(mgr.current_mode_group_id() == MODE_GROUP_DIGI);
 
     REQUIRE(mgr.p_volume.get() == 45);
-    REQUIRE(mgr.p_band_vfoa_freq.get() == 7100);
-    REQUIRE(mgr.p_band_vfob_freq.get() == 14300);
+    REQUIRE(mgr.p_band_vfoa_freq.get() == 7'100'000);
+    REQUIRE(mgr.p_band_vfob_freq.get() == 14'300'000);
     REQUIRE(mgr.p_band_current_vfo.get() == X6100_VFO_B);
     REQUIRE(mgr.p_mode_freq_step.get() == 9);
 
     // fg_freq mirrors the active VFO (current_vfo == 1 -> vfob).
-    REQUIRE(mgr.cp_fg_freq.get() == 14300);
+    REQUIRE(mgr.cp_fg_freq.get() == 14'300'000);
 }
 
 TEST_CASE("SettingsManager deferred writes round-trip after flush", "[manager]") {
@@ -540,8 +540,8 @@ TEST_CASE("VFO boundary clamp of a DB value outside all HW ranges", "[manager]")
 
     // 999.999 MHz -> nearest boundary is transverter 1's 'to' (438 MHz).
     REQUIRE(mgr.p_band_vfoa_freq.get() == 438'000'000);
-    // 1 kHz -> nearest boundary is HF's lower limit (0.5 MHz).
-    REQUIRE(mgr.p_band_vfob_freq.get() == 500'000);
+    // 1 kHz -> nearest boundary is HF's lower limit (0.1 MHz).
+    REQUIRE(mgr.p_band_vfob_freq.get() == 100'000);
 }
 
 TEST_CASE("vfob copies a loaded vfoa freq and restores its mode", "[manager]") {

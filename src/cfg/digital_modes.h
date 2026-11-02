@@ -18,7 +18,8 @@ extern "C" {
 typedef enum {
     CFG_DIG_TYPE_FT8 = 0,
     CFG_DIG_TYPE_FT4 = 1,
-    /* 2 and 3: JS8 (randal007) */
+    CFG_DIG_TYPE_JS8 = 2,
+    CFG_DIG_TYPE_JS8_GHOSTNET = 3,  /* JS8 on GhostNet's frequencies */
     CFG_DIG_TYPE_FT2 = 4,
 } cfg_digital_type_t;
 

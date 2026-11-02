@@ -21,7 +21,7 @@ extern "C" {
 
 typedef void (*dialog_construct_cb_t)(lv_obj_t *);
 typedef void (*dialog_destruct_cb_t)(void);
-typedef void (*dialog_rotary_cb_t)(int32_t diff);
+typedef void (*dialog_rotary_cb_t)(int32_t diff, uint16_t dt);
 
 typedef struct {
     lv_obj_t                *obj;
@@ -46,7 +46,7 @@ bool dialog_type_is_run(dialog_t *dialog);
 lv_obj_t * dialog_init(lv_obj_t *parent);
 void dialog_item(dialog_t *dialog, lv_obj_t *obj);
 
-void dialog_rotary(int32_t diff);
+void dialog_rotary(int32_t diff, uint16_t dt);
 
 #ifdef __cplusplus
 }

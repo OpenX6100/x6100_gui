@@ -1,0 +1,45 @@
+name: Unit tests
+# The JS8 library's unit tests on a PC, a few minutes. Built with
+# ENABLE_TESTING (ASan/UBSan, tests/CMakeLists.txt): the JS8 targets and
+# test_tx_level (#306); other test binaries can be added here as jobs or
+# targets.
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  js8:
+    runs-on: ubuntu-24.04 # js8core needs Boost >= 1.78 (boost/math/ccmath)
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+    - name: Checkout GUI
+      uses: actions/checkout@v4
+      with:
+        submodules: true
+
+    - name: Packages
+      run: sudo apt-get update && sudo apt-get install -y cmake g++ libboost-dev libfftw3-dev libsqlite3-dev pkg-config
+
+    - name: Build the tests (ASan/UBSan)
+      run: |
+        cmake -B build_test -DENABLE_TESTING=YES
+        cmake --build build_test -j"$(nproc)" --target test_js8 test_js8_db test_tx_level
+
+    # The three [slow] ones (long decodes of whole transmissions) left out
+    - name: JS8 tests
+      run: build_test/tests/test_js8 "~[slow]" --colour-mode=ansi
+
+    - name: JS8 settings DB tests
+      run: build_test/tests/test_js8_db --colour-mode=ansi
+
+    - name: Transmit level tests
+      run: build_test/tests/test_tx_level --colour-mode=ansi

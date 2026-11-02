@@ -124,6 +124,9 @@ class SettingsManager {
         StorageType::GLOBAL, pending_writes_, {}, &global_params_};
     Parameter<int32_t> p_show_meter_values{"show_meter_values", false, 0, 1,
         StorageType::GLOBAL, pending_writes_, &global_params_};
+    // 1KO125: S-meter calibration offset in dB (display and CAT)
+    Parameter<int32_t> p_s_meter_offset{"s_meter_offset", 0, -30, 30,
+        StorageType::GLOBAL, pending_writes_, &global_params_};
 
     // VOX
     Parameter<int32_t> p_vox_en{"vox_en", false, 0, 1,
@@ -324,6 +327,58 @@ class SettingsManager {
     Parameter<std::string> p_ft8_cq_modifier{"ft8_cq_modifier", "", {},
         StorageType::GLOBAL, pending_writes_, {}, &global_params_};
 
+    // JS8 (the names the JS8 test builds stored in params.db: values carry over)
+    Parameter<int32_t> p_js8_tx_freq{"js8_tx_freq", 1500, {},
+        StorageType::GLOBAL, pending_writes_, {}, &global_params_}; // TX offset in the passband, Hz
+    Parameter<int32_t> p_js8_hold_offset{"js8_hold_offset", 0, 0, 1,
+        StorageType::GLOBAL, pending_writes_, &global_params_};
+    Parameter<int32_t> p_js8_auto{"js8_auto", 0, 0, 1,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // AUTO: automatic replies
+    Parameter<int32_t> p_js8_hb{"js8_hb", 0, 0, 1,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // heartbeats
+    Parameter<int32_t> p_js8_hb_ack{"js8_hb_ack", 0, 0, 1,
+        StorageType::GLOBAL, pending_writes_, &global_params_};
+    Parameter<int32_t> p_js8_relay{"js8_relay", 1, 0, 1,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // pass relays (>) on and hold MSG TO: for others, as desktop
+    Parameter<int32_t> p_js8_st_keep{"js8_st_keep", 2, 0, 5,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // Settings: how long stations stay listed (index; 2 = 1 hour)
+    Parameter<int32_t> p_js8_msg_keep{"js8_msg_keep", 0, 0, 4,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // Settings: how long messages stay listed (index; 0 = all)
+    Parameter<int32_t> p_js8_miles{"js8_miles", 0, 0, 1,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // Settings: distances in miles, not km
+    Parameter<int32_t> p_js8_decode_marks{"js8_decode_marks", 0, 0, 1,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // Settings: decode attempts marked on the waterfall
+    Parameter<int32_t> p_js8_wf_avg{"js8_wf_avg", 1, 0, 3,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // Settings: waterfall rows averaged over time: 0 Sharp, 1 Light (default), 2 Medium, 3 Calm (less flicker as it steps)
+    Parameter<int32_t> p_js8_map_mode{"js8_map_mode", 0, 0, 2,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // Show Map: 0 Auto, 1 Close-in, 2 World
+    Parameter<int32_t> p_js8_st_sort{"js8_st_sort", 0, 0, 4,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // Stations view's Sort: 0 Heard you, 1 SNR, 2 Time, 3 Distance
+    Parameter<int32_t> p_js8_tsync_auto{"js8_tsync_auto", 1, 0, 1,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // Time: Auto (JS8's timing follows the decodes, as desktop's Automatic Time Drift)
+    Parameter<int32_t> p_js8_hb_interval{"js8_hb_interval", 30, {},
+        StorageType::GLOBAL, pending_writes_, {}, &global_params_}; // minutes
+    Parameter<int32_t> p_js8_cq_interval{"js8_cq_interval", 1, {},
+        StorageType::GLOBAL, pending_writes_, {}, &global_params_}; // auto CQ: minutes after each CQ ends
+    Parameter<int32_t> p_js8_log_prompt{"js8_log_prompt", 1, 0, 1,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // offer to log when a QSO ends
+    Parameter<int32_t> p_js8_log_activation{"js8_log_activation", 0, 0, 2,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // 0 off, 1 POTA, 2 SOTA
+    Parameter<int32_t> p_js8_alerts{"js8_alerts", 7, 0, 31,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // JS8_ALERT_* bits in dialog_js8.c (7: beep, to me, inbox)
+    Parameter<int32_t> p_js8_speed{"js8_speed", 0, 0, 4,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // js8_speed_t we transmit at (0: Normal, 4: Ultra)
+    Parameter<int32_t> p_js8_rx_all{"js8_rx_all", 1, 0, 1,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // decode every speed (desktop's multi-decoder)
+    Parameter<int32_t> p_js8_ultra{"js8_ultra", 0, 0, 1,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // Ultra on the Speed button (it is always decoded)
+    Parameter<int32_t> p_js8_ghostnet{"js8_ghostnet", 0, 0, 1,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // band keys step through GhostNet's frequencies
+    Parameter<int32_t> p_js8_custom_on{"js8_custom_on", 0, 0, 1,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // tuned to custom_hz, not a preset
+    Parameter<int32_t> p_js8_custom_hz{"js8_custom_hz", 0, {},
+        StorageType::GLOBAL, pending_writes_, {}, &global_params_}; // last custom dial frequency, 0 = none
+
     // Station identity
     Parameter<std::string> p_qth{"qth", "", {},
         StorageType::GLOBAL, pending_writes_, {}, &global_params_};
@@ -404,9 +459,9 @@ class SettingsManager {
     // BAND VFO params (context_id = bands_id). These are NOT in the band
     // registry: load_band_vfo() loads them in explicit dependency order so the
     // DB restore/clamp rules can reference already-loaded siblings.
-    Parameter<int32_t> p_band_vfoa_freq{"vfoa_freq", 14'100'000, 0, 500'000'000,
+    Parameter<int32_t> p_band_vfoa_freq{"vfoa_freq", 14'100'000, 100'000, 500'000'000,
         StorageType::BAND, pending_writes_};
-    Parameter<int32_t> p_band_vfob_freq{"vfob_freq", 14'150'000, 0, 500'000'000,
+    Parameter<int32_t> p_band_vfob_freq{"vfob_freq", 14'150'000, 100'000, 500'000'000,
         StorageType::BAND, pending_writes_};
     Parameter<int32_t> p_band_vfoa_mode{"vfoa_mode", x6100_mode_usb, (int32_t)x6100_mode_lsb, (int32_t)x6100_mode_nfm,
         StorageType::BAND, pending_writes_};
@@ -536,8 +591,8 @@ class SettingsManager {
     int current_mode_group_id() const { return mode_group_id_; }
 
     // Hardware-usable frequency range limits (in Hz). HF is the native
-    // 0.5-55 MHz band; anything above must be covered by a transverter.
-    static constexpr int32_t HF_MIN_FREQ = 500'000;
+    // 0.1-55 MHz band; anything above must be covered by a transverter.
+    static constexpr int32_t HF_MIN_FREQ = 100'000;
     static constexpr int32_t HF_MAX_FREQ = 55'000'000;
 
     // -- VFO operations --

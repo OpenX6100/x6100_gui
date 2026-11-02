@@ -193,6 +193,7 @@ typedef struct {
     ParamInt *(*waterfall_center_line)(void); /* p_waterfall_center_line */
 
     ParamInt *(*show_meter_value)(void); /* p_show_meter_values */
+    ParamInt *(*s_meter_offset)(void); /* p_s_meter_offset (1KO125, dB) */
 
     ParamInt *(*mag_freq)(void); /* p_mag_freq */
     ParamInt *(*mag_info)(void); /* p_mag_info */
@@ -263,6 +264,34 @@ typedef struct {
     ParamInt *(*spmode)(void); /* p_spmode */
     ParamInt *(*freq_accel)(void); /* p_freq_accel */
 } cfg_radio_refs_t;
+
+typedef struct {
+    ParamInt *(*tx_freq)(void); /* p_js8_tx_freq */
+    ParamInt *(*hold_offset)(void); /* p_js8_hold_offset */
+    ParamInt *(*auto_mode)(void); /* p_js8_auto */
+    ParamInt *(*hb)(void); /* p_js8_hb */
+    ParamInt *(*hb_ack)(void); /* p_js8_hb_ack */
+    ParamInt *(*relay)(void); /* p_js8_relay */
+    ParamInt *(*st_keep)(void); /* p_js8_st_keep */
+    ParamInt *(*msg_keep)(void); /* p_js8_msg_keep */
+    ParamInt *(*miles)(void); /* p_js8_miles */
+    ParamInt *(*decode_marks)(void); /* p_js8_decode_marks */
+    ParamInt *(*wf_avg)(void); /* p_js8_wf_avg */
+    ParamInt *(*map_mode)(void); /* p_js8_map_mode */
+    ParamInt *(*st_sort)(void); /* p_js8_st_sort */
+    ParamInt *(*tsync_auto)(void); /* p_js8_tsync_auto */
+    ParamInt *(*hb_interval)(void); /* p_js8_hb_interval */
+    ParamInt *(*cq_interval)(void); /* p_js8_cq_interval */
+    ParamInt *(*log_prompt)(void); /* p_js8_log_prompt */
+    ParamInt *(*log_activation)(void); /* p_js8_log_activation */
+    ParamInt *(*alerts)(void); /* p_js8_alerts */
+    ParamInt *(*speed)(void); /* p_js8_speed */
+    ParamInt *(*rx_all)(void); /* p_js8_rx_all */
+    ParamInt *(*ultra)(void); /* p_js8_ultra */
+    ParamInt *(*ghostnet)(void); /* p_js8_ghostnet */
+    ParamInt *(*custom_on)(void); /* p_js8_custom_on */
+    ParamInt *(*custom_hz)(void); /* p_js8_custom_hz */
+} cfg_js8_refs_t;
 
 typedef struct {
     ParamText *(*bind)(void); /* p_encoder_bind */
@@ -427,6 +456,7 @@ typedef struct {
     cfg_network_refs_t network;
     cfg_keys_refs_t keys;
     cfg_radio_refs_t radio;
+    cfg_js8_refs_t js8;
 } cfg_refs_t;
 
 extern const cfg_refs_t cfg;

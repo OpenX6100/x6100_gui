@@ -1,4 +1,8 @@
 /*
+ *  SPDX-License-Identifier: LGPL-2.1-or-later
+ *  Copyright (c) 2026 Krzysztof Myszkowski SP2KMO
+ *  Part of OpenX6100 (github.com/OpenX6100)
+ *
  * bt_ctl.h - power and discoverability for the built-in Bluetooth adapter.
  *
  * The dialog only ever calls bt_ctl_request(). Bringing the adapter up

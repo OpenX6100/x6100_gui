@@ -50,6 +50,7 @@ static ParamInt *cfg_ant_id(void) { return param_ref<ParamInt>(cfg_instance().p_
 static ParamInt *cfg_atu_enabled(void) { return param_ref<ParamInt>(cfg_instance().p_atu_enabled); }
 static ParamInt *cfg_cat_baud(void) { return param_ref<ParamInt>(cfg_instance().p_cat_baud); }
 static ParamInt *cfg_show_meter_values(void) { return param_ref<ParamInt>(cfg_instance().p_show_meter_values); }
+static ParamInt *cfg_s_meter_offset(void) { return param_ref<ParamInt>(cfg_instance().p_s_meter_offset); }
 static ParamInt *cfg_display_invert(void) { return param_ref<ParamInt>(cfg_instance().p_display_invert); }
 static ParamInt *cfg_auto_level_enabled(void) { return param_ref<ParamInt>(cfg_instance().p_auto_level_enabled); }
 static ParamFloat *cfg_auto_level_offset(void) { return param_ref<ParamFloat>(cfg_instance().p_auto_level_offset); }
@@ -189,6 +190,32 @@ static ParamInt *cfg_line_in(void) { return param_ref<ParamInt>(cfg_instance().p
 static ParamInt *cfg_line_out(void) { return param_ref<ParamInt>(cfg_instance().p_line_out); }
 static ParamInt *cfg_spmode(void) { return param_ref<ParamInt>(cfg_instance().p_spmode); }
 static ParamInt *cfg_freq_accel(void) { return param_ref<ParamInt>(cfg_instance().p_freq_accel); }
+
+static ParamInt *cfg_js8_tx_freq(void) { return param_ref<ParamInt>(cfg_instance().p_js8_tx_freq); }
+static ParamInt *cfg_js8_hold_offset(void) { return param_ref<ParamInt>(cfg_instance().p_js8_hold_offset); }
+static ParamInt *cfg_js8_auto_mode(void) { return param_ref<ParamInt>(cfg_instance().p_js8_auto); }
+static ParamInt *cfg_js8_hb(void) { return param_ref<ParamInt>(cfg_instance().p_js8_hb); }
+static ParamInt *cfg_js8_hb_ack(void) { return param_ref<ParamInt>(cfg_instance().p_js8_hb_ack); }
+static ParamInt *cfg_js8_relay(void) { return param_ref<ParamInt>(cfg_instance().p_js8_relay); }
+static ParamInt *cfg_js8_st_keep(void) { return param_ref<ParamInt>(cfg_instance().p_js8_st_keep); }
+static ParamInt *cfg_js8_msg_keep(void) { return param_ref<ParamInt>(cfg_instance().p_js8_msg_keep); }
+static ParamInt *cfg_js8_miles(void) { return param_ref<ParamInt>(cfg_instance().p_js8_miles); }
+static ParamInt *cfg_js8_decode_marks(void) { return param_ref<ParamInt>(cfg_instance().p_js8_decode_marks); }
+static ParamInt *cfg_js8_wf_avg(void) { return param_ref<ParamInt>(cfg_instance().p_js8_wf_avg); }
+static ParamInt *cfg_js8_map_mode(void) { return param_ref<ParamInt>(cfg_instance().p_js8_map_mode); }
+static ParamInt *cfg_js8_st_sort(void) { return param_ref<ParamInt>(cfg_instance().p_js8_st_sort); }
+static ParamInt *cfg_js8_tsync_auto(void) { return param_ref<ParamInt>(cfg_instance().p_js8_tsync_auto); }
+static ParamInt *cfg_js8_hb_interval(void) { return param_ref<ParamInt>(cfg_instance().p_js8_hb_interval); }
+static ParamInt *cfg_js8_cq_interval(void) { return param_ref<ParamInt>(cfg_instance().p_js8_cq_interval); }
+static ParamInt *cfg_js8_log_prompt(void) { return param_ref<ParamInt>(cfg_instance().p_js8_log_prompt); }
+static ParamInt *cfg_js8_log_activation(void) { return param_ref<ParamInt>(cfg_instance().p_js8_log_activation); }
+static ParamInt *cfg_js8_alerts(void) { return param_ref<ParamInt>(cfg_instance().p_js8_alerts); }
+static ParamInt *cfg_js8_speed(void) { return param_ref<ParamInt>(cfg_instance().p_js8_speed); }
+static ParamInt *cfg_js8_rx_all(void) { return param_ref<ParamInt>(cfg_instance().p_js8_rx_all); }
+static ParamInt *cfg_js8_ultra(void) { return param_ref<ParamInt>(cfg_instance().p_js8_ultra); }
+static ParamInt *cfg_js8_ghostnet(void) { return param_ref<ParamInt>(cfg_instance().p_js8_ghostnet); }
+static ParamInt *cfg_js8_custom_on(void) { return param_ref<ParamInt>(cfg_instance().p_js8_custom_on); }
+static ParamInt *cfg_js8_custom_hz(void) { return param_ref<ParamInt>(cfg_instance().p_js8_custom_hz); }
 static ParamInt *cfg_theme(void) { return param_ref<ParamInt>(cfg_instance().p_theme); }
 static ParamInt *cfg_meter_color(void) { return param_ref<ParamInt>(cfg_instance().p_meter_color); }
 static ParamInt *cfg_ft8_info(void) { return param_ref<ParamInt>(cfg_instance().p_ft8_info); }
@@ -242,6 +269,7 @@ extern "C" const cfg_refs_t cfg = {
         .waterfall_center_line = &cfg_waterfall_center_line,
 
         .show_meter_value = &cfg_show_meter_values,
+        .s_meter_offset = &cfg_s_meter_offset,
 
         .mag_freq = &cfg_mag_freq,
         .mag_info = &cfg_mag_info,
@@ -415,6 +443,33 @@ extern "C" const cfg_refs_t cfg = {
         .line_out = &cfg_line_out,
         .spmode = &cfg_spmode,
         .freq_accel = &cfg_freq_accel,
+    },
+    .js8 = {
+        .tx_freq = &cfg_js8_tx_freq,
+        .hold_offset = &cfg_js8_hold_offset,
+        .auto_mode = &cfg_js8_auto_mode,
+        .hb = &cfg_js8_hb,
+        .hb_ack = &cfg_js8_hb_ack,
+        .relay = &cfg_js8_relay,
+        .st_keep = &cfg_js8_st_keep,
+        .msg_keep = &cfg_js8_msg_keep,
+        .miles = &cfg_js8_miles,
+        .decode_marks = &cfg_js8_decode_marks,
+        .wf_avg = &cfg_js8_wf_avg,
+        .map_mode = &cfg_js8_map_mode,
+        .st_sort = &cfg_js8_st_sort,
+        .tsync_auto = &cfg_js8_tsync_auto,
+        .hb_interval = &cfg_js8_hb_interval,
+        .cq_interval = &cfg_js8_cq_interval,
+        .log_prompt = &cfg_js8_log_prompt,
+        .log_activation = &cfg_js8_log_activation,
+        .alerts = &cfg_js8_alerts,
+        .speed = &cfg_js8_speed,
+        .rx_all = &cfg_js8_rx_all,
+        .ultra = &cfg_js8_ultra,
+        .ghostnet = &cfg_js8_ghostnet,
+        .custom_on = &cfg_js8_custom_on,
+        .custom_hz = &cfg_js8_custom_hz,
     },
 };
 

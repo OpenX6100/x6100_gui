@@ -1,5 +1,7 @@
 /*
  *  SPDX-License-Identifier: LGPL-2.1-or-later
+ *  Copyright (c) 2026 Krzysztof Myszkowski SP2KMO
+ *  Part of OpenX6100 (github.com/OpenX6100)
  *
  *  Xiegu X6100 LVGL GUI - Bluetooth window
  *
@@ -180,29 +182,55 @@ static char        last_activity[48];
 
 /* ---- Table ------------------------------------------------------------- */
 
+/* Address shown in each row, as last drawn. bt_dev's list changes order
+ * while a Scan finds devices, so the highlight is kept on a device, not
+ * on a row number: Connect must act on the device the operator picked. */
+static char row_addr[BT_DEV_MAX][18];
+static int  row_count = 0;
+
+/* The device in the highlighted row, looked up by its address in the
+ * current list. */
 static bool selected_device(bt_dev_t *out)
 {
     uint16_t row, col;
+    int      i;
 
     if (table == NULL) {
         return false;
     }
     lv_table_get_selected_cell(table, &row, &col);
-    return bt_dev_get((int)row, out);
+    if (row >= row_count) {
+        return false;
+    }
+    for (i = 0; i < bt_dev_count(); i++) {
+        if (bt_dev_get(i, out) && strcmp(out->addr, row_addr[row]) == 0) {
+            return true;
+        }
+    }
+    return false;
 }
 
 static void table_refresh(void)
 {
     char     buf[96];
+    char     sel[18] = "";
     int      n = bt_dev_count();
     int      i;
+    uint16_t row, col;
+    bool     seen = false;
     bt_dev_t dev;
 
     if (table == NULL) {
         return;
     }
 
+    lv_table_get_selected_cell(table, &row, &col);
+    if (row < row_count) {
+        snprintf(sel, sizeof(sel), "%s", row_addr[row]);
+    }
+
     if (n == 0) {
+        row_count = 0;
         lv_table_set_row_cnt(table, 1);
         lv_table_set_cell_value(table, 0, 0,
                                 "No devices - press Scan");
@@ -211,15 +239,34 @@ static void table_refresh(void)
 
     lv_table_set_row_cnt(table, (uint16_t)n);
 
+    row_count = 0;
     for (i = 0; i < n; i++) {
         if (!bt_dev_get(i, &dev)) {
-            continue;
+            break;
         }
+        snprintf(row_addr[i], sizeof(row_addr[i]), "%s", dev.addr);
+        row_count = i + 1;
         snprintf(buf, sizeof(buf), "%s%s%s",
                  dev.connected ? "* " : "  ",
                  dev.name,
                  dev.audio ? "  [audio]" : dev.input ? "  [kbd]" : "");
         lv_table_set_cell_value(table, (uint16_t)i, 0, buf);
+        /* The highlighted device moved: the highlight goes with it.
+         * LVGL 8.3 has no setter for the selected cell. */
+        if (sel[0] != '\0' && strcmp(dev.addr, sel) == 0) {
+            seen = true;
+            if (i != row) {
+                ((lv_table_t *)table)->row_act = (uint16_t)i;
+                lv_obj_invalidate(table);
+            }
+        }
+    }
+    /* It left the list: no highlight rather than whatever moved into
+     * its row. The next turn of the knob starts again at the top. */
+    if (sel[0] != '\0' && !seen) {
+        ((lv_table_t *)table)->row_act = LV_TABLE_CELL_NONE;
+        ((lv_table_t *)table)->col_act = LV_TABLE_CELL_NONE;
+        lv_obj_invalidate(table);
     }
 }
 
@@ -737,6 +784,7 @@ static void construct_cb(lv_obj_t *parent)
     lv_group_set_editing(keyboard_group, true);
 
     lv_table_set_cell_value(table, 0, 0, " ");
+    row_count = 0;
 
     tick = 0;
     last_activity[0] = '\0';

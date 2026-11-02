@@ -7,6 +7,7 @@
  */
 
 #include "audio_worker.h"
+#include "../diag_log.h"
 
 #include <errno.h>
 #include <math.h>
@@ -174,6 +175,7 @@ static void rx_consume_frames(audio_worker_t *w, const slot_info_t *info,
 /* ---------- thread body ---------------------------------------------- */
 
 static void *worker_main(void *arg) {
+    diag_set_source("FT8");
     audio_worker_t *w = (audio_worker_t *)arg;
     slot_info_t     info = { .odd = false, .answer_generated = false };
     decode_ctx_t    dc   = { .w = w, .info = &info };

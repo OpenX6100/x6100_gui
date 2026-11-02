@@ -68,6 +68,12 @@ typedef void (*radio_vol_sink_t)(int32_t vol);
 void radio_set_volume_sink(radio_vol_sink_t fn);
 
 void radio_set_pwr(float d);
+/* Radio only, not saved: the settings keep cfg.dsp.tx_filter_low/high. */
+void radio_set_tx_filter(uint16_t low, uint16_t high);
+/* Noise reduction, noise blanker, notch and auto-notch off (the base
+ * applies them in every mode, DIGI included), or back to the settings.
+ * Radio only, not saved. */
+void radio_set_rx_dsp_off(bool off);
 
 void radio_set_charger(bool on);
 
@@ -113,6 +119,10 @@ void radio_power_set_cb(radio_power_cb_t cb);
 void radio_poweroff();
 void radio_set_ptt(bool tx);
 void radio_set_modem(bool tx);
+/* The base plays this app's audio on the speaker (as voice prompts and the
+ * recorder do) - and while it does, the audio it sends us isn't the
+ * receiver's. Off puts the mics back. */
+void radio_speaker_play(bool on);
 
 void radio_set_morse_key(bool on);
 

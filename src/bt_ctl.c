@@ -1,4 +1,8 @@
 /*
+ *  SPDX-License-Identifier: LGPL-2.1-or-later
+ *  Copyright (c) 2026 Krzysztof Myszkowski SP2KMO
+ *  Part of OpenX6100 (github.com/OpenX6100)
+ *
  * bt_ctl.c - power and discoverability for the built-in Bluetooth adapter.
  *
  * Bring-up is done by /usr/bin/bt_up.sh (rootfs overlay) rather than in
@@ -48,6 +52,9 @@ static struct {
     bool            want_on;
     bool            pending;
     bool            lost;       /* chip lost power: down without saving */
+    bool            come_back;  /* ... and up again when it is back */
+    bool            settle;     /* wait for bt_start.sh before bt_up.sh */
+    ino_t           hci_ino;    /* sysfs inode of the hci0 we set up */
     bool            discoverable; /* cached by the worker, see below */
 
     bt_ctl_state_t  state;
@@ -199,9 +206,19 @@ static void *worker(void *arg)
         pthread_mutex_unlock(&S.lock);
 
         if (on) {
-            bool ok = run_script(BT_UP, S.name);
-            bool disc = false;
-            char addr[18] = "";
+            bool        ok;
+            bool        disc = false;
+            char        addr[18] = "";
+            struct stat st;
+
+            if (S.settle) {
+                /* The chip has just come back: udev runs bt_start.sh for
+                 * it (power on, hidden, not pairable, the CAT record).
+                 * Let that finish before bt_up.sh. */
+                S.settle = false;
+                sleep(5);
+            }
+            ok = run_script(BT_UP, S.name);
 
             if (ok) {
                 ok = adapter_info(addr, sizeof(addr), &disc);
@@ -224,6 +241,7 @@ static void *worker(void *arg)
                 continue;
             }
             snprintf(S.addr, sizeof(S.addr), "%s", addr);
+            S.hci_ino = (stat("/sys/class/bluetooth/hci0", &st) == 0) ? st.st_ino : 0;
             S.discoverable = ok && disc;
             S.state = ok ? BT_CTL_ON : BT_CTL_FAILED;
             pthread_mutex_unlock(&S.lock);
@@ -238,7 +256,15 @@ static void *worker(void *arg)
             bool lost;
 
             bt_spp_stop();
-            run_script(BT_DOWN, S.name);
+            pthread_mutex_lock(&S.lock);
+            lost = S.lost;
+            pthread_mutex_unlock(&S.lock);
+            /* Lost with the chip's power: nothing to switch off, and
+             * bt_down.sh (power off, rfkill block) could hit the chip
+             * that is already coming back. */
+            if (!lost) {
+                run_script(BT_DOWN, S.name);
+            }
 
             pthread_mutex_lock(&S.lock);
             S.addr[0] = '\0';
@@ -319,6 +345,7 @@ void bt_ctl_request(bool on)
     ctl_log("request: Bluetooth %s", on ? "on" : "off");
 
     pthread_mutex_lock(&S.lock);
+    S.come_back = false;        /* the operator decides from here */
     S.want_on = on;
     S.pending = true;
     pthread_cond_signal(&S.cond);
@@ -336,15 +363,35 @@ bt_ctl_state_t bt_ctl_state(void)
     /* WiFi switched off in the WiFi window cuts power to the shared
      * chip and hci0 disappears under us. Say Off and let the worker stop
      * the SPP server and tidy up, instead of showing On for a dead
-     * adapter. One stat() of a sysfs entry, cheap enough per call. */
-    if (st == BT_CTL_ON && !S.pending &&
-        access("/sys/class/bluetooth/hci0", F_OK) != 0) {
-        ctl_log("hci0 gone from sysfs: chip lost power, Bluetooth off");
-        S.want_on = false;
+     * adapter. The chip is often back (WiFi on again) before anyone
+     * looks: then hci0 is there but it is a new one (another sysfs
+     * inode), started by bt_start.sh as at boot - hidden, not pairable,
+     * our SPP server gone. Either way it is set up again once it is back,
+     * without switching Bluetooth off and on: that leaves this chip
+     * deaf to LE keyboards. One stat() per call, cheap enough. */
+    if (st == BT_CTL_ON && !S.pending) {
+        struct stat sb;
+        bool        present = (stat("/sys/class/bluetooth/hci0", &sb) == 0);
+
+        if (!present || sb.st_ino != S.hci_ino) {
+            ctl_log(present ? "hci0 replaced: chip lost power and came back, setting it up again"
+                            : "hci0 gone from sysfs: chip lost power, Bluetooth off until it is back");
+            S.want_on = false;
+            S.pending = true;
+            S.lost = true;
+            S.come_back = true;
+            S.addr[0] = '\0';
+            S.state = st = BT_CTL_OFF;
+            pthread_cond_signal(&S.cond);
+        }
+    } else if (st == BT_CTL_OFF && S.come_back && !S.pending &&
+               access("/sys/class/bluetooth/hci0", F_OK) == 0) {
+        ctl_log("hci0 back: Bluetooth on again");
+        S.come_back = false;
+        S.settle = true;
+        S.want_on = true;
         S.pending = true;
-        S.lost = true;
-        S.addr[0] = '\0';
-        S.state = st = BT_CTL_OFF;
+        S.state = st = BT_CTL_STARTING;
         pthread_cond_signal(&S.cond);
     }
     pthread_mutex_unlock(&S.lock);

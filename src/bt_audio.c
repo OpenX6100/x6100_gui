@@ -1,4 +1,8 @@
 /*
+ *  SPDX-License-Identifier: LGPL-2.1-or-later
+ *  Copyright (c) 2026 Krzysztof Myszkowski SP2KMO
+ *  Part of OpenX6100 (github.com/OpenX6100)
+ *
  * bt_audio.c - Bluetooth headset audio: listening and PTT.
  *
  * Everything here shells out to pactl, and every one of those calls can
@@ -54,10 +58,12 @@
 #include "cfg/cfg_api.h"
 #include "msg.h"
 #include "radio.h"
+#include "diag_log.h"
 
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/hci.h>
 #include <poll.h>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 
 #include <errno.h>
@@ -923,7 +929,9 @@ static void do_ptt_on(void)
     pthread_mutex_unlock(&S.lock);
 
     /* Audio path first, carrier last. */
+    const char *src = diag_set_source("Bluetooth PTT");
     radio_set_modem(true);
+    diag_set_source(src);
 
     pthread_mutex_lock(&S.lock);
     S.ptt_on = true;
@@ -939,7 +947,9 @@ static void do_ptt_off(bt_ptt_state_t final_state)
     set_ptt_state(BT_PTT_UNKEYING);
 
     /* Carrier first, audio path last. */
+    const char *src = diag_set_source("Bluetooth PTT");
     radio_set_modem(false);
+    diag_set_source(src);
     unload_module(&S.tx_module_idx);
 
     pthread_mutex_lock(&S.lock);
@@ -1296,6 +1306,13 @@ bool bt_audio_headset_ptt(void)
  * from a device are looked at; L2CAP fragments are put back together
  * first (the first press in a session arrived split in two).
  *
+ * The monitor sees every device, so a press counts only when the frame
+ * came over the ACL link of the headset PTT uses (ptt_device()). The
+ * link's handle is asked from the kernel (HCIGETCONNINFO) at the press
+ * itself, so a headset connected before this thread started is found as
+ * well. Anything else that sends the same bytes, paired or not, is
+ * logged and ignored.
+ *
  * The headset sends no release, so the button is a toggle: press to
  * key, press again to unkey. BT_PTT_TIMEOUT_S still drops a forgotten
  * transmission. Every AT line seen goes to /mnt/bt_audio.log, which is
@@ -1316,6 +1333,7 @@ static struct {
     char             last_seq[3];
 
     /* L2CAP reassembly of one ACL handle at a time. */
+    uint16_t         dev;           /* controller index (hci0 = 0) */
     uint16_t         handle;
     uint16_t         want;          /* total L2CAP frame length */
     uint16_t         have;
@@ -1333,6 +1351,73 @@ static uint64_t hs_now_ms(void)
 static void hs_log(const char *line, const char *what)
 {
     bt_log("headset: %s: %s", line, what);
+}
+
+/* ACL handle of `mac` ("AA_BB_CC_DD_EE_FF" as PulseAudio names it) on
+ * controller `dev`, or -1 when it has no ACL link there. */
+static int hs_acl_handle(uint16_t dev, const char *mac)
+{
+    char                      addr[18];
+    struct sockaddr_hci       a;
+    struct hci_conn_info_req *cr;
+    int                       fd;
+    int                       handle = -1;
+
+    if (mac == NULL || strlen(mac) != 17) {
+        return -1;
+    }
+    for (size_t i = 0; i < 17; i++) {
+        addr[i] = (mac[i] == '_') ? ':' : mac[i];
+    }
+    addr[17] = '\0';
+
+    cr = calloc(1, sizeof(*cr) + sizeof(struct hci_conn_info));
+    if (cr == NULL) {
+        return -1;
+    }
+    if (str2ba(addr, &cr->bdaddr) < 0) {
+        free(cr);
+        return -1;
+    }
+    cr->type = ACL_LINK;
+
+    fd = socket(AF_BLUETOOTH, SOCK_RAW | SOCK_CLOEXEC, BTPROTO_HCI);
+    if (fd >= 0) {
+        memset(&a, 0, sizeof(a));
+        a.hci_family = AF_BLUETOOTH;
+        a.hci_dev = dev;
+        a.hci_channel = HCI_CHANNEL_RAW;
+        if (bind(fd, (struct sockaddr *)&a, sizeof(a)) == 0 &&
+            ioctl(fd, HCIGETCONNINFO, (unsigned long)cr) == 0) {
+            handle = cr->conn_info->handle & 0x0fff;
+        }
+        close(fd);
+    }
+    free(cr);
+    return handle;
+}
+
+/* True when a frame on (dev, handle) came from the headset PTT uses. */
+static bool hs_from_headset(const char *line, uint16_t dev, uint16_t handle)
+{
+    char mac[32];
+    char what[96];
+    int  h;
+
+    ptt_device(mac, sizeof(mac));
+    if (mac[0] == '\0') {
+        hs_log(line, "ignored (no headset)");
+        return false;
+    }
+    h = hs_acl_handle(dev, mac);
+    if (h != (int)handle) {
+        snprintf(what, sizeof(what),
+                 "ignored (handle 0x%03X is not the headset %s)",
+                 handle, mac);
+        hs_log(line, what);
+        return false;
+    }
+    return true;
 }
 
 static void hs_toggle(const char *line)
@@ -1363,8 +1448,8 @@ static void hs_toggle(const char *line)
     }
 }
 
-/* One AT line from the headset, CR/LF stripped. */
-static void hs_at_line(const char *line)
+/* One AT line from a device, CR/LF stripped. */
+static void hs_at_line(const char *line, uint16_t dev, uint16_t handle)
 {
     static const char jabra[] = "AT+ANDROID=MGNP,";
     size_t n = strlen(line);
@@ -1377,6 +1462,13 @@ static void hs_at_line(const char *line)
             hs_log(line, "unknown layout");
             return;
         }
+        if (strcmp(arg + 12, "0000") != 0) {
+            hs_log(line, "not PTT");            /* long, double, volume */
+            return;
+        }
+        if (!hs_from_headset(line, dev, handle)) {
+            return;
+        }
         /* A repeated sequence number is the same event again. */
         if (strncmp(arg + 4, H.last_seq, 2) == 0) {
             hs_log(line, "ignored (repeat)");
@@ -1385,16 +1477,14 @@ static void hs_at_line(const char *line)
         memcpy(H.last_seq, arg + 4, 2);
         H.last_seq[2] = '\0';
 
-        if (strcmp(arg + 12, "0000") == 0) {
-            hs_toggle(line);                    /* short press */
-        } else {
-            hs_log(line, "not PTT");            /* long, double, volume */
-        }
+        hs_toggle(line);                        /* short press */
         return;
     }
 
     if (strcmp(line, "AT+CKPD=200") == 0) {
-        hs_toggle(line);                        /* HSP headset button */
+        if (hs_from_headset(line, dev, handle)) {
+            hs_toggle(line);                    /* HSP headset button */
+        }
         return;
     }
 
@@ -1458,7 +1548,7 @@ static bool hs_avrcp(const uint8_t *p, size_t n)
 /* A whole L2CAP frame from a device: look for AT lines in it. RFCOMM
  * carries them as plain text inside a UIH frame, so a scan for "AT"
  * up to CR is enough and needs no RFCOMM parsing. */
-static void hs_l2cap(const uint8_t *p, size_t n)
+static void hs_l2cap(const uint8_t *p, size_t n, uint16_t dev, uint16_t handle)
 {
     if (hs_avrcp(p, n)) {
         return;
@@ -1485,14 +1575,15 @@ static void hs_l2cap(const uint8_t *p, size_t n)
         }
         line[o] = '\0';
         if (j < n && (p[j] == '\r' || p[j] == '\n')) {
-            hs_at_line(line);
+            hs_at_line(line, dev, handle);
         }
         i = j;
     }
 }
 
-/* One ACL data packet received from a device (monitor payload). */
-static void hs_acl_rx(const uint8_t *p, size_t n)
+/* One ACL data packet received from a device on controller `dev`
+ * (monitor payload). */
+static void hs_acl_rx(uint16_t dev, const uint8_t *p, size_t n)
 {
     uint16_t hf, dlen, handle, pb;
 
@@ -1514,6 +1605,7 @@ static void hs_acl_rx(const uint8_t *p, size_t n)
             H.want = 0;
             return;
         }
+        H.dev = dev;
         H.handle = handle;
         H.want = (uint16_t)(4 + (p[0] | (p[1] << 8)));
         H.have = 0;
@@ -1521,7 +1613,7 @@ static void hs_acl_rx(const uint8_t *p, size_t n)
             H.want = 0;
             return;
         }
-    } else if (H.want == 0 || handle != H.handle) {
+    } else if (H.want == 0 || handle != H.handle || dev != H.dev) {
         return;                         /* continuation of something else */
     }
 
@@ -1533,7 +1625,7 @@ static void hs_acl_rx(const uint8_t *p, size_t n)
     H.have = (uint16_t)(H.have + n);
 
     if (H.have == H.want) {
-        hs_l2cap(H.buf + 4, H.want - 4u);
+        hs_l2cap(H.buf + 4, H.want - 4u, H.dev, H.handle);
         H.want = 0;
     }
 }
@@ -1601,6 +1693,7 @@ static void *hs_thread(void *arg)
 
         /* opcode, controller index, payload length - little endian */
         uint16_t op = (uint16_t)(pkt[0] | (pkt[1] << 8));
+        uint16_t idx = (uint16_t)(pkt[2] | (pkt[3] << 8));
         uint16_t len = (uint16_t)(pkt[4] | (pkt[5] << 8));
 
         if (op != HS_MON_ACL_RX) {
@@ -1609,7 +1702,7 @@ static void *hs_thread(void *arg)
         if ((size_t)len > (size_t)r - 6) {
             len = (uint16_t)(r - 6);
         }
-        hs_acl_rx(pkt + 6, len);
+        hs_acl_rx(idx, pkt + 6, len);
     }
 
     if (fd >= 0) {

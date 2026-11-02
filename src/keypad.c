@@ -21,6 +21,11 @@
 
 static event_keypad_t   event;
 static lv_timer_t       *timer = NULL;
+static uint32_t         long_time = KEYPAD_LONG_TIME;
+
+void keypad_set_long_time(uint32_t ms) {
+    long_time = ms ? ms : KEYPAD_LONG_TIME;
+}
 
 static void keypad_timer(lv_timer_t *t) {
     event.state = KEYPAD_LONG;
@@ -171,7 +176,7 @@ static void keypad_input_read(lv_indev_drv_t *drv, lv_indev_data_t *data) {
                 event.state = KEYPAD_PRESS;
                 lv_event_send(lv_scr_act(), EVENT_KEYPAD, (void*) &event);
 
-                timer = lv_timer_create(keypad_timer, KEYPAD_LONG_TIME, NULL);
+                timer = lv_timer_create(keypad_timer, long_time, NULL);
                 lv_timer_set_repeat_count(timer, 1);
             } else {
                 if (event.state == KEYPAD_PRESS) {

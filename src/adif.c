@@ -237,6 +237,7 @@ static void write_mode(FILE *fd, qso_log_mode_t mode) {
         case MODE_SSB:
             mode_str = "SSB";
             // submode_str = "USB";
+            break;
         case MODE_AM:
             mode_str = "AM";
             break;
@@ -260,6 +261,13 @@ static void write_mode(FILE *fd, qso_log_mode_t mode) {
             break;
         case MODE_RTTY:
             mode_str = "RTTY";
+            break;
+        case MODE_JS8:
+            mode_str = "MFSK";
+            submode_str = "JS8";
+            break;
+        default:
+            mode_str = NULL;
             break;
     }
     write_str(fd, "MODE", mode_str);
@@ -298,6 +306,7 @@ static qso_log_mode_t create_mode(const char * mode, const char * submode) {
     if (strcmp(mode, "RTTY") == 0) return MODE_RTTY;
     if (!submode) return MODE_OTHER;
     if ((strcmp(mode, "MFSK") == 0) && (strcmp(submode, "FT4") == 0)) return MODE_FT4;
+    if ((strcmp(mode, "MFSK") == 0) && (strcmp(submode, "JS8") == 0)) return MODE_JS8;
     if ((strcmp(mode, "MFSK") == 0) && (strcmp(submode, "FT2") == 0)) return MODE_FT2;
     return MODE_OTHER;
 }

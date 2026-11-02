@@ -1,4 +1,8 @@
 /*
+ *  SPDX-License-Identifier: LGPL-2.1-or-later
+ *  Copyright (c) 2026 Krzysztof Myszkowski SP2KMO
+ *  Part of OpenX6100 (github.com/OpenX6100)
+ *
  * bt_dev.c - known Bluetooth devices: list, scan, pair, connect, forget.
  *
  * Everything goes straight to BlueZ over D-Bus, as bt.cpp on the
@@ -18,13 +22,10 @@
  * bonded without printing it).
  *
  * Pairing needs an agent. A small one is registered here, on its own
- * thread and D-Bus connection, and made the default agent:
- *   RequestPinCode       "0000" (older headsets use legacy PIN pairing)
- *   RequestPasskey       0
- *   RequestConfirmation  accepted (the radio has no keypad)
- *   RequestAuthorization, AuthorizeService  accepted
- * It registers again whenever bluetoothd (re)appears on the bus. The
- * bt-agent started by bt_up.sh stays as a fallback.
+ * thread and D-Bus connection, and made the default agent. It answers
+ * pairing questions only while the pairing window is open (agent_call()
+ * has the details) and registers again whenever bluetoothd (re)appears on
+ * the bus. It is the only agent: bt_start.sh and bt_up.sh start none.
  *
  * All D-Bus calls of the worker are synchronous on a private connection
  * of the worker thread; the window only reads the cached list.
@@ -46,7 +47,9 @@
 #include <time.h>
 #include <unistd.h>
 
-#define SCAN_SECONDS    12
+#define SCAN_LE_S       3       /* Scan: LE turn (keyboards) ...           */
+#define SCAN_BREDR_S    5       /* ... then classic (headsets, phones) ... */
+#define SCAN_ROUNDS     2       /* ... twice: 16 s, see do_scan()          */
 #define PAIR_FIND_S     30      /* wait this long for a new device to show up */
 #define PAIR_TIMEOUT_MS 60000
 #define CONN_TIMEOUT_MS 30000
@@ -365,20 +368,29 @@ static bool device_known(const char *addr)
     return exists;
 }
 
-/* Start or stop an inquiry. Returns false only if it could not start. */
-static bool discovery(bool on)
+/* Start or stop an inquiry. Returns false only if it could not start.
+ * `transport` (when starting): "auto" classic and LE together, "le" or
+ * "bredr" one of them only.
+ *
+ * Classic and LE together is what this chip (RTL8723BU) does worst: while
+ * a classic inquiry runs it hears hardly any LE advertising - none at all
+ * after Bluetooth has been switched off and on with WiFi running. An LE
+ * keyboard was then found only in the moment between two inquiries, or
+ * not at all. So keyboards are looked for with "le", and Scan takes turns
+ * (do_scan()). */
+static bool discovery(bool on, const char *transport)
 {
     char      en[96];
     GVariant *r;
 
     if (on) {
-        /* Classic and LE: headsets and phones are BR/EDR, most keyboards
-         * sold now are LE only. do_refresh() keeps LE beacons out of the
-         * list. Errors here are harmless. */
+        /* Headsets and phones are BR/EDR, most keyboards sold now are LE
+         * only. do_refresh() keeps LE beacons out of the list. Errors
+         * here are harmless. */
         GVariantBuilder b;
 
         g_variant_builder_init(&b, G_VARIANT_TYPE("a{sv}"));
-        g_variant_builder_add(&b, "{sv}", "Transport", g_variant_new_string("auto"));
+        g_variant_builder_add(&b, "{sv}", "Transport", g_variant_new_string(transport));
         r = call(ADAPTER_PATH, "org.bluez.Adapter1", "SetDiscoveryFilter",
                  g_variant_new("(a{sv})", &b), NULL, CALL_TIMEOUT_MS, NULL, 0);
         if (r != NULL) {
@@ -556,6 +568,11 @@ static void pairing_open(void)
     S.open_until = time(NULL) + PAIR_WINDOW_S;
     pthread_mutex_unlock(&S.lock);
 
+    /* bluez restarts its pairable timer only when PairableTimeout is set
+     * or Pairable changes, so set the timeout on every Scan: a second
+     * Scan while still pairable would otherwise close pairing on the
+     * first one's timer (main.conf has 180 s for both). */
+    (void)set_adapter_prop("PairableTimeout", g_variant_new_uint32(PAIR_WINDOW_S));
     (void)set_adapter_prop("Pairable", g_variant_new_boolean(TRUE));
     (void)set_adapter_prop("DiscoverableTimeout", g_variant_new_uint32(PAIR_WINDOW_S));
     (void)set_adapter_prop("Discoverable", g_variant_new_boolean(TRUE));
@@ -563,8 +580,8 @@ static void pairing_open(void)
 }
 
 /* Worker thread, on every refresh: once the window is over, hidden and
- * not pairable again - also against bt_start.sh, which makes the adapter
- * discoverable for good at boot. */
+ * not pairable again, whatever turned them on (bluez also turns both off
+ * after main.conf's timeouts). */
 static void pairing_enforce(void)
 {
     if (pairing_is_open()) {
@@ -749,7 +766,7 @@ static bool wait_known(const char *addr, bool *scanned)
 {
     int i;
 
-    *scanned = discovery(true);
+    *scanned = discovery(true, "auto");
     plog("discovery %s, waiting up to %d s", *scanned ? "on" : "FAILED", PAIR_FIND_S);
     for (i = 0; i < PAIR_FIND_S && !device_known(addr); i++) {
         sleep(1);
@@ -761,10 +778,132 @@ static bool wait_known(const char *addr, bool *scanned)
     return true;
 }
 
+/* A keyboard not paired yet, at `addr` or under the same name: many
+ * keyboards take a new address each time their pairing key is pressed
+ * (seen: C0:53:A4:C5:A3:D7, D8, D9, ...), so the entry Connect was
+ * pressed on may be gone while the keyboard advertises under the next
+ * one. A keyboard without a name is looked for at `addr` only. The
+ * address found goes to `out`. */
+static bool find_keyboard(const char *name, const char *addr, char *out, size_t out_sz)
+{
+    GVariant     *r;
+    GVariantIter *objs = NULL;
+    const char   *path;
+    GVariant     *ifaces;
+    bool          found = false;
+
+    r = call("/", "org.freedesktop.DBus.ObjectManager", "GetManagedObjects",
+             NULL, G_VARIANT_TYPE("(a{oa{sa{sv}}})"), CALL_TIMEOUT_MS, NULL, 0);
+    if (r == NULL) {
+        return false;
+    }
+    g_variant_get(r, "(a{oa{sa{sv}}})", &objs);
+    while (!found && g_variant_iter_next(objs, "{&o@a{sa{sv}}}", &path, &ifaces)) {
+        GVariant   *dev = g_variant_lookup_value(ifaces, "org.bluez.Device1",
+                                                 G_VARIANT_TYPE("a{sv}"));
+        const char *a = NULL;
+        const char *n = NULL;
+        gboolean    paired = FALSE;
+
+        if (dev != NULL) {
+            g_variant_lookup(dev, "Address", "&s", &a);
+            g_variant_lookup(dev, "Name", "&s", &n);
+            g_variant_lookup(dev, "Paired", "b", &paired);
+            if (a != NULL && addr_ok(a) && !paired &&
+                (g_ascii_strcasecmp(a, addr) == 0 ||
+                 (name[0] != '\0' && n != NULL && strcmp(n, name) == 0 &&
+                  props_input(dev)))) {
+                snprintf(out, out_sz, "%s", a);
+                found = true;
+            }
+            g_variant_unref(dev);
+        }
+        g_variant_unref(ifaces);
+    }
+    g_variant_iter_free(objs);
+    g_variant_unref(r);
+    return found;
+}
+
+/* Wait for a keyboard to (re)appear, LE only (see discovery()); polled
+ * every half second, as its pairing window may be short. */
+static bool wait_keyboard(const char *name, const char *addr, char *out,
+                          size_t out_sz, bool *scanned)
+{
+    int i;
+
+    *scanned = discovery(true, "le");
+    plog("discovery (LE) %s, waiting up to %d s", *scanned ? "on" : "FAILED", PAIR_FIND_S);
+    for (i = 0; i < PAIR_FIND_S * 2; i++) {
+        if (find_keyboard(name, addr, out, out_sz)) {
+            plog("found %s after %d.%d s", out, i / 2, (i % 2) * 5);
+            return true;
+        }
+        usleep(500000);
+    }
+    return false;
+}
+
+/* After a keyboard paired at a new address: its old pairings under the
+ * same name go. Pressing the pairing key made the keyboard drop them, so
+ * they can never connect again, and Connect on one only waited a minute
+ * for "Connect failed". One that is connected stays (a second keyboard of
+ * the same model). */
+static void forget_old_keyboards(const char *name, const char *keep)
+{
+    GVariant     *r;
+    GVariantIter *objs = NULL;
+    const char   *path;
+    GVariant     *ifaces;
+
+    if (name[0] == '\0') {
+        return;
+    }
+    r = call("/", "org.freedesktop.DBus.ObjectManager", "GetManagedObjects",
+             NULL, G_VARIANT_TYPE("(a{oa{sa{sv}}})"), CALL_TIMEOUT_MS, NULL, 0);
+    if (r == NULL) {
+        return;
+    }
+    g_variant_get(r, "(a{oa{sa{sv}}})", &objs);
+    while (g_variant_iter_next(objs, "{&o@a{sa{sv}}}", &path, &ifaces)) {
+        GVariant   *dev = g_variant_lookup_value(ifaces, "org.bluez.Device1",
+                                                 G_VARIANT_TYPE("a{sv}"));
+        const char *a = NULL;
+        const char *n = NULL;
+        gboolean    paired = FALSE;
+        gboolean    connected = FALSE;
+
+        if (dev != NULL) {
+            g_variant_lookup(dev, "Address", "&s", &a);
+            g_variant_lookup(dev, "Name", "&s", &n);
+            g_variant_lookup(dev, "Paired", "b", &paired);
+            g_variant_lookup(dev, "Connected", "b", &connected);
+            if (a != NULL && addr_ok(a) && g_ascii_strcasecmp(a, keep) != 0 &&
+                paired && !connected && n != NULL && strcmp(n, name) == 0 &&
+                props_input(dev)) {
+                GVariant *rr = call(ADAPTER_PATH, "org.bluez.Adapter1", "RemoveDevice",
+                                    g_variant_new("(o)", path), NULL,
+                                    CALL_TIMEOUT_MS, NULL, 0);
+
+                plog("keyboard: old pairing %s forgotten: %s", a, rr != NULL ? "ok" : "failed");
+                if (rr != NULL) {
+                    g_variant_unref(rr);
+                }
+            }
+            g_variant_unref(dev);
+        }
+        g_variant_unref(ifaces);
+    }
+    g_variant_iter_free(objs);
+    g_variant_unref(r);
+}
+
 static pair_result_t do_pair_connect(const char *addr)
 {
     char      path[64];
     char      en[96];
+    char      kbd_addr[18];
+    char      name[64] = "";
     GVariant *r;
     bool      scanned = false;
     bool      input;
@@ -775,25 +914,36 @@ static pair_result_t do_pair_connect(const char *addr)
 
     input = device_known(addr) && path_is_input(bus(), path);
     if (input) {
+        GVariant   *props = dev_props(bus(), path);
+        const char *n = NULL;
+
+        if (props != NULL) {
+            if (g_variant_lookup(props, "Name", "&s", &n) && n != NULL) {
+                snprintf(name, sizeof(name), "%s", n);
+            }
+            g_variant_unref(props);
+        }
         /* Many keyboards accept a pairing only for a few seconds after
          * their pairing key is pressed, and an entry left from an earlier
          * Scan says nothing about whether that is now. So the old entry
          * goes, and Pair() is sent the moment the keyboard shows up
-         * again. */
+         * again - at its old address or a new one, see find_keyboard(). */
         r = call(ADAPTER_PATH, "org.bluez.Adapter1", "RemoveDevice",
                  g_variant_new("(o)", path), NULL, CALL_TIMEOUT_MS, NULL, 0);
         if (r != NULL) {
             g_variant_unref(r);
         }
         set_activity("Press the keyboard's pairing key");
-        plog("keyboard: waiting for it to advertise again");
-        if (!wait_known(addr, &scanned)) {
+        plog("keyboard: waiting for \"%s\" to advertise again", name);
+        if (!wait_keyboard(name, addr, kbd_addr, sizeof(kbd_addr), &scanned)) {
             plog("result: keyboard not found - pairing key pressed?");
             if (scanned) {
-                discovery(false);
+                discovery(false, NULL);
             }
             return PAIR_NOT_FOUND;
         }
+        addr = kbd_addr;
+        dev_path(addr, path, sizeof(path));
     } else if (!device_known(addr)) {
         /* The device must be known to bluez. A Scan a moment ago leaves it
          * there for a while; otherwise look for it now (pairing mode). */
@@ -801,7 +951,7 @@ static pair_result_t do_pair_connect(const char *addr)
         if (!wait_known(addr, &scanned)) {
             plog("result: not found - is the headset in pairing mode?");
             if (scanned) {
-                discovery(false);
+                discovery(false, NULL);
             }
             return PAIR_NOT_FOUND;
         }
@@ -809,7 +959,7 @@ static pair_result_t do_pair_connect(const char *addr)
     }
     /* An inquiry running alongside slows paging and pairing down. */
     if (scanned) {
-        discovery(false);
+        discovery(false, NULL);
     }
 
     /* A keyboard often pairs with passkey entry: the radio shows a number
@@ -829,6 +979,9 @@ static pair_result_t do_pair_connect(const char *addr)
     if (r != NULL) {
         g_variant_unref(r);
         plog("Pair: ok");
+        if (input) {
+            forget_old_keyboards(name, addr);
+        }
     } else if (strstr(en, "AlreadyExists") != NULL) {
         plog("Pair: already paired");
     } else {
@@ -1049,6 +1202,18 @@ static void do_forget(const char *addr)
     set_activity("");
 }
 
+/* Worker thread: Connect, Disconnect or Forget is waiting. (The timer's
+ * refreshes are not posted while a Scan runs.) */
+static bool cmd_waiting(void)
+{
+    bool w;
+
+    pthread_mutex_lock(&S.lock);
+    w = S.cmd != CMD_NONE && S.cmd != CMD_REFRESH;
+    pthread_mutex_unlock(&S.lock);
+    return w;
+}
+
 static void do_scan(void)
 {
     int i;
@@ -1060,15 +1225,30 @@ static void do_scan(void)
     /* Scan is also how a phone gets to pair from its side. */
     pairing_open();
 
-    if (discovery(true)) {
-        /* Refresh along the way so devices appear as they are found. */
-        for (i = 0; i < SCAN_SECONDS; i += 3) {
-            sleep(3);
-            do_refresh();
+    /* LE and classic in turns, not together (see discovery()): an LE turn
+     * is never far off, so it doesn't matter whether the keyboard's
+     * pairing key was pressed before Scan or during it. A classic turn is
+     * long enough for an inquiry to reach a headset. The list is refreshed
+     * after every turn so devices appear as they are found. */
+    /* Connect pressed during the Scan ends it at once: a keyboard may
+     * advertise for a few seconds only, and the worker does one thing at
+     * a time. */
+    for (i = 0; i < SCAN_ROUNDS * 2 && !cmd_waiting(); i++) {
+        bool le = (i % 2) == 0;
+
+        if (discovery(true, le ? "le" : "bredr")) {
+            int q;
+
+            for (q = 0; q < (le ? SCAN_LE_S : SCAN_BREDR_S) * 4 && !cmd_waiting(); q++) {
+                usleep(250000);
+            }
+            discovery(false, NULL);
         }
-        discovery(false);
+        do_refresh();
     }
-    do_refresh();
+    if (cmd_waiting()) {
+        plog("scan: ended early for the next command");
+    }
 
     pthread_mutex_lock(&S.lock);
     S.scanning = false;
@@ -1279,8 +1459,7 @@ static void agent_register(void)
     plog("agent: registered (%s, PIN %s)", cap, AGENT_PIN);
 }
 
-/* Default agent again: bt_start.sh's bt-agent (accepts everything) takes
- * that place when it starts after us, e.g. when the adapter comes back. */
+/* Default agent again, e.g. when the adapter comes back. */
 static void agent_make_default(void)
 {
     GVariant *r;

@@ -23,3 +23,7 @@ typedef struct {
 } keypad_t;
 
 keypad_t * keypad_init(char *dev_name);
+
+/* How long a bottom button must be held to count as a hold; 0 = the
+ * default (1 s). Apps may shorten it while open. */
+void keypad_set_long_time(uint32_t ms);

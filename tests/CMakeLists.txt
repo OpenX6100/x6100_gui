@@ -18,6 +18,23 @@ target_link_libraries(test_ft8_qso PRIVATE ft8_core QTH aether_x6100_control Cat
 add_test(NAME test_ft8_qso COMMAND $<TARGET_FILE:test_ft8_qso> --colour-mode=ansi )
 
 
+add_subdirectory(../third-party/js8core ${CMAKE_BINARY_DIR}/third-party/js8core)
+add_subdirectory(../src/js8 ${CMAKE_BINARY_DIR}/src/js8)
+add_executable(test_js8 test_js8.cpp)
+target_include_directories(test_js8 PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(test_js8 PRIVATE JS8 JS8TestSignal js8core Catch2::Catch2WithMain)
+target_compile_definitions(test_js8 PRIVATE CTY_DAT_PATH="${PROJECT_SOURCE_DIR}/third-party/cty/cty.dat"
+                                           MAP_BIN_PATH="${PROJECT_SOURCE_DIR}/tools/map_data/js8_map.bin")
+add_test(NAME test_js8 COMMAND $<TARGET_FILE:test_js8> --colour-mode=ansi )
+# test_js8_db: params.db for every kind of card (src/cfg/js8_db.c with
+# migrations.c; plain C, sqlite3 only). Its own binary: it stands in for
+# db.cpp's cfg_db_get(), which test_cfg links.
+add_executable(test_js8_db test_js8_db.cpp
+    ${PROJECT_SOURCE_DIR}/src/cfg/js8_db.c ${PROJECT_SOURCE_DIR}/src/cfg/migrations.c)
+target_include_directories(test_js8_db PRIVATE ${PROJECT_SOURCE_DIR}/src/cfg)
+target_link_libraries(test_js8_db PRIVATE Catch2::Catch2WithMain sqlite3)
+add_test(NAME test_js8_db COMMAND $<TARGET_FILE:test_js8_db> --colour-mode=ansi)
+
 add_subdirectory(cfg)
 
 add_subdirectory(../src/cw_decoder ${CMAKE_BINARY_DIR}/src/cw_decoder)
@@ -28,3 +45,10 @@ add_executable(test_civ test_civ.cpp)
 target_include_directories(test_civ PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(test_civ PRIVATE cat_core Catch2::Catch2WithMain)
 add_test(NAME test_civ COMMAND $<TARGET_FILE:test_civ> --colour-mode=ansi)
+
+# test_tx_level: the digital modes' drive level (src/tx_level.c, plain C,
+# no radio) against a model radio.
+add_executable(test_tx_level test_tx_level.cpp ${PROJECT_SOURCE_DIR}/src/tx_level.c)
+target_include_directories(test_tx_level PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(test_tx_level PRIVATE Catch2::Catch2WithMain)
+add_test(NAME test_tx_level COMMAND $<TARGET_FILE:test_tx_level> --colour-mode=ansi)
