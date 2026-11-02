@@ -458,10 +458,11 @@ static buttons_page_t page_dfl_1 = {
 };
 
 /* App pages */
-static button_data_t btn_app_p1 = make_page_btn("(APP 1:4)", "Application|page 1");
-static button_data_t btn_app_p2 = make_page_btn("(APP 2:4)", "Application|page 2");
-static button_data_t btn_app_p3 = make_page_btn("(APP 3:4)", "Application|page 3");
-static button_data_t btn_app_p4 = make_page_btn("(APP 4:4)", "Application|page 4");
+static button_data_t btn_app_p1 = make_page_btn("(APP 1:5)", "Application|page 1");
+static button_data_t btn_app_p2 = make_page_btn("(APP 2:5)", "Application|page 2");
+static button_data_t btn_app_p3 = make_page_btn("(APP 3:5)", "Application|page 3");
+static button_data_t btn_app_p4 = make_page_btn("(APP 4:5)", "Application|page 4");
+static button_data_t btn_app_p5 = make_page_btn("(APP 5:5)", "Application|page 5");
 
 static buttons_page_t page_app_1 = {
     {&btn_app_p1, &btn_rtty, &btn_ft8, &btn_swr, &btn_gps}
@@ -482,6 +483,11 @@ static buttons_page_t page_app_4 = {{
     &btn_channels,
     /* WSPR */
     /* PSK31 */
+}};
+static buttons_page_t page_app_5 = {{
+    &btn_app_p5,
+    /* Olivia */
+    /* JTTY */
 }};
 
 /* RTTY */
@@ -504,6 +510,7 @@ buttons_group_t buttons_group_app = {
     &page_app_2,
     &page_app_3,
     &page_app_4,
+    &page_app_5,
 };
 
 buttons_group_t buttons_group_key = {
