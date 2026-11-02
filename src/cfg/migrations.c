@@ -126,6 +126,37 @@ static int _4_convert_scaled_params_to_real() {
     return 0;
 }
 
+/* FT2 dial frequencies (IU8LMC's Decodium list, mode 3 = USB-D). For new
+   and existing databases alike: the seed database starts at version 1. */
+static int _5_add_ft2_frequencies() {
+    sqlite3 *db = cfg_db_get();
+    int rc;
+    char *query;
+    rc = asprintf(&query,
+        "INSERT OR IGNORE INTO digital_modes(label, freq, mode, type) VALUES "
+        "('FT2 160m', 1843000, 3, %u), ('FT2 80m', 3568000, 3, %u), "
+        "('FT2 60m', 5360000, 3, %u), ('FT2 40m', 7062000, 3, %u), "
+        "('FT2 30m', 10144000, 3, %u), ('FT2 20m', 14084000, 3, %u), "
+        "('FT2 17m', 18108000, 3, %u), ('FT2 15m', 21144000, 3, %u), "
+        "('FT2 12m', 24923000, 3, %u), ('FT2 10m', 28184000, 3, %u), "
+        "('FT2 6m', 50316000, 3, %u)",
+        CFG_DIG_TYPE_FT2, CFG_DIG_TYPE_FT2, CFG_DIG_TYPE_FT2, CFG_DIG_TYPE_FT2,
+        CFG_DIG_TYPE_FT2, CFG_DIG_TYPE_FT2, CFG_DIG_TYPE_FT2, CFG_DIG_TYPE_FT2,
+        CFG_DIG_TYPE_FT2, CFG_DIG_TYPE_FT2, CFG_DIG_TYPE_FT2
+    );
+    if (rc == -1) {
+        printf("Cannot allocate SQL query\n");
+        return 1;
+    }
+    rc = sqlite3_exec(db, query, NULL, NULL, NULL);
+    free(query);
+    if (rc != SQLITE_OK) {
+        printf("Cannot add FT2 frequencies: %s\n", sqlite3_errmsg(db));
+        return 1;
+    }
+    return 0;
+}
+
 /* Migrations array */
 static int (*migrations[])() = {
     _0_init_migrations,
@@ -133,6 +164,7 @@ static int (*migrations[])() = {
     _2_update_atu_freq,
     _3_update_spectrum_peak_hold,
     _4_convert_scaled_params_to_real,
+    _5_add_ft2_frequencies,
 };
 
 int migrations_apply(void) {

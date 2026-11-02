@@ -36,6 +36,7 @@
 #include "dsp.h"
 
 #include "ft8/audio_worker.h"
+#include "ft8/ft2.h"
 #include "ft8/cq_scheduler.h"
 #include "ft8_ui/table_view.h"
 #include "ft8/tx_worker.h"
@@ -68,8 +69,51 @@
 
 #define FT8_WIDTH_HZ    50
 #define FT4_WIDTH_HZ    83
+#define FT2_WIDTH_HZ    167
 
 #define MAX_TX_START_DELAY 1.5f
+
+/* ---- FT8 / FT4 / FT2 ------------------------------------------------
+ * cfg.ft8.protocol: FTX_PROTOCOL_FT4 (0), FTX_PROTOCOL_FT8 (1) or
+ * FTX_PROTOCOL_FT2 (2, ft8/ft2.h). */
+
+static int ftx_mode(void) {
+    return param_i_get(cfg.ft8.protocol());
+}
+
+static bool ftx_is_ft2(void) {
+    return ftx_mode() == (int)FTX_PROTOCOL_FT2;
+}
+
+static const char *ftx_mode_name(void) {
+    switch (ftx_mode()) {
+        case FTX_PROTOCOL_FT8: return "FT8";
+        case FTX_PROTOCOL_FT4: return "FT4";
+        default:               return "FT2";
+    }
+}
+
+static int ftx_width_hz(void) {
+    switch (ftx_mode()) {
+        case FTX_PROTOCOL_FT8: return FT8_WIDTH_HZ;
+        case FTX_PROTOCOL_FT4: return FT4_WIDTH_HZ;
+        default:               return FT2_WIDTH_HZ;
+    }
+}
+
+/* A transmission may start this late into its slot. FT2 lasts 2.52 s
+ * and must end inside the 3.75 s slot. */
+static float ftx_max_tx_start(void) {
+    return ftx_is_ft2() ? 0.8f : MAX_TX_START_DELAY;
+}
+
+static qso_log_mode_t ftx_log_mode(void) {
+    switch (ftx_mode()) {
+        case FTX_PROTOCOL_FT8: return MODE_FT8;
+        case FTX_PROTOCOL_FT4: return MODE_FT4;
+        default:               return MODE_FT2;
+    }
+}
 
 typedef enum {
     RX_PROCESS,
@@ -226,7 +270,7 @@ static int64_t     udp_last_freq = -1;
 static char        udp_last_dx[16];
 
 static const char *udp_mode_str(void) {
-    return param_i_get(cfg.ft8.protocol()) == FTX_PROTOCOL_FT8 ? "FT8" : "FT4";
+    return ftx_mode_name();
 }
 
 /* The QSO partner is not exposed by the qso processor, but the pending TX
@@ -300,7 +344,7 @@ static void save_qso(const char *remote_callsign, const char *remote_grid, const
     qso_log_record_t qso = qso_log_record_create(
         PARAM_T_GET(cfg.callsign()),
         canonized_call,
-        now, param_i_get(cfg.ft8.protocol()) == FTX_PROTOCOL_FT8 ? MODE_FT8 : MODE_FT4,
+        now, ftx_log_mode(),
         s_snr, r_snr, cparam_i_get(cfg.cur.fg_freq()), NULL, NULL,
         PARAM_T_GET(cfg.qth()), remote_grid
     );
@@ -443,6 +487,11 @@ static void load_band(int8_t dir) {
             type = CFG_DIG_TYPE_FT4;
             lv_finder_set_width(finder, FT4_WIDTH_HZ);
             break;
+
+        default:    /* FT2 */
+            type = CFG_DIG_TYPE_FT2;
+            lv_finder_set_width(finder, FT2_WIDTH_HZ);
+            break;
     }
     bool res = cfg_digital_load(dir, type);
     if (res) {
@@ -516,7 +565,7 @@ static void rotary_cb(int32_t diff, uint16_t dt) {
         diff *= 5;
     }
     uint32_t f = param_i_get(cfg.ft8.tx_freq()) + diff;
-    f = limit(f, filter_low, filter_high - (param_i_get(cfg.ft8.protocol()) == FTX_PROTOCOL_FT8 ? FT8_WIDTH_HZ : FT4_WIDTH_HZ));
+    f = limit(f, filter_low, filter_high - ftx_width_hz());
 
     set_freq(f);
 
@@ -702,7 +751,7 @@ const char *cq_all_label_getter() {
 
 const char *protocol_label_getter() {
     static char buf[32];
-    sprintf(buf, "Mode:\n%s", param_i_get(cfg.ft8.protocol()) == FTX_PROTOCOL_FT8 ? "FT8": "FT4");
+    sprintf(buf, "Mode:\n%s", ftx_mode_name());
     return buf;
 }
 
@@ -738,9 +787,12 @@ static void show_cq_all_cb(struct button_data_t *btn_data) {
 static void mode_ft4_ft8_cb(struct button_data_t *btn_data) {
     if (disable_buttons) return;
 
-    ftx_protocol_t proto = param_i_get(cfg.ft8.protocol());
+    /* FT8 -> FT4 -> FT2 -> FT8 */
+    int proto = param_i_get(cfg.ft8.protocol());
     if (proto == FTX_PROTOCOL_FT8)
         proto = FTX_PROTOCOL_FT4;
+    else if (proto == FTX_PROTOCOL_FT4)
+        proto = FTX_PROTOCOL_FT2;
     else {
         proto = FTX_PROTOCOL_FT8;
     }
@@ -786,7 +838,7 @@ static void tx_cq_en_dis_cb(struct button_data_t *btn_data) {
         clock_gettime(CLOCK_REALTIME, &now);
         float time_since_slot_start;
         tx_time_slot = !get_time_slot(now, &time_since_slot_start);
-        if (time_since_slot_start < MAX_TX_START_DELAY) {
+        if (time_since_slot_start < ftx_max_tx_start()) {
             tx_time_slot = !tx_time_slot;
         }
 
@@ -843,15 +895,7 @@ static void time_sync(struct button_data_t *btn_data) {
     time_t now = time(NULL);
     uint8_t sec = now % 60;
     float drift, slot_time;
-    switch (param_i_get(cfg.ft8.protocol())) {
-        case FTX_PROTOCOL_FT4:
-            slot_time = FT4_SLOT_TIME;
-            break;
-
-        case FTX_PROTOCOL_FT8:
-            slot_time = FT8_SLOT_TIME;
-            break;
-    }
+    slot_time = ftx_slot_time(param_i_get(cfg.ft8.protocol()));
     drift = fmodf(sec + slot_time / 2, slot_time) - slot_time / 2;
     struct timespec tp;
 
@@ -971,17 +1015,10 @@ static bool get_time_slot(struct timespec now, float *sec_since_start) {
     bool cur_odd;
     float sec = (now.tv_sec % 60) + now.tv_nsec / 1.0e9f;
 
-    switch (param_i_get(cfg.ft8.protocol())) {
-    case FTX_PROTOCOL_FT4:
-        cur_odd = (int)(sec / FT4_SLOT_TIME) % 2;
-        *sec_since_start = fmodf(sec, FT4_SLOT_TIME);
-        break;
+    float slot_time = ftx_slot_time(param_i_get(cfg.ft8.protocol()));
 
-        case FTX_PROTOCOL_FT8:
-        cur_odd = (int)(sec / FT8_SLOT_TIME) % 2;
-        *sec_since_start = fmodf(sec, FT8_SLOT_TIME);
-        break;
-    }
+    cur_odd = (int)(sec / slot_time) % 2;
+    *sec_since_start = fmodf(sec, slot_time);
     return cur_odd;
 }
 
@@ -1066,7 +1103,7 @@ static void add_rx_text(int16_t snr, const char * text, slot_info_t *s_info, flo
     if (meta.type == FTX_MSG_TYPE_CQ) {
         cell_data.worked_type = qso_log_search_worked(
             meta.call_de,
-            param_i_get(cfg.ft8.protocol()) == FTX_PROTOCOL_FT8 ? MODE_FT8 : MODE_FT4,
+            ftx_log_mode(),
             qso_log_freq_to_band(cparam_i_get(cfg.cur.fg_freq()))
         );
     }
@@ -1165,7 +1202,7 @@ static void on_tick_cb(const slot_info_t *info, bool new_slot,
 
     bool have_tx_msg = tx_msg.msg[0] != '\0';
 
-    if ((sec_since_slot_start < MAX_TX_START_DELAY) && have_tx_msg) {
+    if ((sec_since_slot_start < ftx_max_tx_start()) && have_tx_msg) {
         if ((tx_time_slot == info->odd) && subject_i_get(tx_enabled)) {
             state = TX_PROCESS;
             add_tx_text(tx_msg.msg);
@@ -1187,7 +1224,12 @@ static void on_tick_cb(const slot_info_t *info, bool new_slot,
 
     if (new_slot) {
         state = RX_PROCESS;
-        if (!have_tx_msg || !subject_i_get(tx_enabled)) {
+        static unsigned ft2_slots = 0;
+
+        /* FT2: an RX line every 3.75 s would fill the table; one every
+         * 4th slot (15 s), as FT8. */
+        if ((!have_tx_msg || !subject_i_get(tx_enabled)) &&
+            (!ftx_is_ft2() || (ft2_slots++ % 4) == 0)) {
             struct timespec now;
             clock_gettime(CLOCK_REALTIME, &now);
             struct tm *ts = localtime(&now.tv_sec);
