@@ -37,9 +37,10 @@ typedef enum {
     MODE_FT8,
     MODE_FT4,
     MODE_RTTY,
+    /* JTTY: 10, after FT2's 9 (#288). Above JS8's line, so the FT2 and
+     * JTTY PRs merge in any order. ADIF MODE "JTTY", as WSJT-X writes it. */
+    MODE_JTTY = 10,
     MODE_JS8 = 8,       /* stored in qso_log.db: never reused or changed */
-    /* 9: FT2 (#288) */
-    MODE_JTTY = 10,     /* ADIF MODE "JTTY", as WSJT-X writes it */
 } qso_log_mode_t;
 
 typedef struct {
