@@ -141,7 +141,7 @@ class SettingsManager {
     // FT8
     Parameter<int32_t> p_ft8_show_all{"ft8_show_all", true, 0, 1,
         StorageType::GLOBAL, pending_writes_, &global_params_};
-    Parameter<int32_t> p_ft8_protocol{"ft8_protocol", FTX_PROTOCOL_FT8, 0, (int32_t)FTX_PROTOCOL_FT8,
+    Parameter<int32_t> p_ft8_protocol{"ft8_protocol", FTX_PROTOCOL_FT8, 0, 2 /* FT2, ft8/ft2.h */,
         StorageType::GLOBAL, pending_writes_, &global_params_};
     Parameter<int32_t> p_ft8_auto{"ft8_auto", true, 0, 1,
         StorageType::GLOBAL, pending_writes_, &global_params_};

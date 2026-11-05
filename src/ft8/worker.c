@@ -9,6 +9,7 @@
 #include "worker.h"
 
 #include "gfsk.h"
+#include "ft2.h"
 #include "msg_encode.h"
 
 #include "lvgl/lvgl.h"
@@ -129,7 +130,14 @@ void ftx_worker_init(int sample_rate, ftx_protocol_t protocol) {
     ftx_min_score_load_or_create();
     float slot_period;
 
-    switch (protocol) {
+    switch ((int)protocol) {
+    case FTX_PROTOCOL_FT2:
+        /* FT4 at twice the speed (ft2.h) */
+        slot_period = FT2_SLOT_TIME;
+        symbol_period = FT2_SYMBOL_PERIOD;
+        n_tones = FT4_NN;
+        sync_num = FT4_NUM_SYNC;
+        break;
     case FTX_PROTOCOL_FT8:
         slot_period = FT8_SLOT_TIME;
         symbol_period = FT8_SYMBOL_PERIOD;
@@ -178,7 +186,7 @@ void ftx_worker_init(int sample_rate, ftx_protocol_t protocol) {
         LV_LOG_ERROR("FT8 worker: wf.mag malloc failed");
         goto error_cleanup;
     }
-    wf.protocol = protocol;
+    wf.protocol = ftx_lib_protocol(protocol);   /* FT2 decodes as FT4 */
 
     find_candidates_at = n_tones - sync_num;
 

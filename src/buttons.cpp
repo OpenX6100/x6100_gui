@@ -315,7 +315,7 @@ static button_data_t btn_nr_level = make_encoder_btn(nr_level_label_getter, CTRL
 /* APP */
 
 static button_data_t btn_rtty = make_app_btn("RTTY", ACTION_APP_RTTY);
-static button_data_t btn_ft8  = make_app_btn("FT8", ACTION_APP_FT8);
+static button_data_t btn_ft8  = make_app_btn("FT8/4/2", ACTION_APP_FT8);
 static button_data_t btn_swr  = make_app_btn("SWR\nScan", ACTION_APP_SWRSCAN);
 static button_data_t btn_gps  = make_app_btn("GPS", ACTION_APP_GPS);
 

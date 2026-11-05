@@ -64,7 +64,7 @@ static action_items_t long_action_items[] = {
     {.label = " Voice mode ",      .action = ACTION_VOICE_MODE  },
     {.label = " Battery info ",    .action = ACTION_BAT_INFO    },
     {.label = " APP RTTY ",        .action = ACTION_APP_RTTY    },
-    {.label = " APP FT8 ",         .action = ACTION_APP_FT8     },
+    {.label = " APP FT8/4/2 ",     .action = ACTION_APP_FT8     },
     {.label = " APP SWR Scan ",    .action = ACTION_APP_SWRSCAN },
     {.label = " APP GPS ",         .action = ACTION_APP_GPS     },
     {.label = " APP Settings",     .action = ACTION_APP_SETTINGS},
