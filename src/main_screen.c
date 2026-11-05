@@ -54,6 +54,7 @@
 /* JS8 */
 #include "dialog_js8.h"
 /* PSK31 */
+#include "dialog_psk.h"
 /* Olivia */
 /* WeFax */
 #include "dialog_wefax.h"
@@ -231,6 +232,11 @@ void main_screen_start_app(press_action_t app_action) {
             break;
 
         /* PSK31 */
+        case ACTION_APP_PSK:
+            dialog_construct(dialog_psk, obj);
+            voice_say_text_fmt("PSK31 window");
+            break;
+
         /* Olivia */
         /* WeFax */
         case ACTION_APP_WEFAX:
@@ -316,6 +322,7 @@ void main_screen_action(press_action_t action) {
         /* JS8 */
         case ACTION_APP_JS8:
         /* PSK31 */
+        case ACTION_APP_PSK:
         /* Olivia */
         /* WeFax */
         case ACTION_APP_WEFAX:

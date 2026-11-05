@@ -47,6 +47,7 @@ target_sources(${PROJECT_NAME} PUBLIC
     # JS8
     dialog_js8.c js8_wf.c js8_clock.c
     # PSK31
+    dialog_psk.c psk_rx.c psk_tx.c psk_spec.c psk_macro.c digi_qso.c digi_menu.c digi_next.c
     # Olivia
     # WeFax
     dialog_wefax.c wefax/decoder.c wefax/stations.c
