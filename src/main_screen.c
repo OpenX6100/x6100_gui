@@ -50,6 +50,7 @@
 #include "dialog_bt.h"
 /* The apps on their way in: each one's include below its name */
 /* WSPR */
+#include "dialog_wspr.h"
 /* JS8 */
 #include "dialog_js8.h"
 /* PSK31 */
@@ -218,6 +219,11 @@ void main_screen_start_app(press_action_t app_action) {
 
         /* The apps on their way in: each one's case below its name */
         /* WSPR */
+        case ACTION_APP_WSPR:
+            dialog_construct(dialog_wspr, obj);
+            voice_say_text_fmt("WSPR window");
+            break;
+
         /* JS8 */
         case ACTION_APP_JS8:
             dialog_construct(dialog_js8, obj);
@@ -306,6 +312,7 @@ void main_screen_action(press_action_t action) {
         case ACTION_APP_WIFI:
         case ACTION_APP_BT:
         /* WSPR */
+        case ACTION_APP_WSPR:
         /* JS8 */
         case ACTION_APP_JS8:
         /* PSK31 */
