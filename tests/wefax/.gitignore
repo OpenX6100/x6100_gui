@@ -4,6 +4,7 @@ wefax_gen
 wefax_pair
 ml/bin/wefax_pair
 ml/bin/wefax_wav
+ml/bin/*.exe
 ml/models/
 ml/results/
 ml/pairs/

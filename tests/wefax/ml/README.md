@@ -109,7 +109,7 @@ as on the radio). In `results\`: `NAME_ai.png` (cleaned) and
 
 ## The C tools
 
-`bin\wefax_pair.exe` and `bin\wefax_wav.exe` are built from
+`bin\wefax_pair.exe` and `bin\wefax_wav.exe` are not in the repository: they are built from
 `tests/wefax/wefax_gen.c`, `wefax_wav.c` and the decoder of the firmware
 (`src/wefax/decoder.c`) by `build_windows_tools.sh`. On Linux or a Mac,
 `make` in `tests/wefax` builds them instead.

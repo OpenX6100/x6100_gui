@@ -5,6 +5,7 @@
 # change of src/wefax/decoder.c or of the tools.
 set -e
 cd "$(dirname "$0")"
+mkdir -p bin
 W=../../../src/wefax
 python3 -m ziglang cc -target x86_64-windows-gnu -O2 -s -DWEFAX_PAIR -I$W -o bin/wefax_pair.exe ../wefax_gen.c $W/decoder.c
 python3 -m ziglang cc -target x86_64-windows-gnu -O2 -s -I$W -o bin/wefax_wav.exe ../wefax_wav.c $W/decoder.c
