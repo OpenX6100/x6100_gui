@@ -32,6 +32,9 @@ void      spectrum_clear();
  * stops accumulating and delivering. */
 void spectrum_set_enabled(bool enabled);
 
+/* Repaint the overlay (filter, notch, RTTY markers). UI thread only. */
+void spectrum_refresh_overlay(void);
+
 /* Tuning markers for an app: two lines at these audio frequencies (Hz above
  * the carrier, e.g. WEFAX 1075 / 1925), drawn on the sideband's side like the
  * RTTY markers. The app sets them when it opens and clears them when it

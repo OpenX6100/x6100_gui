@@ -25,6 +25,7 @@ target_sources(${PROJECT_NAME} PUBLIC
     meter.c band_info.cpp tx_info.c tx_level.c tx_player.c
     audio.c mfk.cpp cw.cpp panel.cpp
     rtty.c screenshot.c display.cpp gps.c
+    rtty_tx.c rtty_sql.c rtty_buttons.c digi_qso.c digi_next.c
     ui_list.c app_info.c
     app_radio.c
     dialog.c dialog_swrscan.c

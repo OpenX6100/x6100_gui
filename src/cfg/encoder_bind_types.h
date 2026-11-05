@@ -71,6 +71,9 @@ typedef enum {
     CTRL_RTTY_SHIFT,
     CTRL_RTTY_CENTER,
     CTRL_RTTY_REVERSE,
+    CTRL_RTTY_SQUELCH,
+    CTRL_RTTY_RST_SENT,
+    CTRL_RTTY_RST_RCVD,
 
     CTRL_LAST,
 } cfg_ctrl_t;
