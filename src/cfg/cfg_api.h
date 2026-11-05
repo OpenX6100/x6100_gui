@@ -295,6 +295,11 @@ typedef struct {
 } cfg_js8_refs_t;
 
 typedef struct {
+    ParamInt *(*serial)(void); /* p_jtty_serial */
+    ParamInt *(*tx_freq)(void); /* p_jtty_tx_freq */
+} cfg_jtty_refs_t;
+
+typedef struct {
     ParamText *(*bind)(void); /* p_encoder_bind */
 } cfg_encoder_refs_t;
 
@@ -458,6 +463,7 @@ typedef struct {
     cfg_keys_refs_t keys;
     cfg_radio_refs_t radio;
     cfg_js8_refs_t js8;
+    cfg_jtty_refs_t jtty;
 } cfg_refs_t;
 
 extern const cfg_refs_t cfg;

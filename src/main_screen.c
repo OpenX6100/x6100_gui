@@ -63,6 +63,7 @@
 #include "dialog_wefax.h"
 /* SSTV */
 #include "dialog_sstv.h"
+#include "dialog_jtty.h"
 #include "display.h"
 #include "buttons.h"
 #include "recorder.h"
@@ -265,6 +266,12 @@ void main_screen_start_app(press_action_t app_action) {
             voice_say_text_fmt("SSTV window");
             break;
 
+        /* JTTY */
+        case ACTION_APP_JTTY:
+            dialog_construct(dialog_jtty, obj);
+            voice_say_text_fmt("JTTY window");
+            break;
+
         default:
             break;
     }
@@ -344,6 +351,8 @@ void main_screen_action(press_action_t action) {
         case ACTION_APP_WEFAX:
         /* SSTV */
         case ACTION_APP_SSTV:
+        /* JTTY */
+        case ACTION_APP_JTTY:
             main_screen_start_app(action);
             break;
 
