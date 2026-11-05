@@ -58,6 +58,7 @@ typedef enum {
     /* PSK31 */
     ACTION_APP_PSK = 114,
     /* Olivia */
+    ACTION_APP_OLIVIA = 115,
     ACTION_APP_BT = 116,
     /* Channels: Hany's Channel List, also without the hand mic's V/M key */
     ACTION_APP_CHANNELS = 117,

@@ -56,6 +56,7 @@
 /* PSK31 */
 #include "dialog_psk.h"
 /* Olivia */
+#include "dialog_olivia.h"
 /* WeFax */
 #include "dialog_wefax.h"
 /* SSTV */
@@ -238,6 +239,11 @@ void main_screen_start_app(press_action_t app_action) {
             break;
 
         /* Olivia */
+        case ACTION_APP_OLIVIA:
+            dialog_construct(dialog_olivia, obj);
+            voice_say_text_fmt("Olivia window");
+            break;
+
         /* WeFax */
         case ACTION_APP_WEFAX:
             dialog_construct(dialog_wefax, obj);
@@ -324,6 +330,7 @@ void main_screen_action(press_action_t action) {
         /* PSK31 */
         case ACTION_APP_PSK:
         /* Olivia */
+        case ACTION_APP_OLIVIA:
         /* WeFax */
         case ACTION_APP_WEFAX:
         /* SSTV */
