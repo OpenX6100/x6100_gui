@@ -11,7 +11,7 @@
  *            -> stage B: 24-tap matched filter (Hann, 1.5 symbols)
  *            -> envelope early/late gate for symbol timing
  *            -> differential phase detection (0 / pi)
- *            -> Varicode decode -> panel
+ *            -> Varicode decode -> the window (text callback)
  *
  *  Decimation by 24 lands on 500 Hz, 16 samples per symbol, the rate
  *  stage B, the timing loop and every threshold below are tuned for.
@@ -62,7 +62,6 @@
 
 #include "audio.h"
 #include "dsp.h"
-#include "panel.h"
 #include "psk_tx.h"          /* varicode table accessor */
 
 #define FS_IN            ((float)PSK_RX_RATE)                        /* 12000 */
@@ -191,11 +190,10 @@ static void emit_code(void) {
         const char *v = psk_tx_varicode((unsigned char)c);
         if (v && strcmp(v, code_buf) == 0) {
             if (c == '\r') break;                  /* swallow CR */
+            /* DSP thread: only through the window's callback, which
+             * hands it to the UI thread (LVGL isn't thread-safe) */
             if (text_cb) {
                 text_cb((char)c);
-            } else {
-                char s[2] = { (char)c, 0 };
-                panel_add_text(s);
             }
             break;
         }
