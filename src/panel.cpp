@@ -203,7 +203,8 @@ void panel_add_text(const char * text) {
 
 /* LVGL thread: the sent text on lines of its own, each in its own colour
  * (LVGL starts every line uncoloured, so a long line wrapped by the label
- * lost its colour), broken between words where the panel ends. */
+ * lost its colour), broken between words where the panel ends and where
+ * the text itself has a line break (a multi-line macro). */
 static void panel_tx_text_cb(const char *esc) {
     const lv_font_t *font = lv_obj_get_style_text_font(obj, LV_PART_MAIN);
     lv_coord_t       width = lv_obj_get_width(obj) - 20;
@@ -212,23 +213,34 @@ static void panel_tx_text_cb(const char *esc) {
     const char      *p = esc;
 
     while (*p) {
-        const char *end = strchr(p, ' ');
+        const char *end = strpbrk(p, " \r\n");
         size_t      wl = end ? (size_t)(end - p) : strlen(p);
         char        trial[256];
         lv_point_t  sz;
 
-        snprintf(trial, sizeof(trial), "%s%s%.*s", line, line[0] ? " " : "", (int)wl, p);
-        lv_txt_get_size(&sz, trial, font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_RECOLOR);
-        if (sz.x > width && line[0]) {
-            size_t o = strlen(out);
-            snprintf(out + o, sizeof(out) - o, "#F5C400 %s#\n", line);
-            snprintf(line, sizeof(line), "%.*s", (int)wl, p);
-        } else {
-            snprintf(line, sizeof(line), "%s", trial);
+        if (wl > 0) {
+            snprintf(trial, sizeof(trial), "%s%s%.*s", line, line[0] ? " " : "", (int)wl, p);
+            lv_txt_get_size(&sz, trial, font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_RECOLOR);
+            if (sz.x > width && line[0]) {
+                size_t o = strlen(out);
+                snprintf(out + o, sizeof(out) - o, "#F5C400 %s#\n", line);
+                snprintf(line, sizeof(line), "%.*s", (int)wl, p);
+            } else {
+                snprintf(line, sizeof(line), "%s", trial);
+            }
         }
         p += wl;
         while (*p == ' ') {
             p++;
+        }
+        /* the text's own line break: this line ends here (CR LF is one) */
+        if (*p == '\r' || *p == '\n') {
+            size_t o = strlen(out);
+            if (line[0]) {
+                snprintf(out + o, sizeof(out) - o, "#F5C400 %s#\n", line);
+            }
+            line[0] = '\0';
+            p += (p[0] == '\r' && p[1] == '\n') ? 2 : 1;
         }
     }
     if (line[0]) {
