@@ -23,11 +23,9 @@
 #include "main_screen.h"
 #include "msg.h"
 #include "radio.h"
-#include "textarea_window.h"
 #include "tx_info.h"
 
 /* Defined in main_screen.c but not declared in its header. */
-void main_screen_keys_enable(bool value);
 
 /* PSK31 is a continuous-carrier mode: keep the same thermal cap the FT8
  * worker uses. */
@@ -39,7 +37,6 @@ void main_screen_keys_enable(bool value);
 #define CHUNK_SAMPLES    2048       /* 43 ms at 48 kHz */
 
 /* The stock text window takes 64 characters. */
-#define INPUT_MAX_LEN    159
 
 /* 31.25 baud exactly (8000/256, the rate the mode is defined at). */
 #define PSK_BAUD         31.25
@@ -196,7 +193,6 @@ static pthread_t     tx_thread;
 static volatile bool tx_on = false;
 static volatile bool tx_stop_req = false;
 static char         *tx_text = NULL;
-static bool          input_active = false;
 static uint16_t      center_hz = CENTER_DEFAULT;
 static psk_tx_echo_cb_t echo_cb = NULL;
 
@@ -267,7 +263,9 @@ static float get_correction(void) {
     if (tx_info_refresh(&msg_id, &alc, &pwr, NULL)) {
         float target_pwr = LV_MIN(param_f_get(cfg.pwr()), MAX_PWR_W);
         if (alc > 0.5f) {
-            correction = log10f(log10f(11.1f - alc)) * 20.0f - 0.38f;
+            /* ALC is 0..10; above 10.1 the log of a negative is NaN,
+             * which no clamp catches and which ruins the audio */
+            correction = log10f(log10f(11.1f - fminf(alc, 10.0f))) * 20.0f - 0.38f;
         } else if (target_pwr - pwr > 0.5f) {
             correction = log10f(target_pwr / (pwr + 0.01f)) * 10.0f;
         }
@@ -337,6 +335,8 @@ static void *tx_thread_fn(void *arg) {
     double bit_acc = 0.0;                    /* fractional bit boundary     */
     size_t sample_idx = 0;
 
+    uint8_t prev_bit = 1;
+
     for (size_t i = 0; i < bs.size; i++) {
         uint8_t bit = bs.bits[i];
 
@@ -386,12 +386,15 @@ static void *tx_thread_fn(void *arg) {
         sample_idx = next_boundary;
         if (!bit) polarity = -polarity;      /* reversal completed */
 
-        /* Stop requested: break out, but let the postamble ones finish so
-         * the receiver sees a clean end of transmission. */
-        if (tx_stop_req && i + POSTAMBLE_BITS < bs.size) {
+        /* Stop requested: finish the character being sent (a varicode
+         * character ends with "00"), then the postamble ones, so the far
+         * end prints it and sees a clean end. Jumping mid-character left
+         * its code open and the character lost. */
+        if (tx_stop_req && i + POSTAMBLE_BITS < bs.size && bit == 0 && prev_bit == 0) {
             i = bs.size - POSTAMBLE_BITS - 1;
             tx_stop_req = false;
         }
+        prev_bit = bit;
     }
 
     if (out_n > 0) {
@@ -458,39 +461,4 @@ void psk_tx_stop(void) {
 
 bool psk_tx_is_on(void) {
     return tx_on;
-}
-
-/* --- Text entry ------------------------------------------------------- */
-
-static bool input_ok_cb(void) {
-    const char *text = textarea_window_get();
-
-    if (text && *text) {
-        if (psk_tx_send(text)) {
-            msg_update_text_fmt("#FFFFFF PSK31 TX...");
-        } else {
-            msg_update_text_fmt("#FF0000 PSK31 TX busy");
-        }
-    }
-    input_active = false;
-    main_screen_keys_enable(true);
-    return true;
-}
-
-static bool input_cancel_cb(void) {
-    input_active = false;
-    main_screen_keys_enable(true);
-    return true;
-}
-
-void psk_tx_open_input(void) {
-    if (tx_on) {
-        msg_update_text_fmt("#FF0000 PSK31 TX busy");
-        return;
-    }
-    if (input_active) return;
-    input_active = true;
-    main_screen_keys_enable(false);
-    textarea_window_open_w_label(input_ok_cb, input_cancel_cb, "PSK31 msg:");
-    lv_textarea_set_max_length(textarea_window_text(), INPUT_MAX_LEN);
 }

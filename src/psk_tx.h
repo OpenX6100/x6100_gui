@@ -35,8 +35,6 @@ void psk_tx_stop(void);
 
 bool psk_tx_is_on(void);
 
-/* Text entry window (USB/BT keyboard), OK transmits. */
-void psk_tx_open_input(void);
 
 
 /* Varicode code string for a character, or NULL. Shared with the

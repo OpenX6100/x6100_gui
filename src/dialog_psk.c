@@ -46,6 +46,7 @@
 #include "styles.h"
 #include "cfg/cfg_api.h"
 #include "radio.h"
+#include "common/time.h"
 #include "audio.h"
 #include "dsp.h"
 #include "events.h"
@@ -78,6 +79,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
+/* The receiver's text is ignored this long after our transmission ends:
+ * our own signal is still draining from the audio. */
+#define RX_AFTER_TX_MS  500
 
 #define WIDTH           771
 #define WF_HEIGHT       325
@@ -547,6 +552,20 @@ static void rx_char_ui(void *data)
     if (!sql_open)
         return;
 
+    /* While we transmit (and just after, as the audio drains) the
+     * receiver hears our own signal: printing it would show our text as
+     * received, and "de <our call>" would become the DX call. */
+    {
+        static uint64_t tx_seen_ms;
+
+        if (psk_tx_is_on()) {
+            tx_seen_ms = get_time();
+            return;
+        }
+        if (get_time() - tx_seen_ms < RX_AFTER_TX_MS)
+            return;
+    }
+
     txt_put(c, false);
 
     /* Catch the correspondent's call from "DE <call>". */
@@ -812,9 +831,11 @@ static void wf_restart(void)
     atomic_store(&wf_avg_restart, true);
 }
 
+/* Travels inside the scheduler's copy: a line the scheduler drops (queue
+ * full) leaves nothing behind to free. */
 struct wf_line {
-    float *db;          /* n values as they came, then n averaged */
-    int    n;
+    float db[2 * PSK_SPEC_MAXBIN];  /* n values as they came, then n averaged */
+    int   n;
 };
 
 static void wf_line_ui(void *data)
@@ -822,10 +843,8 @@ static void wf_line_ui(void *data)
     struct wf_line *l = (struct wf_line *)data;
     bool            tx = psk_tx_is_on();
 
-    if (!alive || !waterfall) {
-        free(l->db);
+    if (!alive || !waterfall)
         return;
-    }
 
     if (tx != wf_tx) {
         wf_tx = tx;
@@ -842,10 +861,8 @@ static void wf_line_ui(void *data)
     if (!tx)
         lv_waterfall_add_data(waterfall, l->db + l->n, (uint16_t)l->n);
 
-    if (l->n > PSK_SPEC_MAXBIN) {
-        free(l->db);
+    if (l->n > PSK_SPEC_MAXBIN)
         return;
-    }
     for (int i = 0; i < l->n; i++)
         line_lin[i] = powf(10.0f, l->db[i] * 0.1f);
 
@@ -868,8 +885,6 @@ static void wf_line_ui(void *data)
         }
         avg_lines++;
     }
-
-    free(l->db);
 }
 
 /* DSP thread, from inside the tap. */
@@ -894,10 +909,6 @@ static void on_spec_line(const float *db, int nbins, void *ctx)
     }
 
     l.n = nbins;
-    l.db = (float *)malloc(sizeof(float) * 2 * (size_t)nbins);
-    if (!l.db)
-        return;
-
     memcpy(l.db, db, sizeof(float) * (size_t)nbins);
     memcpy(l.db + nbins, wf_avg, sizeof(float) * (size_t)nbins);
     scheduler_put(wf_line_ui, &l, sizeof(l));
@@ -1424,7 +1435,7 @@ static void macro_press(int idx)
 
     if (!psk_macro_expand(m->text, out, sizeof(out), &missing)) {
         if (missing && strcmp(missing, "<CALL>") == 0)
-            msg_update_text_fmt("#FF0000 No DX call - set it on page 2");
+            msg_update_text_fmt("#FF0000 No DX call - set it under Menu");
         else
             msg_update_text_fmt("#FF0000 %s is empty", missing ? missing : "?");
         return;
@@ -2046,11 +2057,15 @@ static void destruct_cb(void)
     /*
      * Let a transmission finish its postamble before the frequency is
      * put back, or the radio would retune while keyed. The stop request
-     * cuts it to 16 bits, about half a second.
+     * ends the character being sent and then 16 bits, well under a
+     * second. If the sound server stalls past the wait, unkey here: the
+     * frequency and mode must never change while keyed.
      */
     psk_tx_stop();
     for (int i = 0; i < 100 && psk_tx_is_on(); i++)
         usleep(20000);
+    if (psk_tx_is_on())
+        radio_set_modem(false);
 
     /* After set_active(false) returns, neither hook runs again. */
     psk_rx_set_active(false);
