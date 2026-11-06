@@ -428,7 +428,7 @@ static void make_spectrum_3d(SettingsPage &page) {
     page.label("3D size");
 
     obj = page.cell(1, 6, SMALL_6);
-    obj = page.slider_int(obj, *cfg.ui.spectrum_3d_size(), 30, 70, 5, SMALL_6 - 120, "%d %%");
+    obj = page.slider_int(obj, *cfg.ui.spectrum_3d_size(), 35, 55, 5, SMALL_6 - 120, "%d %%");
 
     lv_obj_add_event_cb(obj, settings_change_bg_opa_cb, LV_EVENT_FOCUSED, &page);
     lv_obj_add_event_cb(obj, settings_change_bg_opa_cb, LV_EVENT_DEFOCUSED, &page);

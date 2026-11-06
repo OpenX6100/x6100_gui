@@ -109,9 +109,9 @@ static int s_cond_dirty = 1;
  * (s3d_src, under s3d_seq); the main thread keeps one every SPEC3D_PERIOD_US
  * and lets them drift back smoothly between pushes. Each keeps the base
  * frequency it was taken at, so the history follows tuning like the waterfall
- * does. Nothing is kept while transmitting. At most stride / 4 lines show: 79
- * at the largest 3D size (70 % of 452 px). */
-#define SPEC3D_MAX_LINES 80
+ * does. Nothing is kept while transmitting. At most stride / 4 lines show: 62
+ * at the largest 3D size (55 % of 452 px). */
+#define SPEC3D_MAX_LINES 64
 #define SPEC3D_PERIOD_US 100000
 
 /* The 3D view colours and scales every trace in the stack with one level pair,

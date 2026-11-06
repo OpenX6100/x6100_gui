@@ -276,7 +276,7 @@ class SettingsManager {
     // of the screen below the indicators (2D keeps spectrum_height)
     Parameter<int32_t> p_spectrum_3d{"spectrum_3d", false, 0, 1,
         StorageType::GLOBAL, pending_writes_, &global_params_};
-    Parameter<int32_t> p_spectrum_3d_size{"spectrum_3d_size", 50, 30, 70,
+    Parameter<int32_t> p_spectrum_3d_size{"spectrum_3d_size", 50, 35, 55,
         StorageType::GLOBAL, pending_writes_, &global_params_};
 
     // Waterfall
