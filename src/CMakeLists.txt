@@ -47,7 +47,7 @@ target_sources(${PROJECT_NAME} PUBLIC
     # The apps on their way in: each one's sources below its name
     # WSPR
     dialog_wspr.c wspr_app.c wspr_worker.c wspr_demod.c wspr_fano.c
-    wspr_encode.c wspr_mod.c wspr_spec.c
+    wspr_encode.c wspr_mod.c wspr_spec.c wsprd/wsprd_utils.c wsprd/nhash.c
     # JS8
     dialog_js8.c js8_wf.c js8_clock.c
     # PSK31

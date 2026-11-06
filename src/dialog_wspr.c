@@ -242,14 +242,6 @@ static void load_band(int8_t dir)
                         (unsigned)((wspr_bands[idx].dial_hz / 1000u) % 1000u));
 }
 
-static void restart_rx(void)
-{
-    /* A band change rebuilds the receive chain: the collected baseband
-     * no longer belongs to the frequency being displayed. */
-    wspr_app_set_active(false);
-    wspr_app_set_active(true);
-}
-
 static void clean_screen(void)
 {
     table_view_reset();
@@ -258,8 +250,13 @@ static void clean_screen(void)
 
 static void change_band(int8_t dir)
 {
+    /* The receive chain is rebuilt: the collected baseband belongs to the
+     * old band. It goes down before the radio retunes, because that ends
+     * a transmission in progress: the radio mustn't change frequency, nor
+     * an amplifier its band, while keyed. */
+    wspr_app_set_active(false);
     load_band(dir);
-    restart_rx();
+    wspr_app_set_active(true);
     clean_screen();
     buttons_refresh(&button_status);
 }
@@ -292,7 +289,10 @@ static void waterfall_add_data(void *data)
 {
     struct waterfall_data *wf = (struct waterfall_data *)data;
 
-    lv_waterfall_add_data(waterfall, wf->psd, wf->size);
+    /* A line queued just before the window closed arrives after its
+     * waterfall is gone (destruct_cb clears the pointer). */
+    if (waterfall)
+        lv_waterfall_add_data(waterfall, wf->psd, wf->size);
     free(wf->psd);
 }
 
@@ -484,6 +484,7 @@ static void tx_press_cb(button_data_t *b)
     wspr_app_set_tx_period(next);
 
     if (next == 0) {
+        wspr_app_stop_tx();     /* off means off, not after this one */
         msg_update_text_fmt("WSPR transmit disabled");
     } else if (next == 1) {
         msg_update_text_fmt("WSPR TX every slot - test only");
@@ -496,6 +497,7 @@ static void tx_press_cb(button_data_t *b)
 static void tx_hold_cb(button_data_t *b)
 {
     wspr_app_set_tx_period(0);
+    wspr_app_stop_tx();
     msg_update_text_fmt("WSPR transmit disabled");
     buttons_refresh(b);
 }
@@ -529,8 +531,8 @@ static void txf_press_cb(button_data_t *b)
 {
     uint16_t f = tx_hz + 10;
 
-    if (f > 1600)
-        f = 1400;
+    if (f > WSPR_APP_TX_MAX)
+        f = WSPR_APP_TX_MIN;
     tx_hz = f;
     buttons_refresh(b);
     apply_tx_freq();
@@ -601,10 +603,10 @@ static void rotary_cb(int32_t diff)
 {
     int32_t f = (int32_t)tx_hz + diff * TX_STEP_HZ;
 
-    if (f < 1400)
-        f = 1400;
-    if (f > 1600)
-        f = 1600;
+    if (f < WSPR_APP_TX_MIN)
+        f = WSPR_APP_TX_MIN;
+    if (f > WSPR_APP_TX_MAX)
+        f = WSPR_APP_TX_MAX;
     tx_hz = (uint16_t)f;
 
     buttons_refresh(&button_center);
@@ -812,6 +814,7 @@ static void destruct_cb(void)
     wspr_app_set_ui_cb(NULL);
 
     table_view_destroy();
+    waterfall = NULL;       /* deleted with the window; see waterfall_add_data */
 
     waterfall_set_enabled(true);
     spectrum_set_enabled(true);

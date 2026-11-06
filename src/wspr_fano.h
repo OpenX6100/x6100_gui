@@ -80,12 +80,14 @@ int wspr_verify(const float soft162[WSPR_SYMBOLS],
                 const uint8_t bits81[WSPR_INFO_BITS]);
 
 /*
- * Unpack the 50 data bits back into a message.
- * callsign : buffer of at least 7 characters
- * locator  : buffer of at least 5 characters
+ * Unpack the 50 data bits back into a message, with WSJT-X's unpk_():
+ * type 1 (call, 4 character grid, power), type 2 (a call with a prefix or
+ * suffix, power, no grid: locator "") or type 3 ("<CALL>" named by its
+ * hash from calls heard before, "<...>" if none, and a 6 character grid).
+ * callsign : buffer of at least 16 characters
+ * locator  : buffer of at least 7 characters
  * power    : power in dBm
- * Returns 0 on success, -1 if the bits do not form a valid type 1
- * message.
+ * Returns 0 on success, -1 if the bits do not form a valid message.
  */
 int wspr_unpack(const uint8_t bits81[WSPR_INFO_BITS],
                 char *callsign, char *locator, int *power);
@@ -95,7 +97,7 @@ int wspr_unpack(const uint8_t bits81[WSPR_INFO_BITS],
  * the proper entry point for the layer above - wspr_fano_decode() on
  * its own would let false decodes through.
  *
- * callsign : buffer >= 7 characters, locator : buffer >= 5 characters
+ * callsign : buffer >= 16 characters, locator : buffer >= 7 characters
  * errors   : optional (may be NULL), the mismatch count, useful as a
  *            quality indicator
  *

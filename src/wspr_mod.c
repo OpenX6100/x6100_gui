@@ -46,12 +46,13 @@ long wspr_mod_max_symbol_samples(const wspr_mod_t *mod)
 
 long wspr_mod_symbol(wspr_mod_t *mod, int k, uint8_t symbol, float *out)
 {
-    double sr = (double)mod->sample_rate;
+    double sr;
     double freq, w;
     long start, end, n, i;
 
     if (!mod || !out || k < 0 || k >= WSPR_SYMBOLS)
         return 0;
+    sr = (double)mod->sample_rate;
 
     freq = mod->base_freq_hz + (double)(symbol & 3) * WSPR_TONE_SPACING_HZ;
     w = 2.0 * M_PI * freq / sr;
