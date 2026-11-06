@@ -65,12 +65,11 @@ static float get_correction(void) {
  * one the slots are counted by: NTP or GPS). */
 static float sec_into_slot(void) {
     struct timespec now;
-    float slot = ftx_slot_time(param_i_get(cfg.ft8.protocol()));  /* FT2: 3.75 s */
-    float sec;
+    float           sec;
 
     clock_gettime(CLOCK_REALTIME, &now);
-    sec = (float)(now.tv_sec % 60) + now.tv_nsec / 1.0e9f;
-    return fmodf(sec, slot);
+    ftx_slot_pos(param_i_get(cfg.ft8.protocol()), now, &sec);  /* FT2: 3.75 s slots */
+    return sec;
 }
 
 /* Keyed: wait for TX_START_SEC, or return how many samples are already

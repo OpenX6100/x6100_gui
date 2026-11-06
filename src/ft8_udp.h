@@ -70,6 +70,12 @@ void ft8_udp_send_status(uint64_t dial_freq_hz, const char *mode,
 void ft8_udp_send_decode(bool is_new, const char *mode, const char *message,
                          int32_t snr, float delta_t_sec, uint32_t df_hz);
 
+/* The same, stamped with the start of the slot it was heard in (as WSJT-X
+ * does), so a decode that arrives after the slot ended (FT2's last decode
+ * runs after a transmission) still groups with its period. 0: now. */
+void ft8_udp_send_decode_at(int64_t slot_utc_ms, bool is_new, const char *mode, const char *message,
+                            int32_t snr, float delta_t_sec, uint32_t df_hz);
+
 /* Clear: tells receivers to wipe their band activity window. */
 void ft8_udp_send_clear(void);
 

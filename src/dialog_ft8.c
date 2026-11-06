@@ -892,16 +892,18 @@ static void cq_modifier_cb(struct button_data_t *btn_data) {
 }
 
 static void time_sync(struct button_data_t *btn_data) {
-    time_t now = time(NULL);
-    uint8_t sec = now % 60;
-    float drift, slot_time;
-    slot_time = ftx_slot_time(param_i_get(cfg.ft8.protocol()));
-    drift = fmodf(sec + slot_time / 2, slot_time) - slot_time / 2;
+    /* Pressed as a slot is heard to start: put the clock on the nearest
+     * slot boundary, to the fraction of a second (FT2's slots start at
+     * .25, .5 and .75 s, and FT2 allows 0.8 s). */
     struct timespec tp;
+    clock_gettime(CLOCK_REALTIME, &tp);
+    double sec       = (double)(tp.tv_sec % 60) + tp.tv_nsec / 1e9;
+    double slot_time = ftx_slot_time(param_i_get(cfg.ft8.protocol()));
+    double drift     = fmod(sec + slot_time / 2, slot_time) - slot_time / 2;
+    int64_t ns       = (int64_t)tp.tv_sec * 1000000000LL + tp.tv_nsec - (int64_t)llround(drift * 1e9);
 
-    now -= (int) drift;
-    tp.tv_sec = now;
-    tp.tv_nsec = 0;
+    tp.tv_sec  = (time_t)(ns / 1000000000LL);
+    tp.tv_nsec = (long)(ns % 1000000000LL);
 
     int res = clock_settime(CLOCK_REALTIME, &tp);
     if (res != 0)
@@ -1012,14 +1014,7 @@ static void audio_cb(size_t n, float *samples) {
 }
 
 static bool get_time_slot(struct timespec now, float *sec_since_start) {
-    bool cur_odd;
-    float sec = (now.tv_sec % 60) + now.tv_nsec / 1.0e9f;
-
-    float slot_time = ftx_slot_time(param_i_get(cfg.ft8.protocol()));
-
-    cur_odd = (int)(sec / slot_time) % 2;
-    *sec_since_start = fmodf(sec, slot_time);
-    return cur_odd;
+    return ftx_slot_pos(param_i_get(cfg.ft8.protocol()), now, sec_since_start);
 }
 
 
@@ -1146,7 +1141,7 @@ static void on_message_cb(const char *text, int snr, float freq_hz, float time_s
      * work, so they see it promptly. Worker thread; the emitter only
      * builds a datagram on the stack and hands it to a non-blocking
      * socket. */
-    ft8_udp_send_decode(true,
+    ft8_udp_send_decode_at(info->start_ms, true,
                         param_i_get(cfg.ft8.protocol()) == FTX_PROTOCOL_FT8 ? "~" : "+",
                         text, (int32_t)snr, time_sec, (uint32_t)(freq_hz + 0.5f));
 
@@ -1224,14 +1219,14 @@ static void on_tick_cb(const slot_info_t *info, bool new_slot,
 
     if (new_slot) {
         state = RX_PROCESS;
-        static unsigned ft2_slots = 0;
+        struct timespec now;
+        clock_gettime(CLOCK_REALTIME, &now);
 
-        /* FT2: an RX line every 3.75 s would fill the table; one every
-         * 4th slot (15 s), as FT8. */
+        /* FT2: an RX line every 3.75 s would fill the table; one for the
+         * slot starting on 0, 15, 30 or 45 s, as FT8's (the other slots
+         * start 3.75, 7.5 and 11.25 s after those). */
         if ((!have_tx_msg || !subject_i_get(tx_enabled)) &&
-            (!ftx_is_ft2() || (ft2_slots++ % 4) == 0)) {
-            struct timespec now;
-            clock_gettime(CLOCK_REALTIME, &now);
+            (!ftx_is_ft2() || now.tv_sec % 15 < 3)) {
             struct tm *ts = localtime(&now.tv_sec);
             add_info("RX %s %02i:%02i:%02i", cfg_digital_label_get(),
                      ts->tm_hour, ts->tm_min, ts->tm_sec);

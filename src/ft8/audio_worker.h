@@ -40,8 +40,9 @@ extern "C" {
 
 /* Per-RX-slot metadata exposed to callbacks. Kept minimal on purpose. */
 typedef struct {
-    bool odd;
-    bool answer_generated;
+    bool    odd;
+    bool    answer_generated;
+    int64_t start_ms;   /* the slot's start, UTC ms since the epoch */
 } slot_info_t;
 
 typedef struct audio_worker_s audio_worker_t;

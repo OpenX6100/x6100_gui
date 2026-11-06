@@ -64,10 +64,7 @@ struct audio_worker_s {
 /* ---------- small helpers ---------------------------------------------- */
 
 static bool get_time_slot(ftx_protocol_t proto, struct timespec now, float *sec_since_start) {
-    float sec = (now.tv_sec % 60) + now.tv_nsec / 1.0e9f;
-    float slot_time = ftx_slot_time(proto);
-    *sec_since_start = fmodf(sec, slot_time);
-    return ((int)(sec / slot_time) % 2) != 0;
+    return ftx_slot_pos(proto, now, sec_since_start);
 }
 
 static void msleep_interruptible(audio_worker_t *w, long ms) {
@@ -189,6 +186,12 @@ static void *worker_main(void *arg) {
         float sec_since_slot_start = 0.0f;
         bool  new_odd  = get_time_slot(w->proto, now, &sec_since_slot_start);
         bool  new_slot = (new_odd != info.odd);
+        int64_t start_ms = (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000 -
+                           (int64_t)(sec_since_slot_start * 1000.0f);
+
+        if (info.start_ms == 0) {
+            info.start_ms = start_ms;
+        }
 
         bool tick_done = false;
 
@@ -200,7 +203,8 @@ static void *worker_main(void *arg) {
         if (new_slot && (int)w->proto == (int)FTX_PROTOCOL_FT2 && w->cb.on_tick) {
             slot_info_t next = info;
 
-            next.odd = new_odd;
+            next.odd      = new_odd;
+            next.start_ms = start_ms;
             w->cb.on_tick(&next, true, sec_since_slot_start, w->cb.ctx);
             tick_done = true;
         }
@@ -217,7 +221,8 @@ static void *worker_main(void *arg) {
             if (w->cb.on_slot_end) {
                 w->cb.on_slot_end(&info, w->cb.ctx);
             }
-            info.odd = new_odd;
+            info.odd      = new_odd;
+            info.start_ms = start_ms;
         }
 
         if (w->cb.on_tick && !tick_done) {
