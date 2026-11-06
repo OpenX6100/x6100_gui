@@ -345,6 +345,8 @@ static button_data_t  btn_sstv   = make_app_btn("SSTV", ACTION_APP_SSTV);
 static button_data_t  btn_channels = make_action_btn("Channels", ACTION_APP_CHANNELS);
 /* JTTY */
 static button_data_t  btn_jtty   = make_app_btn("JTTY", ACTION_APP_JTTY);
+/* XARA */
+static button_data_t  btn_xara   = make_app_btn("XARA", ACTION_APP_XARA);
 
 /* RTTY */
 static button_data_t btn_rtty_p1 = {
@@ -499,6 +501,8 @@ static buttons_page_t page_app_5 = {{
     &btn_olivia,
     /* JTTY */
     &btn_jtty,
+    /* XARA */
+    &btn_xara,
 }};
 
 /* RTTY */
