@@ -104,11 +104,14 @@ static int s_data_ready = 0;
 static int s_cond_dirty = 1;
 
 /* 3D view: the live trace in front and past traces stacked behind it, each one
- * further back, narrower, lower and dimmer, hiding what is behind it. Traces
- * are taken from spectrum_buf on the main thread every SPEC3D_PERIOD_US and
- * drift back smoothly between pushes. Each keeps the base frequency it was
- * taken at, so the history follows tuning like the waterfall does. */
-#define SPEC3D_MAX_LINES 96
+ * further back, narrower, lower and dimmer, hiding what is behind it. The DSP
+ * thread leaves a copy of each finished frame with its base frequency
+ * (s3d_src, under s3d_seq); the main thread keeps one every SPEC3D_PERIOD_US
+ * and lets them drift back smoothly between pushes. Each keeps the base
+ * frequency it was taken at, so the history follows tuning like the waterfall
+ * does. Nothing is kept while transmitting. At most stride / 4 lines show: 79
+ * at the largest 3D size (70 % of 452 px). */
+#define SPEC3D_MAX_LINES 80
 #define SPEC3D_PERIOD_US 100000
 
 /* The 3D view colours and scales every trace in the stack with one level pair,
@@ -130,8 +133,12 @@ static bool          s3d_on;
 static lv_obj_t     *s3d_label;
 static float         s3d_min, s3d_max;
 static bool          s3d_lvl_ok;  /* false: take the levels as they are */
-static bool          s3d_lvl_tx;
 static uint64_t      s3d_lvl_us;
+static bool          s3d_data;    /* this render has a new DSP frame */
+
+static spec3d_row_t  s3d_src;     /* the DSP thread's latest frame */
+static bool          s3d_src_tx;
+static unsigned      s3d_seq;     /* odd while s3d_src is being written */
 
 static void on_zoom_changed(Subject *subj, void *user_data);
 static void update_filters(Subject *subj, void *user_data);
@@ -528,6 +535,16 @@ void spectrum_data(const float *data_buf, uint16_t size, bool tx, uint32_t base_
     }
     prev_fft_dec = fft_dec;
 
+    if (__atomic_load_n(&s3d_on, __ATOMIC_RELAXED)) {
+        unsigned seq = s3d_seq + 1;
+        __atomic_store_n(&s3d_seq, seq, __ATOMIC_RELAXED);
+        __atomic_thread_fence(__ATOMIC_RELEASE);
+        memcpy(s3d_src.val, spectrum_buf, sizeof(s3d_src.val));
+        s3d_src.base_freq = base_lo_freq;
+        s3d_src_tx        = tx;
+        __atomic_store_n(&s3d_seq, seq + 1, __ATOMIC_RELEASE);
+    }
+
     __atomic_store_n(&s_data_ready, 1, __ATOMIC_RELEASE);
 }
 
@@ -548,14 +565,28 @@ void spectrum_clear() {
     s3d_lvl_ok = false;
 }
 
+static void spec3d_off_cb(void *arg) {
+    param_i_set(cfg.ui.spectrum_3d(), 0);
+}
+
 static void on_spectrum_3d_changed(Subject *subj, void *user_data) {
-    s3d_on = subject_i_get((SubjectInt *)subj);
-    if (s3d_on && !s3d_rows) {
+    bool on = subject_i_get((SubjectInt *)subj);
+    if (on && !s3d_rows) {
         s3d_rows = calloc(SPEC3D_MAX_LINES, sizeof(*s3d_rows));
         if (!s3d_rows) {
-            s3d_on = false;
+            /* No memory: turn the setting off too, so the layout and the
+             * Settings switch agree with what is drawn. */
+            on = false;
+            lv_async_call(spec3d_off_cb, NULL);
         }
+    } else if (!on && s3d_rows) {
+        free(s3d_rows);
+        s3d_rows = NULL;
     }
+    if (on) {
+        s3d_src.base_freq = 0;  /* left from an earlier 3D spell: not a frame */
+    }
+    __atomic_store_n(&s3d_on, on, __ATOMIC_RELAXED);
     s3d_count  = 0;
     s3d_lvl_ok = false;
     lv_label_set_text(s3d_label, s3d_on ? "3D" : "2D");
@@ -874,15 +905,9 @@ static void spectrum_draw_polyline(uint32_t *buf, int stride, float min, float m
     }
 }
 
-static uint64_t spec3d_now_us(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t)ts.tv_sec * 1000000u + ts.tv_nsec / 1000;
-}
-
 /* Keep a copy of the live trace every SPEC3D_PERIOD_US (main thread). */
 static void spec3d_push(void) {
-    uint64_t now = spec3d_now_us();
+    uint64_t now = get_time_us();
 
     if (s3d_count && now - s3d_last_push_us < SPEC3D_PERIOD_US) {
         return;
@@ -894,9 +919,31 @@ static void spec3d_push(void) {
         s3d_last_push_us = now;
     }
 
+    /* The DSP thread's latest frame, trace and base frequency together; if
+     * it is being rewritten every time we look, try again next frame. */
+    spec3d_row_t *row = &s3d_rows[(s3d_head + 1) % SPEC3D_MAX_LINES];
+    bool          tx;
+    for (int tries = 0;; tries++) {
+        if (tries == 3) {
+            return;
+        }
+        unsigned seq = __atomic_load_n(&s3d_seq, __ATOMIC_ACQUIRE);
+        if (seq & 1) {
+            continue;
+        }
+        memcpy(row, &s3d_src, sizeof(*row));
+        tx = s3d_src_tx;
+        __atomic_thread_fence(__ATOMIC_ACQUIRE);
+        if (__atomic_load_n(&s3d_seq, __ATOMIC_RELAXED) == seq) {
+            break;
+        }
+    }
+    /* TX traces are on another scale and would show as a hot wall moving
+     * back through the stack once the levels are RX again. */
+    if (tx || row->base_freq == 0) {
+        return;
+    }
     s3d_head = (s3d_head + 1) % SPEC3D_MAX_LINES;
-    memcpy(s3d_rows[s3d_head].val, spectrum_buf, sizeof(spectrum_buf));
-    s3d_rows[s3d_head].base_freq = cur_base_lo_freq;
     if (s3d_count < SPEC3D_MAX_LINES) {
         s3d_count++;
     }
@@ -983,17 +1030,22 @@ static void spec3d_trace(uint32_t *buf, int stride, int16_t *horizon, const floa
     }
 }
 
-/* Levels for the 3D view: spectrum_min/max smoothed over SPEC3D_LEVEL_TAU_US.
- * Taken as they are after a clear (band, mode, zoom) and when TX starts or
- * ends, where the change is real and waiting for it would only look slow. */
+/* Levels for the history: spectrum_min/max smoothed over SPEC3D_LEVEL_TAU_US.
+ * After a clear (band, mode, zoom) they are taken as they are, from the first
+ * real frame on: the change is real and waiting for it would only look slow.
+ * While transmitting they hold the RX levels, as the history is all RX. */
 static void spec3d_levels(float *min, float *max) {
-    uint64_t now = spec3d_now_us();
+    uint64_t now = get_time_us();
 
-    if (!s3d_lvl_ok || spectrum_tx != s3d_lvl_tx) {
+    if (spectrum_tx) {
+        if (!s3d_lvl_ok) {
+            s3d_min = spectrum_min;
+            s3d_max = spectrum_max;
+        }
+    } else if (!s3d_lvl_ok) {
         s3d_min    = spectrum_min;
         s3d_max    = spectrum_max;
-        s3d_lvl_ok = true;
-        s3d_lvl_tx = spectrum_tx;
+        s3d_lvl_ok = s3d_data;
     } else {
         float a = 1.0f - expf(-(float)(now - s3d_lvl_us) / SPEC3D_LEVEL_TAU_US);
         s3d_min += (spectrum_min - s3d_min) * a;
@@ -1012,6 +1064,12 @@ static void spectrum_render_3d(uint32_t *buf, int stride) {
     if (max <= min) {
         max = min + 1.0f;
     }
+    /* The live trace on the scale of what it is: TX levels while sending */
+    float live_min = spectrum_tx ? spectrum_min : min;
+    float live_max = spectrum_tx ? spectrum_max : max;
+    if (live_max <= live_min) {
+        live_max = live_min + 1.0f;
+    }
     int32_t offset = spectrum_compute_offset();
 
     int lines = stride / 4;
@@ -1024,7 +1082,7 @@ static void spectrum_render_3d(uint32_t *buf, int stride) {
     /* How far the history has drifted back since the last push (0..1) */
     float frac = 0.0f;
     if (s3d_count) {
-        frac = (float)(spec3d_now_us() - s3d_last_push_us) / SPEC3D_PERIOD_US;
+        frac = (float)(get_time_us() - s3d_last_push_us) / SPEC3D_PERIOD_US;
         if (frac > 1.0f) {
             frac = 1.0f;
         }
@@ -1035,7 +1093,7 @@ static void spectrum_render_3d(uint32_t *buf, int stride) {
     }
 
     /* Live trace in front, then the history going back */
-    spec3d_trace(buf, stride, horizon, spectrum_buf, 0.0f, offset, 1.0f, min, max);
+    spec3d_trace(buf, stride, horizon, spectrum_buf, 0.0f, offset, 1.0f, live_min, live_max);
 
     for (int j = 0; j < s3d_count && j < lines - 1; j++) {
         float k = 1.0f - (j + frac) / (lines - 1);
@@ -1108,6 +1166,7 @@ bool spectrum_process(void) {
     if (s3d_on && data) {
         spec3d_push();
     }
+    s3d_data = data;
 
     drm_direct_ctx_t ctx;
     if (!drm_primary_begin_direct(&ctx, (uint32_t)s_spec_w * SPECTRUM_NFFT))
