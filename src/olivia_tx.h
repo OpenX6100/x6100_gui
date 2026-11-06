@@ -54,6 +54,10 @@ bool olivia_tx_send(const char *text);
 /* Ask to stop; the current block is finished, then one closing block. */
 void olivia_tx_stop(void);
 
+/* Stop for the window closing: the current block, then the fade-out, no
+ * closing block (at 32/1000 each block is 2 s the screen would wait). */
+void olivia_tx_stop_quick(void);
+
 bool olivia_tx_is_on(void);
 
 /* The Olivia window shows what is sent in its own text area: when set,

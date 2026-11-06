@@ -243,6 +243,20 @@ int olivia_mod_symbol(olivia_mod_t *mod, uint8_t symbol, float *out)
     return mod->symbol_separ;
 }
 
+int olivia_mod_flush(olivia_mod_t *mod, float *out)
+{
+    int n = mod->symbol_len - mod->symbol_separ;
+    int i;
+
+    for (i = 0; i < n; i++) {
+        out[i] = mod->tap[mod->tap_ptr];
+        mod->tap[mod->tap_ptr] = 0.0f;
+        mod->tap_ptr += 1;
+        mod->tap_ptr &= mod->wrap_mask;
+    }
+    return n;
+}
+
 int olivia_mod_block(olivia_mod_t *mod, const uint8_t *chars, float *out)
 {
     uint8_t symbols[OLIVIA_BLOCK_SYMBOLS];

@@ -61,6 +61,7 @@ static const struct {
 static pthread_t     tx_thread;
 static volatile bool tx_on = false;
 static volatile bool tx_stop_req = false;
+static volatile bool tx_quick_stop = false;   /* no closing blocks */
 static char         *tx_text = NULL;
 static uint16_t      center_hz = CENTER_DEFAULT;
 static olivia_mode_t cur_mode = OLIVIA_MODE_32_1000;
@@ -116,7 +117,8 @@ static float get_correction(void) {
     if (tx_info_refresh(&msg_id, &alc, &pwr, NULL)) {
         float target_pwr = LV_MIN(param_f_get(cfg.pwr()), MAX_PWR_W);
         if (alc > 0.5f) {
-            correction = log10f(log10f(11.1f - alc)) * 20.0f - 0.38f;
+            /* above 10.1 the log of a negative: a NaN gain */
+            correction = log10f(log10f(11.1f - fminf(alc, 10.0f))) * 20.0f - 0.38f;
         } else if (target_pwr - pwr > 0.5f) {
             correction = log10f(target_pwr / (pwr + 0.01f)) * 10.0f;
         }
@@ -130,6 +132,7 @@ static void finish_text(void) {
     free(tx_text);
     tx_text = NULL;
     tx_stop_req = false;
+    tx_quick_stop = false;
     tx_on = false;
 }
 
@@ -211,6 +214,8 @@ static void *tx_thread_fn(void *arg) {
     while (!done) {
         uint8_t chars[OLIVIA_MAX_BITS];
         int i;
+        int in_n;
+        bool flush = false;
 
         if (lead > 0 && !tx_stop_req) {
             /* run-in: zeros only */
@@ -228,16 +233,26 @@ static void *tx_thread_fn(void *arg) {
                     chars[i] = 0;               /* padding with zeros */
                 }
             }
-        } else if (tail > 0) {
+        } else if (tail > 0 && !tx_quick_stop) {
             for (i = 0; i < bits; i++) chars[i] = 0;
             tail--;
-            if (tail == 0) done = true;
         } else {
+            flush = true;
             done = true;
         }
 
-        olivia_mod_block(&mod, chars, blk);
-        int n = olivia_resamp_process(&res, blk, blk_samples, res_buf);
+        if (flush) {
+            /* The last symbols' windows still in the modulator, and the
+             * resampler's filter delay (zeros push it out): played to the
+             * end, the signal fades instead of being cut. */
+            in_n = olivia_mod_flush(&mod, blk);
+            memset(blk + in_n, 0, sizeof(float) * OLIVIA_RESAMP_TAPS);
+            in_n += OLIVIA_RESAMP_TAPS;
+        } else {
+            olivia_mod_block(&mod, chars, blk);
+            in_n = blk_samples;
+        }
+        int n = olivia_resamp_process(&res, blk, in_n, res_buf);
 
         for (int k = 0; k < n; k++) {
             float v = res_buf[k] * AMPLITUDE;
@@ -301,6 +316,7 @@ bool olivia_tx_send(const char *text) {
 
     tx_on = true;
     tx_stop_req = false;
+    tx_quick_stop = false;
 
     if (echo_cb) {
         echo_cb(text);
@@ -318,6 +334,13 @@ bool olivia_tx_send(const char *text) {
 
 void olivia_tx_stop(void) {
     if (tx_on) tx_stop_req = true;
+}
+
+void olivia_tx_stop_quick(void) {
+    if (tx_on) {
+        tx_quick_stop = true;
+        tx_stop_req = true;
+    }
 }
 
 bool olivia_tx_is_on(void) {

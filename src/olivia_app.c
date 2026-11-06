@@ -188,10 +188,31 @@ void olivia_app_update_settings(void) {
          * building the chain again is cheap and surer than trying to
          * recompute the state.
          */
-        if (!setup())
-            active = false;
+        /* A failed build leaves the receiver off only until the next
+         * change rebuilds it (rx_ok false); it used to switch it off for
+         * the rest of the session. */
+        setup();
     }
     pthread_mutex_unlock(&mux);
+}
+
+/* The receiver searches TUNE_MARGIN tone spacings either side of the
+ * signal: that window must sit above 0 Hz and below half its rate, or
+ * the chain can't be built. */
+int olivia_app_center_min(void) {
+    olivia_mode_t mode    = olivia_tx_get_mode();
+    double        bw      = olivia_tx_mode_bandwidth(mode);
+    double        spacing = bw / olivia_tx_mode_tones(mode);
+
+    return (int)ceil((TUNE_MARGIN - 0.5) * spacing + bw / 2.0) + 1;
+}
+
+int olivia_app_center_max(void) {
+    olivia_mode_t mode    = olivia_tx_get_mode();
+    double        bw      = olivia_tx_mode_bandwidth(mode);
+    double        spacing = bw / olivia_tx_mode_tones(mode);
+
+    return (int)floor(OLIVIA_RX_RATE / 2.0 - (TUNE_MARGIN + 1.0) * spacing - bw / 2.0) - 1;
 }
 
 void olivia_app_set_text_cb(olivia_app_text_cb_t cb) {
