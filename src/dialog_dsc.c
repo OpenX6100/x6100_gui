@@ -1,7 +1,6 @@
 /*
  * SPDX-License-Identifier: LGPL-2.1-or-later
  * Copyright (C) 2026 Hany El Imam - 1KO125 firmware for the Xiegu X6100
- * See NOTICE-1KO125.md.
  */
 /*
  * Xiegu X6100 - DSC (Digital Selective Calling) receiver, MF/HF
@@ -54,7 +53,6 @@
 #define DSC_SAVE_PREFIX     "dsc-"
 #define DSC_SAVE_EXT        ".txt"
 #define DSC_NAMES_FILE      "/mnt/dsc/mmsi.txt"     /* optional "MMSI;name" lines */
-#define DSC_TEST_WAV        "/mnt/dsc_test.wav"     /* mono 12000 Hz PCM int16 */
 #define DSC_MAX_CALLS       200                     /* calls kept in the live list */
 #define DSC_BROWSER_MAX     200                     /* newest saved calls shown */
 #define DSC_KEEP_FILES      500                     /* saved calls kept on the SD card: */
@@ -62,7 +60,6 @@
                                                     /* DISTRESS and URGENCY calls */
 #define DSC_FIFO_LEN        16
 #define DSC_UI_TIMER_MS     100
-#define DSC_TEST_CHUNK      480
 #define DSC_NAMES_MAX       200000
 #define DSC_REPLY_WINDOW    (30 * 60)               /* s: acknowledgement linking */
 
@@ -151,13 +148,6 @@ static dsc_message_t fifo[DSC_FIFO_LEN];
 static int fifo_head = 0, fifo_count = 0;
 static uint32_t dsp_audio_sub_id = AUDIO_SUB_INVALID;
 
-/* WAV test */
-static pthread_t test_thread;
-static bool test_thread_valid = false;
-static volatile bool test_mode = false;
-static volatile bool test_stop = false;
-static volatile bool test_done = false;
-
 /* optional MMSI -> name file */
 typedef struct { uint32_t mmsi; uint32_t off; } name_t;
 static name_t *names = NULL;
@@ -174,7 +164,6 @@ static void size_cb(button_data_t *d);
 static void details_cb(button_data_t *d);
 static void browser_cb(button_data_t *d);
 static void clear_cb(button_data_t *d);
-static void test_cb(button_data_t *d);
 static void close_cb(button_data_t *d);
 static void back_cb(button_data_t *d);
 static void prev_cb(button_data_t *d);
@@ -185,7 +174,6 @@ static void tune_cb(button_data_t *d);
 
 static char freq_label[24] = "Freq.";
 static char size_label[24] = "View Size\nSmall";
-static char test_label[16] = "Test\nWAV";
 
 static button_data_t btn_p1      = { .type = BTN_TEXT, .label = "(DSC 1:2)", .press = page2_cb };
 static button_data_t btn_freq    = { .type = BTN_TEXT, .label = freq_label, .press = freq_cb };
@@ -195,7 +183,6 @@ static button_data_t btn_browser = { .type = BTN_TEXT, .label = "Calls\nBrowser"
 
 static button_data_t btn_p2      = { .type = BTN_TEXT, .label = "(DSC 2:2)", .press = page1_cb };
 static button_data_t btn_clear   = { .type = BTN_TEXT, .label = "Clear\nList", .press = clear_cb };
-static button_data_t btn_test    = { .type = BTN_TEXT, .label = test_label, .press = test_cb };
 static void filter_cb(button_data_t *d);
 static char filter_label[24] = "Show all\ncalls";
 static button_data_t btn_filter  = { .type = BTN_TEXT, .label = filter_label, .press = filter_cb };
@@ -219,7 +206,6 @@ static button_data_t btn_tune    = { .type = BTN_TEXT, .label = "Tune", .press =
 static button_data_t btn_fclose  = { .type = BTN_TEXT, .label = "Close\nList", .press = back_cb };
 
 static buttons_page_t page_list_1 = { .items = { &btn_p1, &btn_freq, &btn_size, &btn_details, &btn_browser } };
-/* Test WAV (btn_test, test_cb) removed from the page, code kept: put &btn_test in a slot of page 2 to use it */
 static buttons_page_t page_list_2 = { .items = { &btn_p2, &btn_clear, &btn_filter, &btn_info, &btn_close } };
 static buttons_page_t page_detail = { .items = { &btn_pd, &btn_back, &btn_prev, &btn_next, &btn_delete } };
 static buttons_page_t page_browser = { .items = { &btn_pb, &btn_open, &btn_delete, &btn_filter, &btn_bclose } };
@@ -983,8 +969,7 @@ static void list_draw_cb(lv_event_t *e)
     if (live_count() == 0) {
         char k[16], t[96];
         fmt_khz(k, sizeof(k), channel_hz());
-        if (test_mode) snprintf(t, sizeof(t), "Playing " DSC_TEST_WAV "...");
-        else if (ncalls > 0) snprintf(t, sizeof(t), "Listening on %s kHz - no calls pass the filter", k);
+        if (ncalls > 0) snprintf(t, sizeof(t), "Listening on %s kHz - no calls pass the filter", k);
         else snprintf(t, sizeof(t), "Listening on %s kHz - no calls yet", k);
         lv_coord_t h = lv_obj_get_height(obj);
         d_text(ctx, &sony_22, C_SUB, (box.x1 + box.x2) / 2, box.y1 + h / 2 - 14, box.x2 - box.x1 - 20,
@@ -1627,15 +1612,6 @@ static void ui_timer_cb(lv_timer_t *t)
         add_call(&m);
         any = true;
     }
-    if (test_done) {
-        test_done = false;
-        if (test_thread_valid) { pthread_join(test_thread, NULL); test_thread_valid = false; }
-        test_mode = false;
-        snprintf(test_label, sizeof(test_label), "Test\nWAV");
-        if (btn_test.disp_btn) buttons_refresh(&btn_test);
-        msg_schedule_text_fmt("DSC test finished");
-        any = true;
-    }
     static int32_t last_hz = 0;
     int32_t hz = channel_hz();
     if (hz != last_hz) { last_hz = hz; update_freq_label(); any = true; }
@@ -1647,75 +1623,9 @@ static void ui_timer_cb(lv_timer_t *t)
 
 static void audio_cb(size_t n, float *samples)
 {
-    if (test_mode) return;
     pthread_mutex_lock(&decoder_mutex);
     if (decoder) dsc_decoder_process(decoder, samples, (int)n);
     pthread_mutex_unlock(&decoder_mutex);
-}
-
-/* ---- WAV test ------------------------------------------------------------------ */
-
-static uint32_t rd32(const unsigned char *p) { return p[0] | p[1] << 8 | p[2] << 16 | (uint32_t)p[3] << 24; }
-static uint16_t rd16(const unsigned char *p) { return (uint16_t)(p[0] | p[1] << 8); }
-
-static void *test_thread_cb(void *arg)
-{
-    (void)arg;
-    FILE *f = fopen(DSC_TEST_WAV, "rb");
-    unsigned char hdr[12], ch[8], fmt[16];
-    bool ok = false;
-    uint32_t left = 0;
-    if (f && fread(hdr, 1, 12, f) == 12 && !memcmp(hdr, "RIFF", 4) && !memcmp(hdr + 8, "WAVE", 4)) {
-        bool fmt_ok = false;
-        while (fread(ch, 1, 8, f) == 8) {
-            uint32_t sz = rd32(ch + 4);
-            if (!memcmp(ch, "fmt ", 4) && sz >= 16 && fread(fmt, 1, 16, f) == 16) {
-                fmt_ok = rd16(fmt) == 1 && rd16(fmt + 2) == 1 && rd32(fmt + 4) == DSC_SAMPLE_RATE && rd16(fmt + 14) == 16;
-                if (sz > 16) fseek(f, (long)(sz - 16), SEEK_CUR);
-            } else if (!memcmp(ch, "data", 4)) {
-                ok = fmt_ok;
-                left = sz;
-                break;
-            } else {
-                fseek(f, (long)sz, SEEK_CUR);
-            }
-            if (sz & 1) fseek(f, 1, SEEK_CUR);
-        }
-    }
-    if (!ok) {
-        fprintf(stderr, "DSC TEST: %s must be a mono 12000 Hz 16-bit PCM WAV\n", DSC_TEST_WAV);
-    } else {
-        int16_t pcm[DSC_TEST_CHUNK];
-        float x[DSC_TEST_CHUNK];
-        while (!test_stop && left >= 2) {
-            size_t want = DSC_TEST_CHUNK;
-            if (want > left / 2) want = left / 2;
-            size_t n = fread(pcm, 2, want, f);
-            if (n == 0) break;
-            left -= (uint32_t)(n * 2);
-            for (size_t i = 0; i < n; ++i) x[i] = (float)pcm[i] / 32768.0f;
-            pthread_mutex_lock(&decoder_mutex);
-            if (decoder) dsc_decoder_process(decoder, x, (int)n);
-            pthread_mutex_unlock(&decoder_mutex);
-            usleep((useconds_t)(1000000ULL * n / DSC_SAMPLE_RATE / 4));   /* 4x real time */
-        }
-        pthread_mutex_lock(&decoder_mutex);
-        if (decoder) dsc_decoder_flush(decoder);
-        pthread_mutex_unlock(&decoder_mutex);
-    }
-    if (f) fclose(f);
-    test_done = true;
-    return NULL;
-}
-
-static void stop_test(void)
-{
-    if (!test_thread_valid) { test_mode = false; return; }
-    test_stop = true;
-    pthread_join(test_thread, NULL);
-    test_thread_valid = false;
-    test_mode = false;
-    test_done = false;
 }
 
 /* ---- buttons ------------------------------------------------------------------- */
@@ -1787,27 +1697,6 @@ static void clear_cb(button_data_t *d)
     list_sel = list_top = 0;
     if (list_obj) lv_obj_invalidate(list_obj);
     msg_schedule_text_fmt("List cleared (saved calls are kept)");
-}
-
-static void test_cb(button_data_t *d)
-{
-    (void)d;
-    if (test_mode) {
-        stop_test();
-        snprintf(test_label, sizeof(test_label), "Test\nWAV");
-    } else {
-        test_stop = false;
-        test_done = false;
-        test_mode = true;
-        if (pthread_create(&test_thread, NULL, test_thread_cb, NULL) != 0) {
-            test_mode = false;
-            return;
-        }
-        test_thread_valid = true;
-        snprintf(test_label, sizeof(test_label), "Stop\nTest");
-    }
-    if (btn_test.disp_btn) buttons_refresh(&btn_test);
-    if (list_obj) lv_obj_invalidate(list_obj);
 }
 
 static void close_cb(button_data_t *d) { (void)d; dialog_destruct(); }
@@ -2000,7 +1889,6 @@ static void construct_cb(lv_obj_t *parent)
     lv_obj_add_flag(detail_obj, LV_OBJ_FLAG_HIDDEN);
 
     snprintf(size_label, sizeof(size_label), "View Size\n%s", small_size ? "Small" : "Big");
-    snprintf(test_label, sizeof(test_label), "Test\nWAV");
     update_freq_label();
     list_sel = 0;
     list_top = 0;
@@ -2018,7 +1906,6 @@ static void destruct_cb(void)
     app_info_abort();
     if (dsp_audio_sub_id != AUDIO_SUB_INVALID)
         dsp_audio_set_active(dsp_audio_sub_id, false);
-    stop_test();
     if (ui_timer) { lv_timer_del(ui_timer); ui_timer = NULL; }
 
     destroy_lists();
