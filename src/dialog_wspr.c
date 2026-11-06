@@ -272,17 +272,6 @@ static void load_band(int8_t dir)
                         (unsigned)((wspr_bands[idx].dial_hz / 1000u) % 1000u));
 }
 
-static void restart_rx(void)
-{
-    /* A band change rebuilds the receive chain: the collected baseband
-     * no longer belongs to the frequency being displayed. The new dial
-     * only once the old chain is down: set_active(false) waits for a
-     * decode in progress, whose spots are still the old band's. */
-    wspr_app_set_active(false);
-    wspr_app_set_dial(wspr_bands[cur_band].dial_hz);
-    wspr_app_set_active(true);
-}
-
 static void clean_screen(void)
 {
     char title[24];
@@ -298,8 +287,14 @@ static void clean_screen(void)
 
 static void change_band(int8_t dir)
 {
+    /* The old chain down first: set_active(false) ends a transmission
+     * (the radio mustn't retune, nor the amplifier switch bands, while
+     * keyed) and waits for a decode in progress, whose spots are still
+     * the old band's. Then the new band and its dial for WSPRnet. */
+    wspr_app_set_active(false);
     load_band(dir);
-    restart_rx();
+    wspr_app_set_dial(wspr_bands[cur_band].dial_hz);
+    wspr_app_set_active(true);  /* a new chain: the baseband was the old band's */
     clean_screen();
     buttons_refresh(&button_status);
 }

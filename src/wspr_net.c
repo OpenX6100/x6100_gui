@@ -358,10 +358,22 @@ void wspr_net_set_enabled(bool on) {
     pthread_mutex_unlock(&mux);
 }
 
+/* WSPR's tone spacing: 12000 / 8192 Hz */
+#define TONE_SPACING_HZ 1.4648
+
 void wspr_net_spot(const wspr_spot_t *spot, const wspr_net_station_t *me) {
     char   date[16], hhmm[16], body[POST_LEN], rcall[48], tcall[32];
     double rqrg = me->dial_hz / 1e6;
-    double tqrg = (me->dial_hz + (double)spot->freq_hz) / 1e6;
+    /* The decoder gives the lowest of the 4 tones; WSJT-X and WSPRnet
+     * use their centre, 1.5 tones up. */
+    double tqrg = (me->dial_hz + (double)spot->freq_hz + 1.5 * TONE_SPACING_HZ) / 1e6;
+
+    /* A type 1 message's power ends in 0, 3 or 7. Others are type 2/3
+     * (compound calls), which the decoder reads as type 1: the grid and
+     * power it gives are made up, so they go neither to the file nor to
+     * WSPRnet. */
+    int d = spot->power_dbm % 10;
+    if (d != 0 && d != 3 && d != 7) return;
 
     wspr_net_slot_time(date, hhmm);
     save_spot(date, hhmm, spot, tqrg);
