@@ -11,8 +11,8 @@
  *  Turning the MFK picks one: call, grid, SNR, its power, distance and
  *  beam heading.
  *
- *  Stations that heard you (WSPRnet's spots of your signal, fetched over
- *  WiFi: not there yet) go in with wspr_map_heard_you(): a blue path from
+ *  Stations that heard you (WSPRnet's spots of your signal, fetched from
+ *  wspr.live by wspr_net.c) go in with wspr_map_heard_you(): a blue path from
  *  you, blue squares where only they heard you, "heard you" in the legend
  *  once there are any. Everything here runs on the LVGL thread.
  */

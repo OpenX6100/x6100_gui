@@ -231,6 +231,10 @@ static void spot_trampoline(const wspr_candidate_t *cand,
     spot.power_dbm = power_dbm;
     spot.snr_db = cand->snr_db;
     spot.freq_hz = (float)cand->freq_hz;
+    /* The decoder's buffer starts WSPR_DT_EARLY_S before the nominal
+     * 1 s start (decode_slot), so this is DT as WSJT-X shows it, give or
+     * take how promptly collection restarted at the slot boundary. */
+    spot.dt_s = (float)(cand->time_offset_s - WSPR_DT_EARLY_S);
     spot.errors = errors;
 
     if (w->cb.on_spot)

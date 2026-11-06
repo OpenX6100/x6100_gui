@@ -219,6 +219,7 @@ static ParamInt *cfg_js8_custom_on(void) { return param_ref<ParamInt>(cfg_instan
 static ParamInt *cfg_js8_custom_hz(void) { return param_ref<ParamInt>(cfg_instance().p_js8_custom_hz); }
 static ParamInt *cfg_jtty_serial(void) { return param_ref<ParamInt>(cfg_instance().p_jtty_serial); }
 static ParamInt *cfg_jtty_tx_freq(void) { return param_ref<ParamInt>(cfg_instance().p_jtty_tx_freq); }
+static ParamInt *cfg_wspr_net(void) { return param_ref<ParamInt>(cfg_instance().p_wspr_net); }
 static ParamInt *cfg_theme(void) { return param_ref<ParamInt>(cfg_instance().p_theme); }
 static ParamInt *cfg_meter_color(void) { return param_ref<ParamInt>(cfg_instance().p_meter_color); }
 static ParamInt *cfg_ft8_info(void) { return param_ref<ParamInt>(cfg_instance().p_ft8_info); }
@@ -478,6 +479,9 @@ extern "C" const cfg_refs_t cfg = {
     .jtty = {
         .serial = &cfg_jtty_serial,
         .tx_freq = &cfg_jtty_tx_freq,
+    },
+    .wspr = {
+        .net = &cfg_wspr_net,
     },
 };
 
