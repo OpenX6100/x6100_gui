@@ -23,6 +23,7 @@
 #include <stdbool.h>
 
 typedef struct {
+    lv_obj_t             *waterfall;    /* hidden under the map */
     table_view_press_cb_t on_press;     /* call this station (its last message) */
     void (*on_close)(void);             /* ESC */
     void (*on_vol_change)(int32_t d);   /* VOL turned */
@@ -39,6 +40,9 @@ void map_view_clear(void);
  * back (`table` focused again). False if the map couldn't be made. */
 bool map_view_show(lv_obj_t *parent, lv_obj_t *table, bool on, const map_view_actions_t *actions);
 bool map_view_shown(void);
+
+/* The MFK back to the map, if it shows (after the keyboard window). */
+void map_view_focus(void);
 
 /* Auto -> Close-in -> World; returns the new view's name. */
 const char *map_view_next_mode(void);

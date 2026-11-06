@@ -133,7 +133,6 @@ void map_view_add(const cell_data_t *cell) {
     default:
         return;
     }
-    if (map_scene_shown()) redraw(false);
 }
 
 void map_view_clear(void) {
@@ -273,6 +272,7 @@ static void press(void) {
 bool map_view_show(lv_obj_t *parent, lv_obj_t *table, bool on, const map_view_actions_t *actions) {
     if (on) act = *actions;
     const map_scene_app_t app = {
+        .hide          = act.waterfall,
         .redraw        = redraw,
         .on_step       = select_step,
         .on_press      = press,
@@ -284,6 +284,10 @@ bool map_view_show(lv_obj_t *parent, lv_obj_t *table, bool on, const map_view_ac
 
 bool map_view_shown(void) {
     return map_scene_shown();
+}
+
+void map_view_focus(void) {
+    map_scene_focus();
 }
 
 const char *map_view_next_mode(void) {

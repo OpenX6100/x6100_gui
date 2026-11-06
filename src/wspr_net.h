@@ -6,8 +6,9 @@
  *  Xiegu X6100 LVGL GUI - WSPR: spots to a file, to WSPRnet, and who heard you
  *
  *  Every spot is appended to /mnt/wspr_spots.txt in wsprd's wspr_spots.txt
- *  layout, whether or not the radio is online, so a session can be looked
- *  at or uploaded later.
+ *  layout (once its slot ends), whether or not the radio is online, so a
+ *  session can be looked at or uploaded later. Uploading needs a call and a
+ *  4 or 6 character grid (Settings).
  *
  *  With WSPRnet on (page 3, saved), the spots of each receive slot are
  *  posted to wsprnet.org the way WSJT-X does (one form POST per spot to
@@ -51,6 +52,10 @@ void wspr_net_slot_end(const wspr_net_station_t *me, bool transmitted);
  * hour. The answers arrive on the LVGL thread as wspr_map_heard_you(). A
  * newer request (or wspr_net_forget()) makes older answers be dropped. */
 void wspr_net_fetch_heard(const char *call, uint32_t dial_hz);
+
+/* The start of the slot whose decode just finished, UTC: "261106", "1402".
+ * The time a spot is listed, saved and uploaded with. */
+void wspr_net_slot_time(char date[16], char hhmm[16]);
 
 /* A new band or Clear: drop answers still on their way. */
 void wspr_net_forget(void);

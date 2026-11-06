@@ -53,8 +53,14 @@ static bool            thread_up;
 /* Form bodies waiting for wsprnet.org, oldest at q_head. */
 static char     queue[QUEUE_MAX][POST_LEN];
 static int      q_head, q_n;
+static uint32_t q_pops;         /* heads removed: one in flight that was
+                                 * dropped meanwhile isn't removed twice */
 static bool     upload_now;     /* a slot ended: send what is queued */
 static int      slot_spots;     /* spots queued in the slot now ending */
+
+/* The slot's lines for wspr_spots.txt, written once it ends (worker thread) */
+static char     file_buf[4096];
+static size_t   file_len;
 
 static char     fetch_sql[512];
 static char     fetch_call[16];
@@ -100,7 +106,7 @@ static void url_enc(char *out, size_t cap, const char *in) {
 
 /* Start of the slot that just ended: decoding finishes about 116 s into
  * it, so a minute back, rounded down to the even minute, is inside it. */
-static void slot_start(char date[16], char hhmm[16]) {
+void wspr_net_slot_time(char date[16], char hhmm[16]) {
     time_t    t = time(NULL) - 60;
     struct tm tm;
     t -= t % 120;
@@ -112,6 +118,11 @@ static void slot_start(char date[16], char hhmm[16]) {
 static void sleep_ms(long ms) {
     struct timespec ts = {ms / 1000, (ms % 1000) * 1000000L};
     nanosleep(&ts, NULL);
+}
+
+/* Enough to report from: a call, and a grid WSPRnet can place us by. */
+static bool me_ok(const wspr_net_station_t *me) {
+    return call_ok(me->call) && strlen(me->grid) >= 4;
 }
 
 /* ---- HTTP/1.0 over a socket ---- */
@@ -219,7 +230,8 @@ static void *net_main(void *arg) {
             pthread_cond_wait(&cond, &mux);
 
         if (upload_now && q_n > 0) {
-            char body[POST_LEN];
+            char     body[POST_LEN];
+            uint32_t pops = q_pops;
             snprintf(body, sizeof(body), "%s", queue[q_head]);
             pthread_mutex_unlock(&mux);
 
@@ -237,9 +249,13 @@ static void *net_main(void *arg) {
                 upload_now = false;
             } else {
                 /* Answered: done with it either way. A spot it didn't
-                 * take ("N spot(s) added" missing) isn't sent again. */
-                q_head = (q_head + 1) % QUEUE_MAX;
-                q_n--;
+                 * take ("N spot(s) added" missing) isn't sent again.
+                 * Unless WSPRnet off or a full queue dropped it already. */
+                if (q_pops == pops) {
+                    q_head = (q_head + 1) % QUEUE_MAX;
+                    q_n--;
+                    q_pops++;
+                }
                 if (st == 200 && (!spot || strstr(resp, "added"))) {
                     net_err = NET_OK;
                     if (spot) sent_total++;
@@ -292,6 +308,7 @@ static void enqueue(const char *body) {
     if (q_n == QUEUE_MAX) {
         q_head = (q_head + 1) % QUEUE_MAX;
         q_n--;
+        q_pops++;
     }
     snprintf(queue[(q_head + q_n) % QUEUE_MAX], POST_LEN, "%s", body);
     q_n++;
@@ -299,17 +316,28 @@ static void enqueue(const char *body) {
 
 /* ---- The file ---- */
 
-static void save_spot(const char *date, const char *hhmm, const wspr_spot_t *s, double mhz) {
+static void flush_spots(void) {
+    if (!file_len) return;
     struct stat st;
     if (stat(SPOTS_FILE, &st) == 0 && st.st_size > SPOTS_MAX_BYTES) rename(SPOTS_FILE, SPOTS_OLD);
     FILE *f = fopen(SPOTS_FILE, "a");
-    if (!f) return;
+    if (f) {
+        fwrite(file_buf, 1, file_len, f);
+        fclose(f);
+    }
+    file_len = 0;
+}
+
+/* Kept until the slot ends: no card writes during the decode. */
+static void save_spot(const char *date, const char *hhmm, const wspr_spot_t *s, double mhz) {
+    if (file_len > sizeof(file_buf) - 128) flush_spots();
     /* wsprd's wspr_spots.txt: date time sync snr dt MHz call grid dBm
      * drift cycles jitter (sync, cycles, jitter not measured here: 0) */
-    fprintf(f, "%s %s %2d %4d %5.1f %11.6f  %-6s %-4s %2d %4d %4d %4d\n", date, hhmm, 0,
-            (int)lroundf(s->snr_db), (double)s->dt_s, mhz, s->callsign, s->locator, s->power_dbm, 0, 0,
-            0);
-    fclose(f);
+    int n = snprintf(file_buf + file_len, sizeof(file_buf) - file_len,
+                     "%s %s %2d %4d %5.1f %11.6f  %-6s %-4s %2d %4d %4d %4d\n", date, hhmm, 0,
+                     (int)lroundf(s->snr_db), (double)s->dt_s, mhz, s->callsign, s->locator, s->power_dbm, 0,
+                     0, 0);
+    if (n > 0 && (size_t)n < sizeof(file_buf) - file_len) file_len += (size_t)n;
 }
 
 /* ---- API ---- */
@@ -322,6 +350,7 @@ void wspr_net_set_enabled(bool on) {
     param_i_set(cfg.wspr.net(), on ? 1 : 0);
     pthread_mutex_lock(&mux);
     if (!on) {
+        q_pops    += (uint32_t)q_n;
         q_n        = 0;
         upload_now = false;
         net_err    = NET_OK;
@@ -334,10 +363,10 @@ void wspr_net_spot(const wspr_spot_t *spot, const wspr_net_station_t *me) {
     double rqrg = me->dial_hz / 1e6;
     double tqrg = (me->dial_hz + (double)spot->freq_hz) / 1e6;
 
-    slot_start(date, hhmm);
+    wspr_net_slot_time(date, hhmm);
     save_spot(date, hhmm, spot, tqrg);
 
-    if (!wspr_net_enabled() || !call_ok(me->call)) return;
+    if (!wspr_net_enabled() || !me_ok(me)) return;
     url_enc(rcall, sizeof(rcall), me->call);
     url_enc(tcall, sizeof(tcall), spot->callsign);
     snprintf(body, sizeof(body),
@@ -360,7 +389,8 @@ void wspr_net_slot_end(const wspr_net_station_t *me, bool transmitted) {
     slot_spots = 0;
     pthread_mutex_unlock(&mux);
 
-    if (!wspr_net_enabled() || !call_ok(me->call)) return;
+    flush_spots();
+    if (!wspr_net_enabled() || !me_ok(me)) return;
 
     pthread_mutex_lock(&mux);
     /* No spots: tell WSPRnet we're listening, as WSJT-X does. Not for a

@@ -94,8 +94,11 @@ void map_scene_distance(const map_scene_t *sc, int i, char *buf, size_t size);
  * Show: Map puts the map over the whole inside of the window's frame and
  * gives it the MFK (the app's list gets it back with Show: List). The app
  * keeps its stations and draws them with map_scene_draw() in `redraw`,
- * called once a second while the map shows and whenever it asks. */
+ * called once a second while the map shows and whenever it asks (a new
+ * station waits for the next second: drawing per message would redraw the
+ * whole map dozens of times in a burst). */
 typedef struct {
+    lv_obj_t *hide;                   /* hidden while the map shows (the app's waterfall), NULL none */
     void (*redraw)(bool force);
     void (*on_step)(int dir);         /* MFK turned: pick the next station, map_scene_step() */
     void (*on_press)(void);           /* MFK pressed, NULL: nothing */
@@ -104,9 +107,14 @@ typedef struct {
 } map_scene_app_t;
 
 /* The map over `parent` (the window) or the list back (`list` focused
- * again). False if the map couldn't be made (a message says so). */
+ * again). The list and app->hide are hidden under the map, so their
+ * updates don't redraw it. False if the map couldn't be made (a message
+ * says so). */
 bool map_scene_show(lv_obj_t *parent, lv_obj_t *list, bool on, const map_scene_app_t *app);
 bool map_scene_shown(void);
+
+/* The MFK back to the map (after a window that took it, e.g. a keyboard). */
+void map_scene_focus(void);
 
 /* Auto -> Close-in -> World (the map redrawn); returns the new view's name. */
 const char    *map_scene_next_mode(void);

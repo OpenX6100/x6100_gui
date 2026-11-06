@@ -262,7 +262,6 @@ static void load_band(int8_t dir)
     }
 
     cur_band = idx;
-    wspr_app_set_dial(wspr_bands[idx].dial_hz);
 
     /* Frequency first, then mode - the order cfg_digital_load() uses. */
     cparam_i_set(cfg.cur.fg_freq(), (int32_t)wspr_bands[idx].dial_hz);
@@ -276,8 +275,11 @@ static void load_band(int8_t dir)
 static void restart_rx(void)
 {
     /* A band change rebuilds the receive chain: the collected baseband
-     * no longer belongs to the frequency being displayed. */
+     * no longer belongs to the frequency being displayed. The new dial
+     * only once the old chain is down: set_active(false) waits for a
+     * decode in progress, whose spots are still the old band's. */
     wspr_app_set_active(false);
+    wspr_app_set_dial(wspr_bands[cur_band].dial_hz);
     wspr_app_set_active(true);
 }
 
@@ -362,12 +364,10 @@ static void on_psd(const float *mag_db, int nbins, void *ctx)
  */
 static void slot_time_str(char *out, size_t out_sz)
 {
-    time_t     t = time(NULL) - 60;
-    struct tm  tm_utc;
+    char date[16], hhmm[16];
 
-    t -= t % 120;
-    gmtime_r(&t, &tm_utc);
-    snprintf(out, out_sz, "%02d%02d", tm_utc.tm_hour, tm_utc.tm_min);
+    wspr_net_slot_time(date, hhmm);   /* the time WSPRnet gets too */
+    snprintf(out, out_sz, "%s", hhmm);
 }
 
 /* Settings > Interface > Decoder text, read when the window opens. */
@@ -603,7 +603,7 @@ static void show_map_cb(button_data_t *b)
 
     snprintf(title, sizeof(title), "WSPR %s", cur_band >= 0 ? wspr_bands[cur_band].label : "");
     wspr_map_set_title(title);
-    if (wspr_map_show(dialog.obj, table, !wspr_map_shown(), on_table_close, on_table_vol_change) &&
+    if (wspr_map_show(dialog.obj, table, waterfall, !wspr_map_shown(), on_table_close, on_table_vol_change) &&
         wspr_map_shown())
         msg_update_text_fmt("Map: turn MFK to pick a station. Hold: Auto/Close-in/World");
     buttons_refresh(b);
@@ -893,7 +893,12 @@ static void construct_cb(lv_obj_t *parent)
 
     wspr_app_init();
     wspr_app_set_ui_cb(&ui_cb);
+    wspr_app_set_dial(wspr_bands[cur_band].dial_hz);
     wspr_app_set_active(true);
+
+    /* Spots of the last session that were still on their way when it
+     * closed may have reached the map since. */
+    wspr_map_clear();
 
     tx_hz = wspr_app_get_tx_freq();
     update_finder();

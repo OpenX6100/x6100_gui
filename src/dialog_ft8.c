@@ -796,6 +796,12 @@ static void add_msg_cb(void *data) {
     map_view_add((const cell_data_t *)data);
 }
 
+/* With Show: CQ the list leaves out other stations' QSOs; the map still
+ * shows who is on the air and with whom. */
+static void map_only_cb(void *data) {
+    map_view_add((const cell_data_t *)data);
+}
+
 static const char *map_label_getter() {
     return map_view_shown() ? "Show:\nList" : "Show:\nMap";
 }
@@ -803,6 +809,7 @@ static const char *map_label_getter() {
 static void show_map_cb(struct button_data_t *btn_data) {
     if (disable_buttons) return;
     const map_view_actions_t actions = {
+        .waterfall     = waterfall,
         .on_press      = on_table_press,
         .on_close      = on_table_close,
         .on_vol_change = on_table_vol_change,
@@ -1025,8 +1032,12 @@ static void keyboard_open() {
 
 static void keyboard_close() {
     textarea_window_close();
-    lv_group_add_obj(keyboard_group, table);
-    lv_group_set_editing(keyboard_group, true);
+    if (map_view_shown()) {
+        map_view_focus();   /* the hidden list stays out of the MFK group */
+    } else {
+        lv_group_add_obj(keyboard_group, table);
+        lv_group_set_editing(keyboard_group, true);
+    }
     disable_buttons = false;
 }
 
@@ -1130,14 +1141,14 @@ static void add_rx_text(int16_t snr, const char * text, slot_info_t *s_info, flo
     free(old_msg);
 
     ft8_cell_type_t cell_type;
+    bool            map_only = false;
     if (meta.to_me) {
         cell_type = CELL_RX_TO_ME;
     } else if (meta.type == FTX_MSG_TYPE_CQ) {
         cell_type = CELL_RX_CQ;
-    } else if (!param_i_get(cfg.ft8.show_all())) {
-        return;
     } else {
         cell_type = CELL_RX_MSG;
+        map_only  = !param_i_get(cfg.ft8.show_all());
     }
 
     cell_data_t  cell_data;
@@ -1174,7 +1185,7 @@ static void add_rx_text(int16_t snr, const char * text, slot_info_t *s_info, flo
     } else {
         cell_data.dist = 0;
     }
-    scheduler_put(add_msg_cb, (void*)&cell_data, sizeof(cell_data_t));
+    scheduler_put(map_only ? map_only_cb : add_msg_cb, (void*)&cell_data, sizeof(cell_data_t));
 }
 
 /* ---- audio_worker callbacks (run on the worker thread) ---------------- */

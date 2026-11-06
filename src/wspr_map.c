@@ -73,7 +73,6 @@ void wspr_map_spot_cb(void *data) {
     s->snr       = (int)lroundf(spot->snr_db);
     s->power_dbm = spot->power_dbm;
     s->heard_ms  = now_ms();
-    if (map_scene_shown()) redraw(false);
 }
 
 void wspr_map_heard_you(const char *call, const char *grid, int snr) {
@@ -81,7 +80,6 @@ void wspr_map_heard_you(const char *call, const char *grid, int snr) {
     if (grid && grid[0]) snprintf(s->grid, sizeof(s->grid), "%s", grid);
     s->you_snr = snr;
     s->you_ms  = now_ms();
-    if (map_scene_shown()) redraw(false);
 }
 
 void wspr_map_clear(void) {
@@ -200,9 +198,10 @@ static void select_step(int dir) {
     redraw(false);
 }
 
-bool wspr_map_show(lv_obj_t *parent, lv_obj_t *list, bool on, void (*on_close)(void),
+bool wspr_map_show(lv_obj_t *parent, lv_obj_t *list, lv_obj_t *waterfall, bool on, void (*on_close)(void),
                    void (*on_vol_change)(int32_t d)) {
     const map_scene_app_t app = {
+        .hide          = waterfall,
         .redraw        = redraw,
         .on_step       = select_step,
         .on_close      = on_close,

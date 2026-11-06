@@ -40,8 +40,9 @@ void wspr_map_clear(void);
 void wspr_map_set_title(const char *title);
 
 /* The map over `parent` (the WSPR window) or the list back (`list`
- * focused again). False if the map couldn't be made. */
-bool wspr_map_show(lv_obj_t *parent, lv_obj_t *list, bool on, void (*on_close)(void),
+ * focused again); `waterfall` is hidden under it. False if the map
+ * couldn't be made. */
+bool wspr_map_show(lv_obj_t *parent, lv_obj_t *list, lv_obj_t *waterfall, bool on, void (*on_close)(void),
                    void (*on_vol_change)(int32_t d));
 bool wspr_map_shown(void);
 

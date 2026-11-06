@@ -47,16 +47,18 @@ void map_scene_distance(const map_scene_t *sc, int i, char *buf, size_t size) {
     snprintf(buf, size, "  %.0f %s", sc->miles ? km * 0.621371 : km, sc->miles ? "mi" : "km");
 }
 
-/* A status line, top right (`row` 0, 1 under it), on a dark box. */
-static void draw_status(const char *text, int row) {
-    if (!text || !text[0]) return;
+/* A status line, top right at `y`, on a dark box; returns where the next
+ * one goes under it. */
+static int draw_status(const char *text, int y) {
+    if (!text || !text[0]) return y;
     const map_widget_geom_t *g = map_widget_geom();
     lv_point_t               sz;
     lv_txt_get_size(&sz, text, &sony_18, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-    int x = g->w - 12 - sz.x, y = 6 + row * (sz.y + 6);
+    int x = g->w - 12 - sz.x;
     map_widget_rect(x - 4, y - 2, sz.x + 8, sz.y + 4, 0x000000, LV_OPA_50, 0, 0, 3);
     map_widget_take(x - 4, y - 2, g->w, y + sz.y + 2);
     map_widget_text(x, y, sz.x + 4, &sony_18, 0xFFFFFF, text);
+    return y + sz.y + 6;
 }
 
 /* The hint line, bottom left above the legend. */
@@ -166,8 +168,12 @@ void map_scene_draw(const map_scene_t *sc, bool force) {
     if (sc->hint && sc->hint[0] && len < (int)sizeof(hint_line))
         snprintf(hint_line + len, sizeof(hint_line) - len, "%s%s", len ? "     " : "", sc->hint);
     draw_hint(hint_line, legend_y - MAP_SCENE_HINT_H);
-    draw_status(sc->status, 0);
-    draw_status(sc->status2, 1);
+    /* status2's lines each on their own box, right-aligned like status */
+    int  y = draw_status(sc->status, 6);
+    char lines[160];
+    snprintf(lines, sizeof(lines), "%s", sc->status2 ? sc->status2 : "");
+    for (char *save, *ln = strtok_r(lines, "\n", &save); ln; ln = strtok_r(NULL, "\n", &save))
+        y = draw_status(ln, y);
 
     lv_draw_line_dsc_t line;
     lv_draw_line_dsc_init(&line);
@@ -311,6 +317,7 @@ int map_scene_step(const map_scene_t *sc, int sel, int dir) {
 
 static bool            shown;
 static lv_obj_t       *list_obj;
+static lv_obj_t       *hide_obj;
 static lv_timer_t     *timer;
 static js8_map_mode_t  mode = JS8_MAP_AUTO;
 static map_scene_app_t app;
@@ -377,13 +384,18 @@ bool map_scene_show(lv_obj_t *parent, lv_obj_t *list, bool on, const map_scene_a
         }
         app       = *a;
         list_obj  = list;
+        hide_obj  = a->hide;
         shown     = true;
         scene_sig = 0;
         map_widget_view_reset();
         map_widget_show(true);
         /* The MFK goes to the map while it shows. */
         lv_obj_t *canvas = map_widget_canvas();
-        if (list_obj) lv_group_remove_obj(list_obj);
+        if (list_obj) {
+            lv_group_remove_obj(list_obj);
+            lv_obj_add_flag(list_obj, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (hide_obj) lv_obj_add_flag(hide_obj, LV_OBJ_FLAG_HIDDEN);
         lv_group_add_obj(keyboard_group, canvas);
         lv_group_focus_obj(canvas);
         lv_group_set_editing(keyboard_group, true);
@@ -395,7 +407,9 @@ bool map_scene_show(lv_obj_t *parent, lv_obj_t *list, bool on, const map_scene_a
         if (timer) lv_timer_pause(timer);
         lv_group_remove_obj(map_widget_canvas());
         map_widget_show(false);
+        if (hide_obj) lv_obj_clear_flag(hide_obj, LV_OBJ_FLAG_HIDDEN);
         if (list_obj) {
+            lv_obj_clear_flag(list_obj, LV_OBJ_FLAG_HIDDEN);
             lv_group_add_obj(keyboard_group, list_obj);
             lv_group_focus_obj(list_obj);
             lv_group_set_editing(keyboard_group, true);
@@ -406,6 +420,14 @@ bool map_scene_show(lv_obj_t *parent, lv_obj_t *list, bool on, const map_scene_a
 
 bool map_scene_shown(void) {
     return shown;
+}
+
+void map_scene_focus(void) {
+    if (!shown) return;
+    lv_obj_t *canvas = map_widget_canvas();
+    if (lv_obj_get_group(canvas) != keyboard_group) lv_group_add_obj(keyboard_group, canvas);
+    lv_group_focus_obj(canvas);
+    lv_group_set_editing(keyboard_group, true);
 }
 
 const char *map_scene_next_mode(void) {
@@ -423,6 +445,7 @@ void map_scene_destroy(void) {
     timer     = NULL;
     shown     = false;
     list_obj  = NULL;
+    hide_obj  = NULL;
     scene_sig = 0;
     memset(&app, 0, sizeof(app));
     map_widget_free(); /* its objects go with the window */
