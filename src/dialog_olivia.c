@@ -34,6 +34,7 @@
 #include "styles.h"
 #include "cfg/cfg_api.h"
 #include "radio.h"
+#include "itu_region.h"
 #include "common/time.h"
 #include "audio.h"
 #include "dsp.h"
@@ -113,19 +114,22 @@
  * From the frequency table of oliviadigitalmode.org: dial frequencies
  * for the calling channels, with the waterfall centre at 1500 Hz, which
  * is where opening the window and every band change put the finder.
- * Region 1 values where regions differ (160 m 1837.5, not 1825.5; 40 m
- * the secondary 7071.0, since 7038.5 is a Region 2 channel). 20 m has a
- * second, 32/1000 channel. No 6 m channel is listed.
+ * Where it gives one channel for Region 1 and another for Region 2 (160 m
+ * 1837.5 and 1825.5; 40 m 7038.5 in Region 2, otherwise the secondary
+ * 7071.0), the region of the locator in the QTH Grid app is used
+ * (itu_region.c); it names none for Region 3, which takes Region 1's.
+ * 20 m has a second, 32/1000 channel. No 6 m channel is listed.
  */
 typedef struct {
     const char *label;
-    uint32_t    dial_hz;
+    uint32_t    dial_hz;        /* Region 1 (and 3) */
+    uint32_t    dial_r2;        /* Region 2, 0: the same */
 } olivia_band_t;
 
 static const olivia_band_t olivia_bands[] = {
-    {"160m",       1837500},
+    {"160m",       1837500, 1825500},
     {"80m",        3581500},
-    {"40m",        7071000},
+    {"40m",        7071000, 7038500},
     {"30m",       10141500},
     {"20m",       14071000},
     {"20m wide",  14107000},
@@ -139,6 +143,14 @@ static const olivia_band_t olivia_bands[] = {
 #define BAND_CENTER_HZ  1500
 
 static int cur_band = -1;
+
+/* The band's dial for the station's region (QTH Grid locator). */
+static uint32_t band_dial(int idx)
+{
+    const olivia_band_t *b = &olivia_bands[idx];
+
+    return (itu_region() == 2 && b->dial_r2) ? b->dial_r2 : b->dial_hz;
+}
 
 /* ------------------------------------------------------------------ */
 
@@ -743,7 +755,7 @@ static int band_nearest(uint32_t freq)
     int64_t best_d = -1;
 
     for (int i = 0; i < OLIVIA_BAND_CNT; i++) {
-        int64_t d = (int64_t)freq - (int64_t)olivia_bands[i].dial_hz;
+        int64_t d = (int64_t)freq - (int64_t)band_dial(i);
 
         if (d < 0)
             d = -d;
@@ -757,9 +769,15 @@ static int band_nearest(uint32_t freq)
 
 static void band_msg(uint32_t f)
 {
+    char region[16] = "";
+
+    /* where the channel depends on the region, say which one it is */
+    if (olivia_bands[cur_band].dial_r2)
+        snprintf(region, sizeof(region), " (Region %d)", itu_region());
+
     if (dial_offset_hz == 0)
-        msg_update_text_fmt("Olivia %s  %u.%04u MHz", olivia_bands[cur_band].label,
-                            (unsigned)(f / 1000000u), (unsigned)((f / 100u) % 10000u));
+        msg_update_text_fmt("Olivia %s  %u.%04u MHz%s", olivia_bands[cur_band].label,
+                            (unsigned)(f / 1000000u), (unsigned)((f / 100u) % 10000u), region);
     else
         msg_update_text_fmt("Olivia %s  %u.%04u MHz (%+d kHz)", olivia_bands[cur_band].label,
                             (unsigned)(f / 1000000u), (unsigned)((f / 100u) % 10000u),
@@ -787,13 +805,13 @@ static void load_band(int8_t dir)
     refresh_btn(&btn_dial);
 
     /* Frequency first, then mode - the order cfg_digital_load() uses. */
-    cparam_i_set(cfg.cur.fg_freq(), (int32_t)olivia_bands[idx].dial_hz);
+    cparam_i_set(cfg.cur.fg_freq(), (int32_t)band_dial(idx));
     cparam_i_set(cfg.cur.mode(), x6100_mode_usb_dig);
 
     /* The listed dial frequencies assume the waterfall centre at 1500. */
     olivia_tx_set_center(BAND_CENTER_HZ);
 
-    band_msg(olivia_bands[idx].dial_hz);
+    band_msg(band_dial(idx));
 }
 
 static void change_band(int8_t dir)
@@ -851,7 +869,7 @@ static void dial_apply(void)
     if (cur_band < 0)
         return;
 
-    f = (uint32_t)((int32_t)olivia_bands[cur_band].dial_hz + dial_offset_hz);
+    f = (uint32_t)((int32_t)band_dial(cur_band) + dial_offset_hz);
     cparam_i_set(cfg.cur.fg_freq(), (int32_t)f);
 
     /* What the waterfall and the receiver hold belongs to the old dial.
