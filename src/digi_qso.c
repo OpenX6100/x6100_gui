@@ -98,8 +98,10 @@ static bool looks_like_call(const char *w) {
 
 /* Assemble words from the decoded stream and capture the one that
  * follows "DE". Calls are almost always sent as "MYCALL DE HISCALL", so
- * this catches the correspondent without the operator typing. Called
- * from a decoder, i.e. on the DSP audio thread. */
+ * this catches the correspondent without the operator typing. Only while
+ * no DX call is set (after a CQ, or New QSO): mid-QSO, two other stations
+ * on frequency ("W1AW DE K2XX") would otherwise replace it, and the next
+ * report would go to them. UI thread: the DX call is read there. */
 void digi_qso_feed_rx(char c) {
     static char   word[16];
     static size_t wl = 0;
@@ -124,10 +126,8 @@ void digi_qso_feed_rx(char c) {
     }
     if (after_de) {
         after_de = false;
-        if (autograb && looks_like_call(word)) {
+        if (autograb && qso_dx[0] == '\0' && looks_like_call(word)) {
             digi_qso_set_dx(word);
-            /* msg_update_text_fmt() only queues an event, so it is safe
-             * from the audio thread. */
             msg_update_text_fmt("#FFFFFF DX: %s", qso_dx);
         }
     }
