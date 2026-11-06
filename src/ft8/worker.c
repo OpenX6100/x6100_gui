@@ -457,9 +457,5 @@ static int get_message_snr(const ftx_waterfall_t *wf, const ftx_candidate_t *can
     } else {
         ft8_encode(msg->payload, tones);
     }
-    /* ft8_lib's -26 dB takes one 6.25 Hz FT8 bin to 2500 Hz. FT4's bins
-     * (tone spacing 20.8 Hz) are 5.2 dB wider, FT2's (41.7 Hz) 8.2 dB:
-     * without this their reports come out that much too low. */
-    int wider_db = (int)lroundf(10.0f * log10f(FT8_SYMBOL_PERIOD / symbol_period));
-    return ftx_get_snr(wf, candidate, tones, n_tones) + wider_db;
+    return ftx_get_snr(wf, candidate, tones, n_tones);
 }
