@@ -25,8 +25,9 @@
  *  what it hears, what it sends and PTT to a FLAC file on the SD card.
  *
  *  VARA is the modem of Jose Alberto Nieto Ros, EA5HVK (rosmodem.wordpress.com).
- *  xara is x0rro's independent, compatible program (MIT) and is not his;
- *  it runs here at VARA's free speed levels only.
+ *  xara is x0rro's independent, compatible program (MIT) and is not his.
+ *  Settings > Full speed uses VARA's registered speed levels: only with an
+ *  xara built with them (BR2_PACKAGE_XARA_REGISTERED) and a VARA licence.
  */
 
 #define _GNU_SOURCE /* accept4 */
@@ -35,6 +36,7 @@
 #include "audio.h"
 #include "buttons.h"
 #include "cfg/cfg_api.h"
+#include "diag_log.h"
 #include "dialog.h"
 #include "dsp.h"
 #include "events.h"
@@ -76,6 +78,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 #include <sys/wait.h>
@@ -235,11 +238,13 @@ static _Atomic float tx_alc, tx_pwr; /* the last readings while keyed, for the s
 static atomic_bool   tx_meter;       /* readings have come in this transmission */
 static bool  ignore_busy = false; /* xara's busy detector bypassed (SIGUSR1 / SIGUSR2) */
 static bool  busy_sent;           /* this xara run has been told */
-static bool  record_on;           /* Settings: Record (off until chosen: ~250 MB an hour) */
+static bool  record_on   = true;  /* Settings: Record (on while we test xara against VARA) */
 static bool  auto_answer;         /* Settings: Auto answer; off every time XARA opens */
-static int   lead_idx    = 4;     /* Settings: PTT lead, lead_ms[] (100 ms: the base keys 60-90 ms after MODEM ON) */
+static bool  full_speed;          /* Settings: Full speed (registered); off every time XARA opens */
+static int   lead_idx    = 4;     /* Settings: PTT lead, lead_ms[] (100 ms: the base keys 60-90 ms after MODEM ON, ptt.log) */
 static int   buf_idx     = 2;     /* Settings: send buffer, buf_ms[] (40 ms: clean twice on the bench, 2026-10-28) */
 static int   rbuf_idx    = 2;     /* Settings: receive buffer, buf_ms[] (40 ms; smaller answers sooner) */
+static int   prio_idx    = 0;     /* Settings: CPU priority, prio_names[] (test, 2026-10-31) */
 static _Atomic float tx_max_pwr;  /* the highest power read while keyed, this transmission */
 static _Atomic float last_max_pwr;/* ... and of the last one (0: none yet) */
 static atomic_int    wf_lo_hz = 100, wf_hi_hz = 3000; /* the RX filter, for the waterfall's floor */
@@ -353,6 +358,14 @@ static const int lead_ms[] = {0, 25, 50, 75, 100, 125, 150};
 static const int buf_ms[] = {0, 20, 40, 60, 80, 100, 150, 200};
 #define BUFS (int)(sizeof(buf_ms) / sizeof(buf_ms[0]))
 
+/* 10-31: after FS + the X6100's sending stutters (frames come out up to 55 %
+ * long), suspected: xara at nice -10 starves PulseAudio, which plays its
+ * audio. To try on the radio: xara -10 (builds 14-15), xara at normal
+ * priority, or PulseAudio's threads above xara while XARA is open. */
+static const char *const prio_names[] = {"xara -10", "xara normal", "audio first (pulse -15)"};
+#define PRIOS (int)(sizeof(prio_names) / sizeof(prio_names[0]))
+#define PULSE_NICE -15
+
 static int index_of(const int *v, int n, int want, int fallback) {
     for (int i = 0; i < n; i++)
         if (v[i] == want) return i;
@@ -374,6 +387,7 @@ static void level_load(void) {
         else if (sscanf(line, "lead_ms=%d", &ms) == 1) lead_idx = index_of(lead_ms, LEADS, ms, lead_idx);
         else if (sscanf(line, "audio_ms=%d", &ms) == 1) buf_idx = index_of(buf_ms, BUFS, ms, buf_idx);
         else if (sscanf(line, "rx_audio_ms=%d", &ms) == 1) rbuf_idx = index_of(buf_ms, BUFS, ms, rbuf_idx);
+        else if (sscanf(line, "prio=%d", &ms) == 1 && ms >= 0 && ms < PRIOS) prio_idx = ms;
     }
     fclose(f);
 }
@@ -382,8 +396,8 @@ static void level_save(void) {
     if (!level_dirty) return;
     FILE *f = fopen(LEVEL_FILE ".tmp", "w");
     if (!f) return;
-    fprintf(f, "tx_level_db=%.1f\nlead_ms=%d\naudio_ms=%d\nrx_audio_ms=%d\n", level_db, lead_ms[lead_idx],
-            buf_ms[buf_idx], buf_ms[rbuf_idx]);
+    fprintf(f, "tx_level_db=%.1f\nlead_ms=%d\naudio_ms=%d\nrx_audio_ms=%d\nprio=%d\n", level_db, lead_ms[lead_idx],
+            buf_ms[buf_idx], buf_ms[rbuf_idx], prio_idx);
     if (fclose(f) == 0 && rename(LEVEL_FILE ".tmp", LEVEL_FILE) == 0) level_dirty = false;
 }
 
@@ -415,11 +429,15 @@ static int64_t now_us(void) {
  * keys: the cap again each time, since an ATU tune or a power change sends
  * the full cfg.pwr to the radio (xara keys without tx_player). */
 static void set_keyed(bool on) {
+    int64_t t0 = now_us();
     pthread_mutex_lock(&key_lock);
-    if (atomic_load(&keyed) != on) {
+    int64_t t1 = now_us(), t2 = t1;
+    bool    change = atomic_load(&keyed) != on;
+    if (change) {
         if (on) {
             if (param_f_get(cfg.pwr()) > TX_PLAYER_MAX_PWR_W) radio_set_pwr(TX_PLAYER_MAX_PWR_W);
             audio_set_play_vol(level_db);
+            t2 = now_us();
             atomic_store(&keyed_since, now_s());
             atomic_store(&keyed, true);
             radio_set_modem(true);
@@ -430,6 +448,11 @@ static void set_keyed(bool on) {
         }
     }
     pthread_mutex_unlock(&key_lock);
+    /* 10-31 test: keys reached the radio seconds late (xara waits for each
+     * answer), so where the time goes, per key. */
+    if (change)
+        diag_ptt_log("XARA %s: lock %lld ms, level %lld ms, modem %lld ms", on ? "key" : "unkey",
+                     (long long)(t1 - t0) / 1000, (long long)(t2 - t1) / 1000, (long long)(now_us() - t2) / 1000);
 }
 
 /* "key":"text" -> out, false when missing or null */
@@ -1176,6 +1199,80 @@ static void stale_kill(void) {
     closedir(d);
 }
 
+/* PulseAudio's threads: logged to ptt.log at each xara start (nice and
+ * scheduling policy, so we see what xara competes with), and raised to
+ * PULSE_NICE for "audio first", put back on xara_stop. */
+static struct {
+    pid_t tid;
+    int   nice;
+} pulse_saved[32];
+static int pulse_nsaved;
+
+static void pulse_prio(bool raise) {
+    if (!raise) {
+        for (int i = 0; i < pulse_nsaved; i++) setpriority(PRIO_PROCESS, pulse_saved[i].tid, pulse_saved[i].nice);
+        pulse_nsaved = 0;
+        return;
+    }
+    DIR *d = opendir("/proc");
+    if (!d) return;
+    char   line[400] = "";
+    size_t used      = 0;
+    struct dirent *e;
+    while ((e = readdir(d))) {
+        char *end;
+        long  pid = strtol(e->d_name, &end, 10);
+        if (*end || pid <= 1) continue;
+        char path[64], comm[32] = "";
+        snprintf(path, sizeof(path), "/proc/%ld/comm", pid);
+        FILE *f = fopen(path, "r");
+        if (!f) continue;
+        if (fgets(comm, sizeof(comm), f)) comm[strcspn(comm, "\n")] = '\0';
+        fclose(f);
+        if (strcmp(comm, "pulseaudio") != 0) continue;
+        snprintf(path, sizeof(path), "/proc/%ld/task", pid);
+        DIR *t = opendir(path);
+        if (!t) continue;
+        struct dirent *te;
+        while ((te = readdir(t))) {
+            long tid = strtol(te->d_name, &end, 10);
+            if (*end || tid <= 0) continue;
+            char stat[512] = "", tname[32] = "";
+            snprintf(path, sizeof(path), "/proc/%ld/task/%ld/stat", pid, tid);
+            FILE *sf = fopen(path, "r");
+            if (!sf) continue;
+            size_t      n  = fread(stat, 1, sizeof(stat) - 1, sf);
+            fclose(sf);
+            stat[n]        = '\0';
+            const char *l  = strchr(stat, '(');
+            const char *r  = strrchr(stat, ')');
+            if (!l || !r) continue;
+            snprintf(tname, sizeof(tname), "%.*s", (int)(r - l - 1), l + 1);
+            /* After ")": field 3 on; nice is field 19, policy field 41. */
+            int   nice = 0, policy = -1, field = 3;
+            for (const char *q = r + 2; *q; q++) {
+                if (field == 19) nice = atoi(q);
+                if (field == 41) { policy = atoi(q); break; }
+                q = strchr(q, ' ');
+                if (!q) break;
+                field++;
+            }
+            if (used < sizeof(line))
+                used += (size_t)snprintf(line + used, sizeof(line) - used, " %ld(%s) nice %d pol %d%s;", tid, tname, nice,
+                                         policy, prio_idx == 2 && policy == 0 ? "->raised" : "");
+            if (prio_idx == 2 && policy == 0 && pulse_nsaved < (int)(sizeof(pulse_saved) / sizeof(pulse_saved[0])) &&
+                setpriority(PRIO_PROCESS, (id_t)tid, PULSE_NICE) == 0) {
+                pulse_saved[pulse_nsaved].tid  = (pid_t)tid;
+                pulse_saved[pulse_nsaved].nice = nice;
+                pulse_nsaved++;
+            }
+        }
+        closedir(t);
+    }
+    closedir(d);
+    diag_ptt_log("XARA prio %s: pulseaudio%s", prio_names[prio_idx], used ? line : " not found");
+}
+
 static void xara_start(void) {
     char call[PARAM_TEXT_MAX];
     param_t_get_into(cfg.callsign(), call, sizeof(call));
@@ -1213,6 +1310,9 @@ static void xara_start(void) {
     };
     unsigned argc = 0;
     while (argv[argc]) argc++;
+    /* VARA's registered speeds: needs an xara built with them (it refuses
+     * the option otherwise) and the operator's VARA licence. Off unless chosen. */
+    if (full_speed && argc + 1 < sizeof(argv) / sizeof(argv[0])) argv[argc++] = "--registered";
     rec_path[0] = '\0'; /* this run's: none unless it records (the log goes beside it) */
     if (record_on && argc + 3 <= sizeof(argv) / sizeof(argv[0]) && rec_prepare()) {
         argv[argc++] = "--record";
@@ -1245,10 +1345,9 @@ static void xara_start(void) {
             if (strncmp(environ[i], "PULSE_LATENCY_MSEC=", 19) != 0 && strncmp(environ[i], "XARA_CAPTURE_MS=", 16) != 0 &&
                 strncmp(environ[i], "XARA_PLAYBACK_MS=", 17) != 0 && strncmp(environ[i], "XARA_NICE=", 10) != 0)
                 envp[k++] = environ[i];
-        /* Higher CPU priority for xara (the GUI shares the CPU; fast
-         * sending ran dry, 2026-10-29). PulseAudio's own threads already
-         * run real time, so this can't starve the audio. */
-        envp[k++] = "XARA_NICE=-10";
+        /* Higher CPU priority for xara (the GUI shares the CPU; full-speed
+         * sending ran dry, 2026-10-29). */
+        envp[k++] = prio_idx == 1 ? "XARA_NICE=0" : "XARA_NICE=-10";
         if (buf_ms[buf_idx] > 0) {
             snprintf(play_env, sizeof(play_env), "XARA_PLAYBACK_MS=%d", buf_ms[buf_idx]);
             envp[k++] = play_env;
@@ -1268,6 +1367,7 @@ static void xara_start(void) {
         lv_label_set_text_fmt(last_label, "%s", strerror(err));
         return;
     }
+    pulse_prio(true);
     pthread_mutex_lock(&status_lock);
     memset(&status, 0, sizeof(status));
     pthread_mutex_unlock(&status_lock);
@@ -1296,6 +1396,7 @@ static void xara_stop(void) {
     }
     xara_pid = -1;
     set_keyed(false);
+    pulse_prio(false);
 }
 
 static bool linked(void) {
@@ -1666,6 +1767,7 @@ static void construct_cb(lv_obj_t *parent) {
     lv_obj_align(flags_label, LV_ALIGN_TOP_RIGHT, -X, TOP_Y);
     level_load();
     auto_answer = false; /* never on when XARA opens: answering transmits */
+    full_speed  = false; /* the operator chooses it each time */
     ignore_busy = false; /* sending over a busy channel: chosen each time too */
     monitoring  = false;
     rec_path[0] = '\0';
@@ -1898,7 +2000,8 @@ static void monitor_cb(button_data_t *btn) {
 #define SET_LEVEL  5
 #define SET_BUF    6
 #define SET_RBUF   7
-#define SET_LAST   SET_RBUF
+#define SET_FULL   8
+#define SET_PRIO   9
 
 
 static const char *settings_text(int which) {
@@ -1906,6 +2009,12 @@ static const char *settings_text(int which) {
     case SET_BUSY: return ignore_busy ? "Busy detector: IGNORE" : "Busy detector: ON";
     case SET_RECORD: return record_on ? "Record (FLAC to the SD card): On" : "Record (FLAC to the SD card): Off";
     case SET_ANSWER: return auto_answer ? "Auto answer: ON (answers calls, transmits)" : "Auto answer: Off";
+    case SET_FULL: return full_speed ? "Full speed (registered): ON" : "Full speed (registered): Off";
+    case SET_PRIO: {
+        static char pbuf[48];
+        snprintf(pbuf, sizeof(pbuf), "CPU priority (test): %s", prio_names[prio_idx]);
+        return pbuf;
+    }
     case SET_LEVEL: {
         static char lbuf[48];
         snprintf(lbuf, sizeof(lbuf), level_editing ? "TX level: %.1f dB  < turn MFK, press >" : "TX level: %.1f dB",
@@ -2050,6 +2159,35 @@ static void settings_item_cb(lv_event_t *e) {
         msg_update_text_fmt(level_editing ? "TX level: turn the MFK knob, press when done (ALC should stay at zero)"
                                           : "TX level %.1f dB saved", level_db);
         break;
+    case SET_PRIO:
+        /* A modem restart, so not while a link is up. */
+        if (!monitoring && (atomic_load(&keyed) || linked())) {
+            msg_update_text_fmt("Disconnect first (in WoAD)");
+            return;
+        }
+        prio_idx    = (prio_idx + 1) % PRIOS;
+        level_dirty = true;
+        level_save();
+        if (!monitoring) {
+            xara_stop();
+            xara_start();
+        }
+        msg_update_text_fmt("CPU priority: %s (see ptt.log for PulseAudio's threads)", prio_names[prio_idx]);
+        break;
+    case SET_FULL:
+        /* A modem restart, so not while a link is up. */
+        if (!monitoring && (atomic_load(&keyed) || linked())) {
+            msg_update_text_fmt("Disconnect first (in WoAD)");
+            return;
+        }
+        full_speed = !full_speed;
+        if (!monitoring) {
+            xara_stop();
+            xara_start();
+        }
+        msg_update_text_fmt(full_speed ? "Full speed ON: VARA's registered speed levels (your licence)"
+                                       : "Full speed off: free speed levels only");
+        break;
     case SET_ANSWER:
         auto_answer = !auto_answer;
         msg_update_text_fmt(auto_answer ? "Auto answer ON: calls to you are answered while WoAD is connected"
@@ -2102,14 +2240,14 @@ static void settings_cb(button_data_t *btn) {
 
     lv_obj_t *first = NULL;
     level_editing = false;
-    for (int which = SET_BUSY; which <= SET_LAST; which++) {
+    for (int which = SET_BUSY; which <= SET_PRIO; which++) {
         lv_obj_t *b = settings_item(settings_text(which));
         if (which == SET_LEVEL) level_item = b;
         lv_obj_add_event_cb(b, settings_item_cb, LV_EVENT_CLICKED, (void *)(intptr_t)which);
         settings_line_color(b, which);
         if (!first) first = b;
     }
-    lv_obj_t *about = lv_list_add_text(settings_list, "VARA: EA5HVK's modem. xara: x0rro's compatible modem, free speeds");
+    lv_obj_t *about = lv_list_add_text(settings_list, "VARA: EA5HVK's modem. xara: x0rro's compatible modem");
     lv_obj_set_style_text_font(about, &sony_20, 0);
     lv_label_set_long_mode(about, LV_LABEL_LONG_WRAP);
     lv_obj_t *close = settings_item("Close");
