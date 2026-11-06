@@ -81,8 +81,14 @@ void wspr_app_put_audio_samples(size_t n, float *samples);
 #define WSPR_APP_RX_CENTER  1500
 
 /* Audio frequency of our transmission (the middle of its four tones),
- * 1400 to 1600 Hz. */
+ * WSPR_APP_TX_MIN to WSPR_APP_TX_MAX: the 6 Hz signal stays inside the
+ * 1400-1600 Hz window. */
+#define WSPR_APP_TX_MIN     1405
+#define WSPR_APP_TX_MAX     1595
 uint16_t wspr_app_get_tx_freq(void);
+
+/* Ends a transmission in progress (TX switched off); the receiver goes on. */
+void     wspr_app_stop_tx(void);
 void     wspr_app_set_tx_freq(uint16_t hz);
 
 /*

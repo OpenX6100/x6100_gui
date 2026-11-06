@@ -23,6 +23,7 @@
 #ifndef WSPR_DEMOD_H
 #define WSPR_DEMOD_H
 
+#include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
 
@@ -74,7 +75,7 @@ long wspr_bb_process(wspr_bb_t *bb, const float *in, long n,
                      float *out_re, float *out_im, long cap);
 
 typedef struct {
-    double freq_hz;       /* detected frequency of the lowest tone       */
+    double freq_hz;       /* detected frequency, the centre of the 4 tones */
     double time_offset_s; /* detected start offset within the buffer     */
     float sync_quality;   /* sync vector match quality, higher is better */
     float snr_db;         /* estimated SNR in a 2500 Hz reference band,
@@ -112,6 +113,10 @@ typedef void (*wspr_decode_cb)(const wspr_candidate_t *cand,
                                const char *callsign, const char *locator,
                                int power_dbm, int errors, void *ctx);
 
+/* Asked between steps: true ends the search (window closing, or the next
+ * slot about to start). */
+typedef bool (*wspr_stop_fn)(void *ctx);
+
 /*
  * Find and decode every WSPR signal in the window.
  *
@@ -121,12 +126,15 @@ typedef void (*wspr_decode_cb)(const wspr_candidate_t *cand,
  * one already decoded.
  *
  * max_spots : upper bound on decode attempts, which bounds the run time
+ * stop      : optional (may be NULL), asked between steps; true returns
+ *             with what was decoded so far
  *
  * Returns the number of signals successfully decoded.
  */
 int wspr_demod_decode_all(const float *bb_re, const float *bb_im, long bb_n,
                           double center_hz, double search_hz,
-                          int max_spots, wspr_decode_cb cb, void *ctx);
+                          int max_spots, wspr_decode_cb cb,
+                          wspr_stop_fn stop, void *ctx);
 
 /*
  * Same search, but on baseband already produced by wspr_bb_process().

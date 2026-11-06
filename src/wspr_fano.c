@@ -24,9 +24,12 @@
 
 #include "wspr_fano.h"
 
+#include "wsprd/wsprd_utils.h"
+
 #include <ctype.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define WSPR_POLY_0 0xF2D05351u
@@ -248,86 +251,56 @@ int wspr_verify(const float soft162[WSPR_SYMBOLS],
 /* ------------------------------------------------------------------ */
 /* Message unpacking                                                   */
 
-static char value_char(int v)
-{
-    if (v >= 0 && v <= 9)
-        return (char)('0' + v);
-    if (v >= 10 && v <= 35)
-        return (char)('A' + v - 10);
-    return ' ';
-}
+/*
+ * WSJT-X's wsprd unpacks the message (src/wsprd): all three types, and
+ * type 3's hashed calls are named from the calls it has heard. Its hash
+ * tables (as wsprd's, 32768 entries) are made on first use and kept, so
+ * a call heard in one session still names its hash in the next.
+ */
+static char *hashtab, *loctab;
 
 int wspr_unpack(const uint8_t bits81[WSPR_INFO_BITS],
                 char *callsign, char *locator, int *power)
 {
-    int64_t n = 0, m = 0;
-    int i;
-    int c[6];
-    int64_t x;
-    int64_t m1;
-    int loc1, loc2, loc3, loc4;
-    int pwr;
+    signed char dat[11];
+    char call_loc_pow[23], call[16], f1[16], f2[16], f3[16];
+    int i, n;
 
-    for (i = 0; i < 28; i++)
-        n = (n << 1) | bits81[i];
-    for (i = 0; i < 22; i++)
-        m = (m << 1) | bits81[28 + i];
-
-    /* Undo the successive multiplications from the encoder. */
-    x = n;
-    c[5] = (int)(x % 27) + 10;  x /= 27;
-    c[4] = (int)(x % 27) + 10;  x /= 27;
-    c[3] = (int)(x % 27) + 10;  x /= 27;
-    c[2] = (int)(x % 10);       x /= 10;
-    c[1] = (int)(x % 36);       x /= 36;
-    c[0] = (int)x;
-
-    if (c[0] < 0 || c[0] > 36)
-        return -1;
-
-    for (i = 0; i < 6; i++)
-        callsign[i] = value_char(c[i]);
-    callsign[6] = '\0';
-
-    /* Strip leading and trailing spaces. */
-    {
-        char tmp[7];
-        int a = 0, b = 5;
-
-        while (a <= b && callsign[a] == ' ')
-            a++;
-        while (b >= a && callsign[b] == ' ')
-            b--;
-        if (a > b)
+    if (!hashtab) {
+        hashtab = calloc(32768, 13);
+        loctab = calloc(32768, 5);
+        if (!hashtab || !loctab) {
+            free(hashtab);
+            free(loctab);
+            hashtab = loctab = NULL;
             return -1;
-        memcpy(tmp, callsign + a, (size_t)(b - a + 1));
-        tmp[b - a + 1] = '\0';
-        strcpy(callsign, tmp);
+        }
     }
 
-    pwr = (int)((m % 128) - 64);
-    m1 = m / 128;
+    /* The 50 message bits, packed the way unpk_() reads them */
+    memset(dat, 0, sizeof(dat));
+    for (i = 0; i < 50; i++)
+        if (bits81[i])
+            dat[i / 8] |= (signed char)(0x80 >> (i % 8));
 
-    if (pwr < 0 || pwr > 60)
+    if (unpk_(dat, hashtab, loctab, call_loc_pow, call) != 0)
         return -1;
 
-    loc4 = (int)(m1 % 10);
-    loc2 = (int)((m1 / 10) % 18);
-    loc3 = (int)((179 - m1 / 180) % 10);
-    loc1 = (int)((179 - m1 / 180) / 10);
-
-    if (loc1 < 0 || loc1 > 17 || loc2 < 0 || loc2 > 17)
+    /* "CALL GRID dBm" (type 1), "CALL dBm" (type 2), "<CALL> GRID6 dBm"
+     * (type 3, "<...>" when the hash names no call heard yet) */
+    call_loc_pow[sizeof(call_loc_pow) - 1] = '\0';
+    n = sscanf(call_loc_pow, "%15s %15s %15s", f1, f2, f3);
+    if (n == 3) {
+        snprintf(callsign, 16, "%s", f1);
+        snprintf(locator, 7, "%s", f2);
+        *power = atoi(f3);
+    } else if (n == 2) {
+        snprintf(callsign, 16, "%s", f1);
+        locator[0] = '\0';
+        *power = atoi(f2);
+    } else {
         return -1;
-    if (loc3 < 0 || loc3 > 9 || loc4 < 0 || loc4 > 9)
-        return -1;
-
-    locator[0] = (char)('A' + loc1);
-    locator[1] = (char)('A' + loc2);
-    locator[2] = (char)('0' + loc3);
-    locator[3] = (char)('0' + loc4);
-    locator[4] = '\0';
-
-    *power = pwr;
+    }
     return 0;
 }
 

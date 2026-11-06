@@ -274,7 +274,18 @@ static void analyze(const fft_t *fft,
                     int bin_lo, int n_bins, float *mag)
 {
     float re[NFFT], im[NFFT];
+    double rot_c[NFFT], rot_s[NFFT];
     int k, i;
+
+    /* The fine frequency shift's rotation depends only on the sample's
+     * place in the symbol: worked out once here, not for each of the 162
+     * symbols (that was 3.3 M cos/sin per slot in the decode budget). */
+    for (i = 0; i < NFFT; i++) {
+        double ph = -2.0 * M_PI * freq_shift_hz * i / WSPR_WORK_RATE;
+
+        rot_c[i] = cos(ph);
+        rot_s[i] = sin(ph);
+    }
 
     for (k = 0; k < WSPR_SYMBOLS; k++) {
         long base = time_offset + (long)k * WSPR_WORK_SYMBOL;
@@ -282,7 +293,7 @@ static void analyze(const fft_t *fft,
         for (i = 0; i < NFFT; i++) {
             long idx = base + i;
             float sr = 0.0f, si = 0.0f;
-            double ph, c, s;
+            double c = rot_c[i], s = rot_s[i];
 
             if (idx >= 0 && idx < bb_n) {
                 sr = bb_re[idx];
@@ -292,10 +303,6 @@ static void analyze(const fft_t *fft,
             /* Fine frequency shift, phase relative to symbol start.
              * A constant phase step between symbols does not matter
              * because detection is non coherent. */
-            ph = -2.0 * M_PI * freq_shift_hz * i / WSPR_WORK_RATE;
-            c = cos(ph);
-            s = sin(ph);
-
             re[i] = (float)(sr * c - si * s);
             im[i] = (float)(sr * s + si * c);
         }
@@ -405,7 +412,8 @@ static float estimate_snr(const float *mag, int n_bins, int base_bin)
 
 int wspr_demod_decode_all(const float *bb_re, const float *bb_im, long bb_n,
                           double center_hz, double search_hz,
-                          int max_spots, wspr_decode_cb cb, void *ctx)
+                          int max_spots, wspr_decode_cb cb,
+                          wspr_stop_fn stop, void *ctx)
 {
     typedef struct {
         float metric;
@@ -465,6 +473,9 @@ int wspr_demod_decode_all(const float *bb_re, const float *bb_im, long bb_n,
             double e = 0.0;
             long q, total;
 
+            if (stop && stop(ctx))
+                goto done;
+
             analyze(&fft, bb_re, bb_im, bb_n, toff, fshift,
                     bin_lo, n_bins, mag);
 
@@ -508,13 +519,15 @@ int wspr_demod_decode_all(const float *bb_re, const float *bb_im, long bb_n,
     for (i = 0; i < n_bins && attempts < max_spots; i++) {
         int cand_bin = order[i];
         float soft[WSPR_SYMBOLS];
-        char callsign[8], locator[8];
+        char callsign[16], locator[8];
         int power = 0, errors = 0;
         wspr_candidate_t cand;
         long toff;
         double fshift;
         int skip = 0;
 
+        if (stop && stop(ctx))
+            break;
         if (best[cand_bin].metric <= -1e29f)
             continue;
         if (cand_bin + 3 >= n_bins)
@@ -577,7 +590,9 @@ int wspr_demod_decode_all(const float *bb_re, const float *bb_im, long bb_n,
         }
 
         memset(&cand, 0, sizeof(cand));
-        cand.freq_hz = center_hz + (bin_lo + cand_bin) * BIN_HZ + fshift;
+        /* cand_bin is the lowest of the 4 tones; WSJT-X and WSPRnet give
+         * their centre, 1.5 tones up. */
+        cand.freq_hz = center_hz + (bin_lo + cand_bin + 1.5) * BIN_HZ + fshift;
         cand.time_offset_s = (double)best[cand_bin].ti * WSPR_WORK_SYMBOL /
                              TIME_SUBSTEPS / WSPR_WORK_RATE;
         cand.sync_quality = best[cand_bin].metric;
@@ -756,7 +771,7 @@ int wspr_demod_search_bb(const float *bb_re, const float *bb_im, long bb_n,
                                                              : 1e-12) / noise)
                                - 32.3);
 
-        cand->freq_hz = center_hz + (bin_lo + best_bin) * BIN_HZ +
+        cand->freq_hz = center_hz + (bin_lo + best_bin + 1.5) * BIN_HZ +
                         best_f * BIN_HZ / FREQ_SUBSTEPS;
         cand->time_offset_s = (double)best_t * WSPR_WORK_SYMBOL /
                               TIME_SUBSTEPS / WSPR_WORK_RATE;
