@@ -138,6 +138,7 @@ static bool          s3d_data;    /* this render has a new DSP frame */
 
 static spec3d_row_t  s3d_src;     /* the DSP thread's latest frame */
 static bool          s3d_src_tx;
+static bool          s3d_src_ok;  /* s3d_src holds a frame of this 3D spell */
 static unsigned      s3d_seq;     /* odd while s3d_src is being written */
 
 static void on_zoom_changed(Subject *subj, void *user_data);
@@ -542,6 +543,7 @@ void spectrum_data(const float *data_buf, uint16_t size, bool tx, uint32_t base_
         memcpy(s3d_src.val, spectrum_buf, sizeof(s3d_src.val));
         s3d_src.base_freq = base_lo_freq;
         s3d_src_tx        = tx;
+        s3d_src_ok        = true;
         __atomic_store_n(&s3d_seq, seq + 1, __ATOMIC_RELEASE);
     }
 
@@ -584,7 +586,7 @@ static void on_spectrum_3d_changed(Subject *subj, void *user_data) {
         s3d_rows = NULL;
     }
     if (on) {
-        s3d_src.base_freq = 0;  /* left from an earlier 3D spell: not a frame */
+        s3d_src_ok = false;     /* left from an earlier 3D spell: not a frame */
     }
     __atomic_store_n(&s3d_on, on, __ATOMIC_RELAXED);
     s3d_count  = 0;
@@ -905,6 +907,13 @@ static void spectrum_draw_polyline(uint32_t *buf, int stride, float min, float m
     }
 }
 
+/* Where the spectrum is centred now: the base's frequency, or with the stock
+ * base firmware (which sends 0) the one the VFO gives, as
+ * spectrum_compute_offset() takes it. */
+static int32_t spec3d_vfo_freq(void) {
+    return cur_base_lo_freq ? cur_base_lo_freq : fg_freq + mode_lo_offset - if_shift + rit;
+}
+
 /* Keep a copy of the live trace every SPEC3D_PERIOD_US (main thread). */
 static void spec3d_push(void) {
     uint64_t now = get_time_us();
@@ -922,7 +931,7 @@ static void spec3d_push(void) {
     /* The DSP thread's latest frame, trace and base frequency together; if
      * it is being rewritten every time we look, try again next frame. */
     spec3d_row_t *row = &s3d_rows[(s3d_head + 1) % SPEC3D_MAX_LINES];
-    bool          tx;
+    bool          tx, ok;
     for (int tries = 0;; tries++) {
         if (tries == 3) {
             return;
@@ -933,6 +942,7 @@ static void spec3d_push(void) {
         }
         memcpy(row, &s3d_src, sizeof(*row));
         tx = s3d_src_tx;
+        ok = s3d_src_ok;
         __atomic_thread_fence(__ATOMIC_ACQUIRE);
         if (__atomic_load_n(&s3d_seq, __ATOMIC_RELAXED) == seq) {
             break;
@@ -940,8 +950,14 @@ static void spec3d_push(void) {
     }
     /* TX traces are on another scale and would show as a hot wall moving
      * back through the stack once the levels are RX again. */
-    if (tx || row->base_freq == 0) {
+    if (tx || !ok) {
         return;
+    }
+    /* The stock base firmware (rev < 8) sends no base frequency (0): the
+     * row takes the VFO's, as the waterfall does, so the history still
+     * follows tuning. */
+    if (row->base_freq == 0) {
+        row->base_freq = (uint32_t)spec3d_vfo_freq();
     }
     s3d_head = (s3d_head + 1) % SPEC3D_MAX_LINES;
     if (s3d_count < SPEC3D_MAX_LINES) {
@@ -1101,7 +1117,7 @@ static void spectrum_render_3d(uint32_t *buf, int stride) {
             break;
         }
         const spec3d_row_t *row   = &s3d_rows[(s3d_head - j + SPEC3D_MAX_LINES) % SPEC3D_MAX_LINES];
-        float               shift = (float)((int64_t)cur_base_lo_freq - row->base_freq) * SPECTRUM_NFFT / width_hz;
+        float               shift = (float)((int64_t)spec3d_vfo_freq() - row->base_freq) * SPECTRUM_NFFT / width_hz;
         spec3d_trace(buf, stride, horizon, row->val, shift, offset, k, min, max);
     }
 }
