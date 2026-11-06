@@ -448,6 +448,100 @@ static void decode_messages(const ftx_waterfall_t *wf, int *num_candidates, ftx_
     ftx_delete_candidates(to_delete_idx, to_delete_size, candidate_list, num_candidates);
 }
 
+/*
+ * The signal report, as WSJT-X makes it: the power of the decoded tones
+ * against the band's background at that frequency, scaled to 2500 Hz.
+ * ft8_lib's ftx_get_snr() measures against the weakest of the station's
+ * other tones instead, which stops falling with the signal: in FT8 every
+ * station below about -8 dB read -8 or so (-18 read -8), and FT4/FT2 were
+ * off too. Checked on a PC against WSJT-X's jt9 with ft8sim/ft4sim signals
+ * of known SNR (FT2: the FT4 ones played twice as fast).
+ *
+ * The background: the bins within SNR_NOISE_HZ either side of the signal
+ * (its own tones left out), over every symbol of the message. Its lower
+ * quartile, divided by ln(4/3), is the mean noise per bin for noise alone
+ * (power in a bin is exponentially distributed), and other stations
+ * nearby barely move a quartile.
+ */
+#define SNR_NOISE_HZ   300.0f
+#define SNR_NOISE_MAX  8192
+#define SNR_CAL_DB     0.0f      /* window and bin shape, the same for every mode (calibrated) */
+#define SNR_FLOOR_DB   -30
+
+static float snr_noise[SNR_NOISE_MAX];
+
+/* waterfall value (dB * 2 + 240) to power */
+static inline float wf_power(uint8_t v) {
+    return powf(10.0f, ((float)v - 240.0f) / 20.0f);
+}
+
+/* The k-th smallest of v[0..n-1], reordering v (quickselect). */
+static float kth_smallest(float *v, int n, int k) {
+    int lo = 0, hi = n - 1;
+    while (lo < hi) {
+        float pivot = v[(lo + hi) / 2];
+        int   i = lo, j = hi;
+        while (i <= j) {
+            while (v[i] < pivot) i++;
+            while (v[j] > pivot) j--;
+            if (i <= j) {
+                float t = v[i];
+                v[i++] = v[j];
+                v[j--] = t;
+            }
+        }
+        if (k <= j) {
+            hi = j;
+        } else if (k >= i) {
+            lo = i;
+        } else {
+            break;
+        }
+    }
+    return v[k];
+}
+
+static int snr_vs_background(const ftx_waterfall_t *wf, const ftx_candidate_t *c, const uint8_t *tones, int n_tones) {
+    const int n_items = (wf->protocol == FTX_PROTOCOL_FT8) ? 8 : 4;
+    int       w = (int)(SNR_NOISE_HZ * symbol_period + 0.5f);   /* bins are one tone spacing wide */
+    double    sig = 0.0;
+    int       ns = 0, nn = 0;
+
+    if (w < 8) {
+        w = 8;
+    }
+    for (int i = 0; i < n_tones; i++) {
+        int block = c->time_offset + i;
+        if (block < 0) {
+            continue;
+        }
+        if (block >= wf->num_blocks) {
+            break;
+        }
+        const uint8_t *row = wf->mag + (((size_t)block * wf->time_osr + c->time_sub) * wf->freq_osr + c->freq_sub) *
+                                           wf->num_bins;
+        sig += wf_power(row[c->freq_offset + tones[i]]);
+        ns++;
+        for (int b = c->freq_offset - w; b < c->freq_offset + n_items + w && nn < SNR_NOISE_MAX; b++) {
+            if (b < 0 || b >= wf->num_bins || (b >= c->freq_offset && b < c->freq_offset + n_items)) {
+                continue;
+            }
+            snr_noise[nn++] = wf_power(row[b]);
+        }
+    }
+    if (ns == 0 || nn < 16) {
+        return SNR_FLOOR_DB;
+    }
+    float noise = kth_smallest(snr_noise, nn, nn / 4) / logf(4.0f / 3.0f);
+    float ratio = (float)(sig / ns) / noise - 1.0f;
+    if (ratio <= 0.0f) {
+        return SNR_FLOOR_DB;
+    }
+    /* per bin (one tone spacing) to 2500 Hz */
+    int snr = (int)lroundf(10.0f * log10f(ratio * (1.0f / symbol_period) / 2500.0f) + SNR_CAL_DB);
+    return snr < SNR_FLOOR_DB ? SNR_FLOOR_DB : snr;
+}
+
 static int get_message_snr(const ftx_waterfall_t *wf, const ftx_candidate_t *candidate, ftx_message_t *msg) {
     uint8_t n_tones = (wf->protocol == FTX_PROTOCOL_FT4) ? FT4_NN : FT8_NN;
     uint8_t tones[n_tones];
@@ -457,5 +551,5 @@ static int get_message_snr(const ftx_waterfall_t *wf, const ftx_candidate_t *can
     } else {
         ft8_encode(msg->payload, tones);
     }
-    return ftx_get_snr(wf, candidate, tones, n_tones);
+    return snr_vs_background(wf, candidate, tones, n_tones);
 }
