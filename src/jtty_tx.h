@@ -51,5 +51,11 @@ uint32_t jtty_tx_queue_frames(const jtty_payload_t *payload, int frames, const c
  * drops the queue. */
 void jtty_tx_abort(void);
 
+/* Message `id` is still queued or being sent. */
+bool jtty_tx_pending(uint32_t id);
+
+/* JTTY never transmits above this, whatever the radio is set to. */
+#define JTTY_TX_MAX_PWR_W 5.0f              /* as FT8 and JS8 */
+
 /* Keyed (or about to be) for JTTY. */
 bool jtty_tx_busy(void);

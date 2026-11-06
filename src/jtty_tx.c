@@ -26,7 +26,7 @@
 #define TX_RATE         JTTY_RATE
 #define CHUNK           512                 /* 43 ms */
 #define AMPLITUDE       30000.0f
-#define MAX_PWR_W       5.0f                /* as FT8 and JS8 */
+#define MAX_PWR_W       JTTY_TX_MAX_PWR_W
 #define GAIN_MIN_DB     (-30.0f)
 #define GAIN_MAX_DB     0.0f
 #define QUEUE_MAX       8
@@ -52,6 +52,7 @@ static struct {
     job_t           queue[QUEUE_MAX];
     int             nqueue;
     uint32_t        next_id;
+    uint32_t        current;            /* id being sent, 0 none */
 
     jtty_tx_cb_t    cb;
     void           *ctx;
@@ -107,6 +108,7 @@ static bool next_job(job_t *j)
         *j = S.queue[0];
         memmove(S.queue, S.queue + 1, sizeof(job_t) * (size_t)(S.nqueue - 1));
         S.nqueue--;
+        S.current = j->id;
     }
     pthread_mutex_unlock(&S.lock);
     return have;
@@ -225,6 +227,9 @@ static void transmit(audio_player_t *player)
         free(wave);
         report(&j, stopped ? (frame > 0 ? frame : 0) : j.frames - 1, true, stopped);
     }
+    pthread_mutex_lock(&S.lock);
+    S.current = 0;
+    pthread_mutex_unlock(&S.lock);
 
     audio_player_wait(player);
     radio_set_modem(false);
@@ -253,8 +258,18 @@ static void *worker(void *arg)
             atomic_store(&S.busy, false);
             break;
         }
+        if (player == NULL) {
+            player = audio_get_player(TX_RATE, 1);  /* try again: the sound server may be back */
+        }
         if (player != NULL) {
             transmit(player);
+        } else {
+            /* Nothing can be sent: drop the queue (the window marks the
+             * messages "not sent"), or this loop would spin with work
+             * that never leaves the queue. */
+            pthread_mutex_lock(&S.lock);
+            S.nqueue = 0;
+            pthread_mutex_unlock(&S.lock);
         }
         atomic_store(&S.busy, false);
         if (S.cb != NULL) {
@@ -357,6 +372,19 @@ void jtty_tx_abort(void)
     S.nqueue = 0;
     atomic_store(&S.abort_req, true);
     pthread_mutex_unlock(&S.lock);
+}
+
+bool jtty_tx_pending(uint32_t id)
+{
+    bool p = false;
+
+    pthread_mutex_lock(&S.lock);
+    p = S.current == id;
+    for (int i = 0; i < S.nqueue && !p; i++) {
+        p = S.queue[i].id == id;
+    }
+    pthread_mutex_unlock(&S.lock);
+    return p;
 }
 
 bool jtty_tx_busy(void)

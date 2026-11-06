@@ -9,6 +9,7 @@
 #include "jtty_log.h"
 
 #include <ctype.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,6 +17,7 @@
 
 #include "cfg/cfg_api.h"
 #include "ft8_udp.h"
+#include "jtty_tx.h"
 #include "qso_log.h"
 #include "util.h"
 
@@ -153,7 +155,8 @@ bool jtty_log_save(const jtty_qso_t *q)
     char             my_grid[PARAM_TEXT_MAX];
     char             adif[768];
     char            *canon;
-    int              pwr = (int)(param_f_get(cfg.pwr()) + 0.5f);
+    /* what was sent: JTTY caps the power (jtty_tx.c) */
+    int              pwr = (int)(fminf(param_f_get(cfg.pwr()), JTTY_TX_MAX_PWR_W) + 0.5f);
     qso_log_record_t rec;
 
     if (q->call[0] == '\0') {
@@ -166,7 +169,9 @@ bool jtty_log_save(const jtty_qso_t *q)
     rec = qso_log_record_create(my_call, canon ? canon : q->call, q->when, MODE_JTTY, 599, 599,
                                 q->dial_hz, NULL, NULL, my_grid, NULL);
     free(canon);
-    qso_log_record_save(rec);
+    if (qso_log_record_save(rec) != 0) {
+        return false;                   /* e.g. no callsign set: nothing was logged */
+    }
 
     if (jtty_log_adif(adif, sizeof(adif), q, my_call, my_grid, pwr) > 0) {
         append_file(adif);

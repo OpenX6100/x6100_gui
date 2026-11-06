@@ -203,12 +203,18 @@ typedef struct {
     int            ny;
 } baseband_t;
 
-/* Mixes x[from .. from + len) down by fc and decimates to 1000 Hz. */
-static void mix_down(const float *x, int n, int from, int len, float fc, baseband_t *bb)
+/* Mixes x[from .. from + len) down by fc and decimates to 1000 Hz. False
+ * if out of memory. */
+static bool mix_down(const float *x, int n, int from, int len, float fc, baseband_t *bb)
 {
     const float complex step = cexpf(-2.0f * (float)M_PI * I * fc / JTTY_RATE);
     float complex      *tmp = malloc(sizeof(float complex) * (size_t)(len + NTAPS));
     float complex       osc = cexpf(-2.0f * (float)M_PI * I * fc * (from - NTAPS / 2) / JTTY_RATE);
+
+    if (tmp == NULL) {
+        bb->ny = 0;
+        return false;
+    }
 
     for (int i = 0; i < len + NTAPS; i++) {
         int   k = from - NTAPS / 2 + i;
@@ -231,6 +237,7 @@ static void mix_down(const float *x, int n, int from, int len, float fc, baseban
         bb->y[m] = acc;
     }
     free(tmp);
+    return true;
 }
 
 /* Energy of tone k (0..3, offset df Hz) in the 32 samples from y[m0]. */
@@ -376,7 +383,9 @@ static bool decode_at(const float *x, int n, int start, float f0, int list_size,
     int           m_frame = MARGIN / DEC;
     jtty_atom_t   atom;
 
-    mix_down(x, n, from, len, fc, &bb);
+    if (!mix_down(x, n, from, len, fc, &bb)) {
+        return false;
+    }
     fine = refine(&bb, m_frame);
     if (!expected && fine.sync < SYNC_MIN) {
         return false;               /* no FEC for what plausible() drops */
@@ -575,6 +584,13 @@ int jtty_demod_search(const float *x, int n, const jtty_search_t *s,
         score = malloc(sizeof(float) * (size_t)tt * (size_t)ft);
         cap = s->max_candidates * 4;
         peaks = malloc(sizeof(peak_t) * (size_t)cap);
+        if (score == NULL || peaks == NULL) {
+            free(score);
+            free(peaks);
+            free(spec);
+            free(col);
+            return 0;
+        }
 
         for (int t = 0; t < tt; t++) {
             for (int f = 0; f < ft; f++) {
