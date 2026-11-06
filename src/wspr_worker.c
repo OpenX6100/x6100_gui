@@ -39,6 +39,14 @@
  */
 #define WSPR_COLLECT_S   114.5f
 
+/*
+ * The decode stops here with what it has: past it the next slot's
+ * collection and a transmission due at 1 s would start late (a decode
+ * still running at 2 s skipped the transmission and lost the start of
+ * the slot's audio). It also stops at once when the window closes.
+ */
+#define WSPR_DECODE_END_S 119.5f
+
 /* How early a transmission may start and still be found, in seconds. */
 #ifndef WSPR_DT_EARLY_S
 #define WSPR_DT_EARLY_S  1.0f
@@ -241,6 +249,19 @@ static void spot_trampoline(const wspr_candidate_t *cand,
         w->cb.on_spot(&spot, w->cb.ctx);
 }
 
+static bool decode_stop(void *ctx)
+{
+    wspr_worker_t *w = (wspr_worker_t *)ctx;
+    struct timespec now;
+    float sec;
+
+    if (atomic_load(&w->stop_req))
+        return true;
+    clock_gettime(CLOCK_REALTIME, &now);
+    sec = slot_seconds(now);
+    return sec >= WSPR_DECODE_END_S || sec < WSPR_COLLECT_S;
+}
+
 static void decode_slot(wspr_worker_t *w)
 {
     long skip;
@@ -267,7 +288,7 @@ static void decode_slot(wspr_worker_t *w)
      */
     wspr_demod_decode_all(w->bb_re + skip, w->bb_im + skip, w->bb_n - skip,
                           w->center_hz, WSPR_SEARCH_HZ, WSPR_MAX_SPOTS,
-                          spot_trampoline, w);
+                          spot_trampoline, decode_stop, w);
 }
 
 static void restart_collection(wspr_worker_t *w)

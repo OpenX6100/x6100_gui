@@ -35,8 +35,8 @@ extern "C" {
 
 /* One decoded WSPR spot. */
 typedef struct {
-    char  callsign[8];
-    char  locator[8];
+    char  callsign[16];  /* type 2: with a prefix or suffix (PJ4/K1ABC) */
+    char  locator[8];    /* "" for type 2 */
     int   power_dbm;
     float snr_db;        /* in the 2500 Hz reference band  */
     float freq_hz;       /* audio frequency of the signal  */

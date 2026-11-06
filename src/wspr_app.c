@@ -51,8 +51,8 @@
  * operator, anywhere in that window.
  */
 #define RX_CENTER       WSPR_APP_RX_CENTER
-#define TX_FREQ_MIN     1400
-#define TX_FREQ_MAX     1600
+#define TX_FREQ_MIN     WSPR_APP_TX_MIN
+#define TX_FREQ_MAX     WSPR_APP_TX_MAX
 #define TX_FREQ_DEFAULT 1500
 
 static pthread_mutex_t  mux;
@@ -85,6 +85,7 @@ static audio_player_t  *player = NULL;
  * and the radio stays keyed. Olivia solves it the same way.
  */
 static volatile bool    tx_abort = false;
+static volatile bool    tx_stop = false;    /* TX switched off: this one ends */
 
 static uint32_t         spot_count = 0;
 static uint32_t         slot_spots = 0;     /* spots in the slot just decoded */
@@ -453,11 +454,12 @@ static void transmit_message(void)
              call, loc, dbm, (unsigned)cfg_tx_mw);
     note(text);
 
+    tx_stop = false;
     transmitting = true;
     sent_in_slot = true;
     radio_set_modem(true);
 
-    for (k = 0; k < WSPR_SYMBOLS && !tx_abort; k++) {
+    for (k = 0; k < WSPR_SYMBOLS && !tx_abort && !tx_stop; k++) {
         long n = wspr_mod_symbol(&mod, k, symbols[k], sym_buf);
         long i;
 
@@ -492,13 +494,13 @@ static void transmit_message(void)
 
                 /* Checked here rather than per sample: one chunk is
                  * 43 ms, which is a short enough wait for a join. */
-                if (tx_abort)
+                if (tx_abort || tx_stop)
                     break;
             }
         }
     }
 
-    if (out_n > 0 && !tx_abort) {
+    if (out_n > 0 && !tx_abort && !tx_stop) {
         if (gain_offset != 0.0f)
             audio_gain_db(chunk, out_n, gain_offset, chunk);
         audio_player_send(player, chunk, out_n);
@@ -509,6 +511,8 @@ static void transmit_message(void)
     audio_set_play_vol(param_f_get(cfg.audio.play_gain_db()));
     radio_set_pwr(saved_pwr);
     transmitting = false;
+    if (tx_stop)
+        note("TX stopped");
 
     free(sym_buf);
 }
@@ -669,6 +673,12 @@ void wspr_app_put_audio_samples(size_t n, float *samples)
 void wspr_app_set_dial(uint32_t hz)
 {
     dial_hz = hz;
+}
+
+void wspr_app_stop_tx(void)
+{
+    if (transmitting)
+        tx_stop = true;
 }
 
 uint16_t wspr_app_get_tx_freq(void)

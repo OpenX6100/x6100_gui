@@ -358,29 +358,29 @@ void wspr_net_set_enabled(bool on) {
     pthread_mutex_unlock(&mux);
 }
 
-/* WSPR's tone spacing: 12000 / 8192 Hz */
-#define TONE_SPACING_HZ 1.4648
-
 void wspr_net_spot(const wspr_spot_t *spot, const wspr_net_station_t *me) {
-    char   date[16], hhmm[16], body[POST_LEN], rcall[48], tcall[32];
+    char   date[16], hhmm[16], body[POST_LEN], rcall[48], tcall[32], call[16];
     double rqrg = me->dial_hz / 1e6;
-    /* The decoder gives the lowest of the 4 tones; WSJT-X and WSPRnet
-     * use their centre, 1.5 tones up. */
-    double tqrg = (me->dial_hz + (double)spot->freq_hz + 1.5 * TONE_SPACING_HZ) / 1e6;
-
-    /* A type 1 message's power ends in 0, 3 or 7. Others are type 2/3
-     * (compound calls), which the decoder reads as type 1: the grid and
-     * power it gives are made up, so they go neither to the file nor to
-     * WSPRnet. */
-    int d = spot->power_dbm % 10;
-    if (d != 0 && d != 3 && d != 7) return;
+    double tqrg = (me->dial_hz + (double)spot->freq_hz) / 1e6;   /* centre of the 4 tones */
 
     wspr_net_slot_time(date, hhmm);
     save_spot(date, hhmm, spot, tqrg);
 
     if (!wspr_net_enabled() || !me_ok(me)) return;
+
+    /* Type 3: "<K1ABC>" goes up as K1ABC, as WSJT-X sends it; "<...>"
+     * (a hash no call heard here names) not at all. */
+    snprintf(call, sizeof(call), "%s", spot->callsign);
+    if (call[0] == '<') {
+        size_t n = strlen(call);
+
+        if (n < 3 || call[n - 1] != '>' || strcmp(call, "<...>") == 0) return;
+        memmove(call, call + 1, n - 2);
+        call[n - 2] = '\0';
+    }
+    if (!call_ok(call)) return;
     url_enc(rcall, sizeof(rcall), me->call);
-    url_enc(tcall, sizeof(tcall), spot->callsign);
+    url_enc(tcall, sizeof(tcall), call);
     snprintf(body, sizeof(body),
              "function=wspr&rcall=%s&rgrid=%s&rqrg=%.6f&date=%s&time=%s&sig=%d&dt=%.1f"
              "&drift=0&tqrg=%.6f&tcall=%s&tgrid=%s&dbm=%d&version=" VERSION_TAG "&mode=2",

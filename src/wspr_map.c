@@ -22,7 +22,7 @@
 #define HEARD_MS (60 * 60 * 1000) /* spots of the last hour, as WSPRnet's map shows by default */
 
 typedef struct {
-    char    call[13];
+    char    call[16];     /* "<K1ABC/P>" (type 3) fits */
     char    grid[9];
     int     snr;          /* the last spot here */
     int     power_dbm;
@@ -33,7 +33,7 @@ typedef struct {
 
 static station_t st[ST_MAX];
 static int       st_n;
-static char      sel_call[13];
+static char      sel_call[16];
 static char      title[32] = "WSPR";
 
 static int64_t now_ms(void) {
@@ -67,7 +67,8 @@ static void redraw(bool force);
 
 void wspr_map_spot_cb(void *data) {
     const wspr_spot_t *spot = data;
-    if (!spot->callsign[0]) return;
+    /* "<...>": a type 3 hash no call heard here names, nowhere to put it */
+    if (!spot->callsign[0] || strcmp(spot->callsign, "<...>") == 0) return;
     station_t *s = station(spot->callsign);
     if (spot->locator[0]) snprintf(s->grid, sizeof(s->grid), "%s", spot->locator);
     s->snr       = (int)lroundf(spot->snr_db);
