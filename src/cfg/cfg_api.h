@@ -189,6 +189,8 @@ typedef struct {
     ParamInt *(*spectrum_peak_speed)(void); /* p_spectrum_peak_speed */
     ParamInt *(*spectrum_filled)(void); /* p_spectrum_filled */
     ParamInt *(*spectrum_height)(void); /* p_spectrum_height */
+    ParamInt *(*spectrum_3d)(void); /* p_spectrum_3d */
+    ParamInt *(*spectrum_3d_size)(void); /* p_spectrum_3d_size */
 
     ParamInt *(*waterfall_center_line)(void); /* p_waterfall_center_line */
 

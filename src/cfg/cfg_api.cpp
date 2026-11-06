@@ -152,6 +152,8 @@ static ParamInt *cfg_spectrum_peak_hold(void) { return param_ref<ParamInt>(cfg_i
 static ParamInt *cfg_spectrum_peak_speed(void) { return param_ref<ParamInt>(cfg_instance().p_spectrum_peak_speed); }
 static ParamInt *cfg_spectrum_filled(void) { return param_ref<ParamInt>(cfg_instance().p_spectrum_filled); }
 static ParamInt *cfg_spectrum_height(void) { return param_ref<ParamInt>(cfg_instance().p_spectrum_height); }
+static ParamInt *cfg_spectrum_3d(void) { return param_ref<ParamInt>(cfg_instance().p_spectrum_3d); }
+static ParamInt *cfg_spectrum_3d_size(void) { return param_ref<ParamInt>(cfg_instance().p_spectrum_3d_size); }
 static ParamInt *cfg_waterfall_center_line(void) { return param_ref<ParamInt>(cfg_instance().p_waterfall_center_line); }
 static ParamInt *cfg_mag_freq(void) { return param_ref<ParamInt>(cfg_instance().p_mag_freq); }
 static ParamInt *cfg_mag_info(void) { return param_ref<ParamInt>(cfg_instance().p_mag_info); }
@@ -268,6 +270,8 @@ extern "C" const cfg_refs_t cfg = {
         .spectrum_peak_speed = &cfg_spectrum_peak_speed,
         .spectrum_filled = &cfg_spectrum_filled,
         .spectrum_height = &cfg_spectrum_height,
+        .spectrum_3d = &cfg_spectrum_3d,
+        .spectrum_3d_size = &cfg_spectrum_3d_size,
 
         .waterfall_center_line = &cfg_waterfall_center_line,
 

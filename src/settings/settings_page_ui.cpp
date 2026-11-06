@@ -409,6 +409,33 @@ static void make_spectrum_height(SettingsPage &page) {
     page.row++;
 }
 
+/***** SPECTRUM 3D, 3D SIZE *****/
+
+static void make_spectrum_3d(SettingsPage &page) {
+    lv_obj_t *obj;
+
+    page.label("Spectrum 3D");
+
+    obj = page.cell(1, 3, SMALL_3);
+
+    obj = page.switch_bool(obj, *cfg.ui.spectrum_3d());
+    lv_obj_add_event_cb(obj, settings_change_bg_opa_cb, LV_EVENT_FOCUSED, &page);
+    lv_obj_add_event_cb(obj, settings_change_bg_opa_cb, LV_EVENT_DEFOCUSED, &page);
+    lv_obj_set_width(obj, SMALL_3 - 30);
+
+    page.row++;
+
+    page.label("3D size");
+
+    obj = page.cell(1, 6, SMALL_6);
+    obj = page.slider_int(obj, *cfg.ui.spectrum_3d_size(), 30, 70, 5, SMALL_6 - 120, "%d %%");
+
+    lv_obj_add_event_cb(obj, settings_change_bg_opa_cb, LV_EVENT_FOCUSED, &page);
+    lv_obj_add_event_cb(obj, settings_change_bg_opa_cb, LV_EVENT_DEFOCUSED, &page);
+
+    page.row++;
+}
+
 /***** WATERFALL CENTER LINE *****/
 
 static void make_waterfall_line(SettingsPage &page) {
@@ -751,6 +778,7 @@ void make_ui_page(SettingsPage &page) {
     make_spectrum_fill_peak(page);
     make_spectrum_beta_peak_hold_speed(page);
     make_spectrum_height(page);
+    make_spectrum_3d(page);
     page.delimiter();
 
     make_waterfall_line(page);

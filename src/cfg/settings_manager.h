@@ -272,6 +272,12 @@ class SettingsManager {
         StorageType::GLOBAL, pending_writes_, &global_params_};
     Parameter<int32_t> p_spectrum_height{"spectrum_height", 160, 160, 260,
         StorageType::GLOBAL, pending_writes_, &global_params_};
+    // 3D view: past traces stacked into the distance; its height is a percent
+    // of the screen below the indicators (2D keeps spectrum_height)
+    Parameter<int32_t> p_spectrum_3d{"spectrum_3d", false, 0, 1,
+        StorageType::GLOBAL, pending_writes_, &global_params_};
+    Parameter<int32_t> p_spectrum_3d_size{"spectrum_3d_size", 50, 30, 70,
+        StorageType::GLOBAL, pending_writes_, &global_params_};
 
     // Waterfall
     Parameter<int32_t> p_waterfall_center_line{"waterfall_center_line", true, 0, 1,

@@ -128,6 +128,7 @@ static void update_zoom_on_if_shift_change(Subject *subj, void *user_data);
 
 static void apply_main_layout(void);
 static void on_spectrum_height_change(Subject *subj, void *user_data);
+static lv_coord_t main_spectrum_height(void);
 
 static void lock_freq_cb(void * s, lv_msg_t * msg);
 static void on_dialog_start_cb(void *s, lv_msg_t *m);
@@ -1241,7 +1242,7 @@ void main_screen_set_freq(uint64_t freq) {
 
 lv_obj_t * main_screen(lv_obj_t *overlay_scr) {
     uint16_t y = 0;
-    uint16_t spectrum_height = (uint16_t)param_i_get(cfg.ui.spectrum_height());
+    uint16_t spectrum_height = (uint16_t)main_spectrum_height();
 
     obj = overlay_scr;
 
@@ -1336,12 +1337,23 @@ lv_obj_t * main_screen(lv_obj_t *overlay_scr) {
     subject_subscribe_delayed((Subject*)cfg.mode.zoom(), update_zoom_on_if_shift_change, NULL);
 
     subject_subscribe_delayed_and_notify((Subject*)cfg.ui.spectrum_height(), on_spectrum_height_change, NULL);
+    subject_subscribe_delayed((Subject*)cfg.ui.spectrum_3d(), on_spectrum_height_change, NULL);
+    subject_subscribe_delayed((Subject*)cfg.ui.spectrum_3d_size(), on_spectrum_height_change, NULL);
 
     return obj;
 }
 
+/* 2D: the Spectrum height setting; 3D: its own size, a percent of the screen
+ * below the indicators. */
+static lv_coord_t main_spectrum_height(void) {
+    if (param_i_get(cfg.ui.spectrum_3d())) {
+        return (SCREEN_HEIGHT - INDICATORS_HEIGHT) * param_i_get(cfg.ui.spectrum_3d_size()) / 100;
+    }
+    return (lv_coord_t)param_i_get(cfg.ui.spectrum_height());
+}
+
 static void apply_main_layout(void) {
-    lv_coord_t h = (lv_coord_t)param_i_get(cfg.ui.spectrum_height());
+    lv_coord_t h = main_spectrum_height();
     lv_coord_t y = INDICATORS_HEIGHT;
 
     spectrum_set_geometry(y, h);

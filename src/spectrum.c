@@ -103,6 +103,26 @@ static lv_grad_dsc_t grad_dsc;
 static int s_data_ready = 0;
 static int s_cond_dirty = 1;
 
+/* 3D view: the live trace in front and past traces stacked behind it, each one
+ * further back, narrower, lower and dimmer, hiding what is behind it. Traces
+ * are taken from spectrum_buf on the main thread every SPEC3D_PERIOD_US and
+ * drift back smoothly between pushes. Each keeps the base frequency it was
+ * taken at, so the history follows tuning like the waterfall does. */
+#define SPEC3D_MAX_LINES 96
+#define SPEC3D_PERIOD_US 100000
+
+typedef struct {
+    float    val[SPECTRUM_NFFT];
+    uint32_t base_freq;
+} spec3d_row_t;
+
+static spec3d_row_t *s3d_rows;
+static int           s3d_head;   /* newest row */
+static int           s3d_count;
+static uint64_t      s3d_last_push_us;
+static bool          s3d_on;
+static lv_obj_t     *s3d_label;
+
 static void on_zoom_changed(Subject *subj, void *user_data);
 static void update_filters(Subject *subj, void *user_data);
 static void update_dnf(Subject *subj, void *user_data);
@@ -116,8 +136,12 @@ static void on_peak_hold_changed(Subject *subj, void *user_data);
 static void on_peak_speed_changed(Subject *subj, void *user_data);
 static void on_rtty_marker_change(Subject *subj, void *user_data);
 static void shift_peaks(int32_t df);
+static void on_spectrum_3d_changed(Subject *subj, void *user_data);
+static void spec3d_label_cb(lv_event_t *e);
 
 static void spectrum_render_rotated(uint32_t *buf, int stride);
+static void spectrum_render_3d(uint32_t *buf, int stride);
+static void spec3d_push(void);
 static int32_t spectrum_compute_offset(void);
 static void spectrum_update_colors(void);
 static void spectrum_fill_run(uint32_t *buf, int stride, int row, int x_top, lv_grad_t *grad);
@@ -346,6 +370,23 @@ lv_obj_t *spectrum_init(lv_obj_t *overlay_parent, lv_coord_t y, lv_coord_t h) {
     grad_dsc.stops[1].frac = 128;
     grad_dsc.stops[2].frac = 255;
 
+    /* 2D/3D label: shows the view, a tap switches it */
+    s3d_label = lv_label_create(obj);
+    lv_obj_add_style(s3d_label, &style.freq_bounds, LV_PART_MAIN);
+    lv_obj_set_style_border_width(s3d_label, 2, 0);
+    lv_obj_set_style_border_color(s3d_label, style.colors.mark, 0);
+    lv_obj_set_style_radius(s3d_label, 5, 0);
+    lv_obj_set_style_bg_color(s3d_label, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(s3d_label, LV_OPA_70, 0);
+    lv_obj_set_style_pad_hor(s3d_label, 8, 0);
+    lv_obj_set_style_pad_ver(s3d_label, 2, 0);
+    lv_obj_align(s3d_label, LV_ALIGN_TOP_RIGHT, -5, TOP_BLOCK_SMALL_HEIGHT + 36);
+    lv_obj_add_flag(s3d_label, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_ext_click_area(s3d_label, 8);
+    lv_obj_add_event_cb(s3d_label, spec3d_label_cb, LV_EVENT_CLICKED, NULL);
+
+    subject_subscribe_and_notify((Subject *)cfg.ui.spectrum_3d(), on_spectrum_3d_changed, NULL);
+
     subject_subscribe_and_notify((Subject *)cfg.mode.zoom(), on_zoom_changed, NULL);
 
     subject_subscribe((Subject *)cfg.filter.low(), update_filters, NULL);
@@ -493,6 +534,24 @@ void spectrum_clear() {
         spectrum_peak[i].val  = S_MIN;
         spectrum_peak[i].time = now;
     }
+    s3d_count = 0;
+}
+
+static void on_spectrum_3d_changed(Subject *subj, void *user_data) {
+    s3d_on = subject_i_get((SubjectInt *)subj);
+    if (s3d_on && !s3d_rows) {
+        s3d_rows = calloc(SPEC3D_MAX_LINES, sizeof(*s3d_rows));
+        if (!s3d_rows) {
+            s3d_on = false;
+        }
+    }
+    s3d_count = 0;
+    lv_label_set_text(s3d_label, s3d_on ? "3D" : "2D");
+    __atomic_store_n(&s_cond_dirty, 1, __ATOMIC_RELEASE);
+}
+
+static void spec3d_label_cb(lv_event_t *e) {
+    param_i_set(cfg.ui.spectrum_3d(), !param_i_get(cfg.ui.spectrum_3d()));
 }
 
 static void on_zoom_changed(Subject *subj, void *user_data) {
@@ -803,8 +862,166 @@ static void spectrum_draw_polyline(uint32_t *buf, int stride, float min, float m
     }
 }
 
+static uint64_t spec3d_now_us(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000u + ts.tv_nsec / 1000;
+}
+
+/* Keep a copy of the live trace every SPEC3D_PERIOD_US (main thread). */
+static void spec3d_push(void) {
+    uint64_t now = spec3d_now_us();
+
+    if (s3d_count && now - s3d_last_push_us < SPEC3D_PERIOD_US) {
+        return;
+    }
+    /* Stay on the period's grid unless we fell behind (closed screen etc.) */
+    if (s3d_count && now - s3d_last_push_us < 2 * SPEC3D_PERIOD_US) {
+        s3d_last_push_us += SPEC3D_PERIOD_US;
+    } else {
+        s3d_last_push_us = now;
+    }
+
+    s3d_head = (s3d_head + 1) % SPEC3D_MAX_LINES;
+    memcpy(s3d_rows[s3d_head].val, spectrum_buf, sizeof(spectrum_buf));
+    s3d_rows[s3d_head].base_freq = cur_base_lo_freq;
+    if (s3d_count < SPEC3D_MAX_LINES) {
+        s3d_count++;
+    }
+}
+
+static inline uint32_t spec3d_scale(uint32_t c, uint32_t k) { /* k: 0..256 */
+    uint32_t rb = (((c & 0x00FF00FFu) * k) >> 8) & 0x00FF00FFu;
+    uint32_t g  = (((c & 0x0000FF00u) * k) >> 8) & 0x0000FF00u;
+    return rb | g | 0xFF000000u;
+}
+
+static inline uint32_t spec3d_pal(float v) {
+    int i = (int)(v * 255.0f);
+    if (i < 0) {
+        i = 0;
+    } else if (i > 255) {
+        i = 255;
+    }
+    return style.wf_palette[i];
+}
+
+/* Draw one trace at depth k (0 back .. 1 front) into the rotated buffer, front
+ * to back: each column only gets pixels above what nearer traces drew there
+ * (horizon[], logical y). Logical column x is physical row SPECTRUM_NFFT-1-x,
+ * logical y (0 = top) is the physical column, so a column's pixels are one
+ * contiguous run. */
+static void spec3d_trace(uint32_t *buf, int stride, int16_t *horizon, const float *val, float shift, int32_t offset,
+                         float k, float min, float max) {
+    const float narrow = 0.82f;
+    const float s      = narrow + (1.0f - narrow) * k;
+    const float base   = stride - 3 - stride * 0.5f * (1.0f - k);
+    const float amp    = stride * 0.42f * (0.55f + 0.45f * k);
+    const uint32_t fade_line = (uint32_t)((0.35f + 0.65f * k) * 256.0f);
+    const uint32_t fade_fill = (uint32_t)((0.35f + 0.65f * k) * 0.28f * 256.0f);
+    const float    cx     = SPECTRUM_NFFT / 2.0f;
+    const float    inv_s  = 1.0f / s;
+    const float    scale  = 1.0f / (max - min);
+    const int      base_i = (int)base;
+    int            prev_y = -1;
+
+    for (int x = 0; x < SPECTRUM_NFFT; x++) {
+        float pos = cx + (x - cx) * inv_s - offset + shift;
+        if (pos < 0.0f || pos > SPECTRUM_NFFT - 1) {
+            prev_y = -1;
+            continue;
+        }
+        int   i0 = (int)pos;
+        int   i1 = i0 < SPECTRUM_NFFT - 1 ? i0 + 1 : i0;
+        float t  = pos - i0;
+        float v  = ((val[i0] + (val[i1] - val[i0]) * t) - min) * scale;
+        if (v < 0.0f) {
+            v = 0.0f;
+        } else if (v > 1.0f) {
+            v = 1.0f;
+        }
+
+        int y = (int)(base - v * amp);
+        if (y < 0) {
+            y = 0;
+        }
+        int top = (prev_y >= 0 && prev_y < y) ? prev_y : y;  /* join to the previous column */
+        int bot = (prev_y > y) ? prev_y : y;
+        prev_y  = y;
+
+        int hz = horizon[x];
+        if (top >= hz) {
+            continue;
+        }
+        uint32_t *p = &buf[(SPECTRUM_NFFT - 1 - x) * stride];
+
+        int fill_end = base_i < hz ? base_i : hz;
+        if (y + 1 < fill_end) {
+            uint32_t fc = spec3d_scale(spec3d_pal(v * 0.9f + 0.1f), fade_fill);
+            for (int j = y + 1; j < fill_end; j++) {
+                p[j] = fc;
+            }
+        }
+        uint32_t lc  = spec3d_scale(spec3d_pal(v * 1.15f + 0.12f), fade_line);
+        int      end = bot < hz ? bot + 1 : hz;
+        for (int j = top; j < end; j++) {
+            p[j] = lc;
+        }
+        horizon[x] = top;
+    }
+}
+
+static void spectrum_render_3d(uint32_t *buf, int stride) {
+    static int16_t horizon[SPECTRUM_NFFT];
+
+    float min = spectrum_min;
+    float max = spectrum_max;
+    if (max <= min) {
+        max = min + 1.0f;
+    }
+    int32_t offset = spectrum_compute_offset();
+
+    int lines = stride / 4;
+    if (lines < 24) {
+        lines = 24;
+    } else if (lines > SPEC3D_MAX_LINES) {
+        lines = SPEC3D_MAX_LINES;
+    }
+
+    /* How far the history has drifted back since the last push (0..1) */
+    float frac = 0.0f;
+    if (s3d_count) {
+        frac = (float)(spec3d_now_us() - s3d_last_push_us) / SPEC3D_PERIOD_US;
+        if (frac > 1.0f) {
+            frac = 1.0f;
+        }
+    }
+
+    for (int x = 0; x < SPECTRUM_NFFT; x++) {
+        horizon[x] = (int16_t)stride;
+    }
+
+    /* Live trace in front, then the history going back */
+    spec3d_trace(buf, stride, horizon, spectrum_buf, 0.0f, offset, 1.0f, min, max);
+
+    for (int j = 0; j < s3d_count && j < lines - 1; j++) {
+        float k = 1.0f - (j + frac) / (lines - 1);
+        if (k <= 0.0f) {
+            break;
+        }
+        const spec3d_row_t *row   = &s3d_rows[(s3d_head - j + SPEC3D_MAX_LINES) % SPEC3D_MAX_LINES];
+        float               shift = (float)((int64_t)cur_base_lo_freq - row->base_freq) * SPECTRUM_NFFT / width_hz;
+        spec3d_trace(buf, stride, horizon, row->val, shift, offset, k, min, max);
+    }
+}
+
 static void spectrum_render_rotated(uint32_t *buf, int stride) {
     memset(buf, 0, (size_t)stride * SPECTRUM_NFFT * sizeof(uint32_t));
+
+    if (s3d_on) {
+        spectrum_render_3d(buf, stride);
+        return;
+    }
 
     float min = spectrum_min;
     float max = spectrum_max;
@@ -853,6 +1070,10 @@ bool spectrum_process(void) {
     bool cond = __atomic_exchange_n(&s_cond_dirty, 0, __ATOMIC_ACQUIRE);
     if (!data && !cond) {
         return false;
+    }
+
+    if (s3d_on && data) {
+        spec3d_push();
     }
 
     drm_direct_ctx_t ctx;
