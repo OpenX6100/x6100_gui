@@ -395,6 +395,7 @@ static bool log_qso(const char *call, bool need_exchange)
         snprintf(l.rcvd, sizeof(l.rcvd), "%s", q->rcvd);
     }
     if (!jtty_log_save(&l)) {
+        msg_update_text_fmt("Not logged: the radio's log refused %s (callsign set in Settings?)", call);
         return false;
     }
     msg_update_text_fmt("Logged %s  %s / %s", l.call, l.sent[0] ? l.sent : "-",
@@ -706,11 +707,12 @@ static void tx_ui_cb(void *arg)
     int                     i;
 
     if (st->idle) {
-        /* unkeyed: messages dropped from the queue by ESC never went out */
+        /* unkeyed: messages dropped from the queue by ESC never went out
+         * (one queued since, or already being sent, is still on its way) */
         transmitting = jtty_tx_busy();
         if (table != NULL) {
             for (i = 0; i < nrows; i++) {
-                if (rows[i].tx && !rows[i].done) {
+                if (rows[i].tx && !rows[i].done && !jtty_tx_pending(rows[i].id & ~TX_ID_FLAG)) {
                     size_t len = strlen(rows[i].text);
 
                     rows[i].done = true;
@@ -888,18 +890,19 @@ static void macro_cb(button_data_t *b)
         }
         snprintf(last_partner, sizeof(last_partner), "%s", sel_call);
         if (key == 8 && q->called && q->rcvd[0]) {
-            log_qso(sel_call, true);    /* answering a CQ: both exchanges done */
-            set_serial(serial + 1);
+            /* answering a CQ: both exchanges done; the serial moves on
+             * only with a QSO in the log */
+            if (log_qso(sel_call, true)) {
+                set_serial(serial + 1);
+            }
             select_row(-1);
         }
     }
-    if (key == 3) {
-        log_qso(sel_call, true);        /* TU: done */
-    }
+    bool tu_logged = key == 3 && log_qso(sel_call, true);   /* TU: done */
 
     if (key == 6) {
         set_serial(use_serial);
-    } else if (key == 3) {
+    } else if (tu_logged) {
         set_serial(serial + 1);         /* TU, the next QSO gets the next number */
     }
     if (key == 1 || key == 3) {
@@ -1119,9 +1122,11 @@ static void serial_cb(button_data_t *b)
 
 /* ---- Waterfall --------------------------------------------------------- */
 
+/* The line travels inside the scheduler's copy: one the scheduler drops
+ * (queue full) leaves nothing behind to free. */
 typedef struct {
-    float *db;
-    int    n;
+    float db[WF_BINS];
+    int   n;
 } wf_line_t;
 
 static void wf_ui_cb(void *arg)
@@ -1131,7 +1136,6 @@ static void wf_ui_cb(void *arg)
     if (waterfall != NULL) {
         lv_waterfall_add_data(waterfall, l->db, (uint16_t)l->n);
     }
-    free(l->db);
 }
 
 /* Receiver thread. */
@@ -1140,12 +1144,8 @@ static void psd_cb(const float *db, int nbins, void *ctx)
     wf_line_t l;
 
     (void)ctx;
-    l.n = nbins;
-    l.db = malloc(sizeof(float) * (size_t)nbins);
-    if (l.db == NULL) {
-        return;
-    }
-    memcpy(l.db, db, sizeof(float) * (size_t)nbins);
+    l.n = nbins < WF_BINS ? nbins : WF_BINS;
+    memcpy(l.db, db, sizeof(float) * (size_t)l.n);
     scheduler_put(wf_ui_cb, &l, sizeof(l));
 }
 
@@ -1271,12 +1271,18 @@ static void clear_cb(button_data_t *b)
 /* Main knob: our transmit offset. */
 static void rotary_cb(int32_t diff, uint16_t dt)
 {
+    /* The knob keeps to WSJT-X's 1200-1800 Hz, but F4 and Reply may have
+     * put the marker outside it: from there a click moves one step, it
+     * doesn't jump to the edge (the limit then is where the marker is). */
+    int low = marker_hz < WSJTX_LOW_HZ ? marker_hz : WSJTX_LOW_HZ;
+    int high = marker_hz > WSJTX_HIGH_HZ ? marker_hz : WSJTX_HIGH_HZ;
+
     marker_hz += diff * MARKER_STEP_HZ;
-    if (marker_hz < WSJTX_LOW_HZ) {
-        marker_hz = WSJTX_LOW_HZ;
+    if (marker_hz < low) {
+        marker_hz = low;
     }
-    if (marker_hz > WSJTX_HIGH_HZ) {
-        marker_hz = WSJTX_HIGH_HZ;
+    if (marker_hz > high) {
+        marker_hz = high;
     }
     apply_filter();             /* clamps to the filter and redraws it */
 }

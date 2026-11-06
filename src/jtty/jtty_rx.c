@@ -246,14 +246,14 @@ static void run_pass(jtty_rx_t *rx)
     float         fmin;
     float         fmax;
 
+    bool          was_reset;
+
     pthread_mutex_lock(&rx->lock);
+    was_reset = rx->reset;
     if (rx->reset) {
         rx->reset = false;
         rx->searched = 0;
         rx->nrecent = 0;
-        for (int i = 0; i < MAX_MSGS; i++) {
-            rx->slots[i].open = false;
-        }
     }
     n = rx->len;
     abs0 = rx->abs0;
@@ -261,6 +261,17 @@ static void run_pass(jtty_rx_t *rx)
     fmax = rx->fmax;
     memcpy(rx->work, rx->buf, sizeof(float) * (size_t)n);
     pthread_mutex_unlock(&rx->lock);
+
+    /* A message still arriving when the audio was thrown away (we
+     * transmitted) ends here: closed, so the window shows it done
+     * rather than "still arriving" for good. */
+    if (was_reset) {
+        for (int i = 0; i < MAX_MSGS; i++) {
+            if (rx->slots[i].open) {
+                close_slot(rx, &rx->slots[i]);
+            }
+        }
+    }
 
     end = abs0 + (uint64_t)n;
     if (n < JTTY_FRAME_SAMPLES + TAIL) {
