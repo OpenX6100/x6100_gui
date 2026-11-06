@@ -457,6 +457,9 @@ static void decode_messages(const ftx_waterfall_t *wf, int *num_candidates, ftx_
  * off too. Checked on a PC against WSJT-X's jt9 with ft8sim/ft4sim signals
  * of known SNR (FT2: the FT4 ones played twice as fast).
  *
+ * Result (PC, 3 files a level): FT8 equal to jt9 from -18 to 0 dB, FT4 and
+ * FT2 within 1 dB.
+ *
  * The background: the bins within SNR_NOISE_HZ either side of the signal
  * (its own tones left out), over every symbol of the message. Its lower
  * quartile, divided by ln(4/3), is the mean noise per bin for noise alone
@@ -465,14 +468,21 @@ static void decode_messages(const ftx_waterfall_t *wf, int *num_candidates, ftx_
  */
 #define SNR_NOISE_HZ   300.0f
 #define SNR_NOISE_MAX  8192
-#define SNR_CAL_DB     0.0f      /* window and bin shape, the same for every mode (calibrated) */
+#define SNR_CAL_DB     0.0f      /* window and bin shape: checked, none needed for any mode */
 #define SNR_FLOOR_DB   -30
 
 static float snr_noise[SNR_NOISE_MAX];
 
-/* waterfall value (dB * 2 + 240) to power */
+/* waterfall value (dB * 2 + 240) to power, from a table made once */
+static float wf_power_lut[256];
+
 static inline float wf_power(uint8_t v) {
-    return powf(10.0f, ((float)v - 240.0f) / 20.0f);
+    if (wf_power_lut[255] == 0.0f) {
+        for (int i = 0; i < 256; i++) {
+            wf_power_lut[i] = powf(10.0f, ((float)i - 240.0f) / 20.0f);
+        }
+    }
+    return wf_power_lut[v];
 }
 
 /* The k-th smallest of v[0..n-1], reordering v (quickselect). */
@@ -499,6 +509,31 @@ static float kth_smallest(float *v, int n, int k) {
         }
     }
     return v[k];
+}
+
+/* The decoded tones' mean power at one time and frequency step (symbol
+ * `to` sub-step `ts`, bin `fo` sub-step `fs`); 0 when out of range. */
+static double tone_power(const ftx_waterfall_t *wf, int to, int ts, int fo, int fs, const uint8_t *tones,
+                         int n_tones, int n_items) {
+    double sig = 0.0;
+    int    ns = 0;
+
+    if (fo < 0 || fo + n_items > wf->num_bins) {
+        return 0.0;
+    }
+    for (int i = 0; i < n_tones; i++) {
+        int block = to + i;
+        if (block < 0) {
+            continue;
+        }
+        if (block >= wf->num_blocks) {
+            break;
+        }
+        const uint8_t *row = wf->mag + (((size_t)block * wf->time_osr + ts) * wf->freq_osr + fs) * wf->num_bins;
+        sig += wf_power(row[fo + tones[i]]);
+        ns++;
+    }
+    return ns ? sig / ns : 0.0;
 }
 
 static int snr_vs_background(const ftx_waterfall_t *wf, const ftx_candidate_t *c, const uint8_t *tones, int n_tones) {
@@ -533,7 +568,27 @@ static int snr_vs_background(const ftx_waterfall_t *wf, const ftx_candidate_t *c
         return SNR_FLOOR_DB;
     }
     float noise = kth_smallest(snr_noise, nn, nn / 4) / logf(4.0f / 3.0f);
-    float ratio = (float)(sig / ns) / noise - 1.0f;
+
+    /* A station may be decoded at a step half a bin or a time sub-step off
+     * its tones, which then fall between two bins or straddle two symbols
+     * and read low (FT8 at 0 dB read -4). Its power is taken at that step
+     * and one step either side in frequency and in time, the strongest. */
+    double s_best = sig / ns;
+    for (int dt = -1; dt <= 1; dt++) {
+        int tq = c->time_offset * wf->time_osr + c->time_sub + dt;
+        int to = tq >= 0 ? tq / wf->time_osr : -1, ts = tq >= 0 ? tq % wf->time_osr : 0;
+        for (int df = -1; df <= 1; df++) {
+            int fq = c->freq_offset * wf->freq_osr + c->freq_sub + df;
+            if (to < 0 || fq < 0 || (dt == 0 && df == 0)) {
+                continue;
+            }
+            double sp = tone_power(wf, to, ts, fq / wf->freq_osr, fq % wf->freq_osr, tones, n_tones, n_items);
+            if (sp > s_best) {
+                s_best = sp;
+            }
+        }
+    }
+    float ratio = (float)s_best / noise - 1.0f;
     if (ratio <= 0.0f) {
         return SNR_FLOOR_DB;
     }
