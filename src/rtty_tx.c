@@ -21,6 +21,8 @@
 
 #include "audio.h"
 #include "cfg/cfg_api.h"
+#include "digi_text.h"
+#include "digi_txq.h"
 #include "keyboard.h"
 #include "main_screen.h"
 #include "msg.h"
@@ -75,9 +77,7 @@ typedef struct {
 } halfbits_t;
 
 static pthread_t       tx_thread;
-static volatile bool   tx_on   = false;
-static volatile bool   tx_stop_req = false;
-static char           *tx_text = NULL;
+static digi_txq_t      txq = DIGI_TXQ_INITIALIZER;
 static bool            input_active = false;  /* a textarea window is open */
 
 /* --- Baudot encoder ------------------------------------------------- */
@@ -115,59 +115,91 @@ static bool hb_push_code(halfbits_t *hb, uint8_t code) {
     return hb_push(hb, 1, 3);
 }
 
-/* Encode ASCII text into a half-bit stream with LTRS/FIGS shifting. */
-static bool baudot_encode(const char *text, halfbits_t *hb, float baud) {
-    bool figs = false;
+/* One character into half-bits, shifting between LTRS and FIGS as
+ * needed. A line break goes out as CR LF; a CR on its own is dropped. */
+static bool encode_char(halfbits_t *hb, bool *figs, char ch) {
+    char c = (char)toupper((unsigned char)ch);
+    int  idx;
 
-    /* preamble: steady mark + LTRS LTRS to arm remote decoders */
-    size_t pre_hb = (size_t)(PREAMBLE_MS / 1000.0f * baud * 2.0f + 0.5f);
-    if (!hb_push(hb, 1, pre_hb)) return false;
-    if (!hb_push_code(hb, LTRS_CODE)) return false;
-    if (!hb_push_code(hb, LTRS_CODE)) return false;
-
-    for (const char *p = text; *p; p++) {
-        char c = toupper((unsigned char)*p);
-
-        if (c == '\r') continue;
-        if (c == '\n') {
-            if (!hb_push_code(hb, CR_CODE)) return false;
-            if (!hb_push_code(hb, LF_CODE)) return false;
-            continue;
-        }
-        if (c == ' ') {
-            if (!hb_push_code(hb, SPACE_CODE)) return false;
-            /* Receivers with unshift-on-space (MMTTY's and fldigi's
-             * default) go back to letters here: a figure after a space
-             * needs FIGS again, or "599 599" prints "599 TOO". */
-            figs = false;
-            continue;
-        }
-
-        int idx = table_find(tx_letters, c);
-        if (idx >= 0) {
-            if (figs) {
-                if (!hb_push_code(hb, LTRS_CODE)) return false;
-                figs = false;
-            }
-            if (!hb_push_code(hb, (uint8_t)idx)) return false;
-            continue;
-        }
-        idx = table_find(tx_symbols, c);
-        if (idx >= 0) {
-            if (!figs) {
-                if (!hb_push_code(hb, FIGS_CODE)) return false;
-                figs = true;
-            }
-            if (!hb_push_code(hb, (uint8_t)idx)) return false;
-            continue;
-        }
-        /* unsupported char -> space keeps timing readable */
-        if (!hb_push_code(hb, SPACE_CODE)) return false;
-        figs = false;
+    if (c == '\r') return true;
+    if (c == '\n') {
+        return hb_push_code(hb, CR_CODE) && hb_push_code(hb, LF_CODE);
     }
+    if (c == ' ') {
+        /* Receivers with unshift-on-space (MMTTY's and fldigi's default)
+         * go back to letters here: a figure after a space needs FIGS
+         * again, or "599 599" prints "599 TOO". */
+        *figs = false;
+        return hb_push_code(hb, SPACE_CODE);
+    }
+    idx = table_find(tx_letters, c);
+    if (idx >= 0) {
+        if (*figs) {
+            if (!hb_push_code(hb, LTRS_CODE)) return false;
+            *figs = false;
+        }
+        return hb_push_code(hb, (uint8_t)idx);
+    }
+    idx = table_find(tx_symbols, c);
+    if (idx >= 0) {
+        if (!*figs) {
+            if (!hb_push_code(hb, FIGS_CODE)) return false;
+            *figs = true;
+        }
+        return hb_push_code(hb, (uint8_t)idx);
+    }
+    /* unsupported char -> space keeps timing readable */
+    *figs = false;
+    return hb_push_code(hb, SPACE_CODE);
+}
 
-    size_t tail_hb = (size_t)(TAIL_MS / 1000.0f * baud * 2.0f + 0.5f);
-    return hb_push(hb, 1, tail_hb);
+typedef enum { PH_PREAMBLE, PH_TEXT, PH_TAIL } phase_t;
+
+typedef struct {
+    phase_t ph;
+    bool    figs;
+    float   baud;
+} encoder_t;
+
+/*
+ * The next few half-bits, taken from the queue as the transmission goes,
+ * so that text added meanwhile joins it: steady mark and LTRS LTRS to
+ * arm remote decoders, the characters, LTRS while the operator is still
+ * typing (the usual RTTY idle), then a tail of mark. Text that arrives
+ * during the tail carries on, after the current shift is sent again.
+ * Returns false when the transmission is over.
+ */
+static bool next_halfbits(halfbits_t *hb, encoder_t *e) {
+    int c;
+
+    hb->size = 0;
+    switch (e->ph) {
+        case PH_PREAMBLE:
+            e->ph = PH_TEXT;
+            e->figs = false;
+            return hb_push(hb, 1, (size_t)(PREAMBLE_MS / 1000.0f * e->baud * 2.0f + 0.5f)) &&
+                   hb_push_code(hb, LTRS_CODE) && hb_push_code(hb, LTRS_CODE);
+
+        case PH_TEXT:
+            c = digi_txq_get(&txq);
+            if (c >= 0) {
+                return encode_char(hb, &e->figs, (char)c);
+            }
+            if (digi_txq_held(&txq)) {
+                e->figs = false;
+                return hb_push_code(hb, LTRS_CODE);
+            }
+            e->ph = PH_TAIL;
+            return hb_push(hb, 1, (size_t)(TAIL_MS / 1000.0f * e->baud * 2.0f + 0.5f));
+
+        case PH_TAIL:
+        default:
+            if (digi_txq_close_if_empty(&txq)) {
+                return false;
+            }
+            e->ph = PH_TEXT;
+            return hb_push_code(hb, e->figs ? FIGS_CODE : LTRS_CODE);
+    }
 }
 
 /* --- ALC-driven gain correction (same approach as ft8/tx_worker) ---- */
@@ -192,28 +224,63 @@ static float get_correction(void) {
 /* --- Worker thread --------------------------------------------------- */
 
 /* UI thread: the transmission is over. Unless RTTY was closed meanwhile
- * (RTTY_OFF, which must stay so), receive again. */
+ * (RTTY_OFF, which must stay so) or a new transmission has started since,
+ * receive again. */
 static void tx_done_ui(void *arg) {
     (void)arg;
-    if (rtty_get_state() == RTTY_TX) {
+    if (rtty_get_state() == RTTY_TX && !digi_txq_running(&txq)) {
         rtty_set_state(RTTY_RX);
     }
 }
 
-static void *tx_thread_fn(void *arg) {
-    (void)arg;
+typedef struct {
+    audio_player_t *player;
+    int16_t         chunk[CHUNK_SAMPLES];
+    size_t          n;
+    size_t          counter;
+    float           fs;
+    float           phase;
+    float           gain_offset;
+    float           prev_gain_offset;
+} output_t;
 
+static void output_flush(output_t *o) {
+    if (o->n == 0) return;
+
+    if (o->counter > 30) {
+        o->gain_offset += get_correction() * 0.4f;
+        if (o->gain_offset > GAIN_MAX_DB) o->gain_offset = GAIN_MAX_DB;
+        if (o->gain_offset < GAIN_MIN_DB) o->gain_offset = GAIN_MIN_DB;
+    }
+    if (o->gain_offset == o->prev_gain_offset) {
+        if (o->gain_offset != 0.0f) {
+            audio_gain_db(o->chunk, o->n, o->gain_offset, o->chunk);
+        }
+    } else {
+        audio_gain_db_transition(o->chunk, o->n, o->prev_gain_offset, o->gain_offset, o->chunk);
+        o->prev_gain_offset = o->gain_offset;
+    }
+    audio_player_send(o->player, o->chunk, o->n);
+    o->n = 0;
+    o->counter++;
+}
+
+/* One sample of tone f, continuous phase, scaled by env (the ramps). */
+static void output_sample(output_t *o, float f, float env) {
+    o->phase += 2.0f * (float)M_PI * f / o->fs;
+    if (o->phase > 2.0f * (float)M_PI) o->phase -= 2.0f * (float)M_PI;
+
+    o->chunk[o->n++] = (int16_t)(sinf(o->phase) * AMPLITUDE * env);
+    if (o->n == CHUNK_SAMPLES) {
+        output_flush(o);
+    }
+}
+
+/* One transmission, until the queue closes. False when it could not
+ * start. */
+static bool transmit(void) {
     const float fs   = (float)AUDIO_PLAY_RATE;
     const float baud = (float)param_i_get(cfg.rtty.rate()) / 100.0f;
-
-    halfbits_t hb = {0};
-    if (!baudot_encode(tx_text, &hb, baud)) {
-        free(hb.items);
-        free(tx_text);
-        tx_text = NULL;
-        tx_on = false;
-        return NULL;
-    }
 
     /* Tone mapping mirrors the RX polarity logic in rtty.c:
      * in USB (non-reverse) mark is the upper audio tone. */
@@ -229,14 +296,14 @@ static void *tx_thread_fn(void *arg) {
 
     /* The default 48 kHz mono player is shared and never released, so
      * asking for it costs nothing. */
-    audio_player_t *player = audio_get_player(AUDIO_PLAY_RATE, 1);
+    output_t out;
 
-    if (!player) {
-        free(hb.items);
-        free(tx_text);
-        tx_text = NULL;
-        tx_on = false;
-        return NULL;
+    memset(&out, 0, sizeof(out));
+    out.fs = fs;
+    out.player = audio_get_player(AUDIO_PLAY_RATE, 1);
+
+    if (!out.player) {
+        return false;
     }
 
     /* Power cap and gain baseline - same scheme as the FT8 worker.
@@ -256,103 +323,81 @@ static void *tx_thread_fn(void *arg) {
         base_gain_offset = -16.4f + log10f(target_pwr) * 10.0f;
     }
 
-    float gain_offset      = base_gain_offset + param_f_get(cfg.ft8.output_gain_offset());
-    float play_gain_offset = audio_set_play_vol(gain_offset + 6.0f);
-    gain_offset           -= play_gain_offset;
+    out.gain_offset       = base_gain_offset + param_f_get(cfg.ft8.output_gain_offset());
+    float play_gain_offset = audio_set_play_vol(out.gain_offset + 6.0f);
+    out.gain_offset      -= play_gain_offset;
+    out.prev_gain_offset  = out.gain_offset;
 
     radio_set_modem(true);
 
     const double spb_samples = (double)fs / ((double)baud * 2.0); /* samples per half-bit */
     const size_t ramp_n      = (size_t)(RAMP_MS / 1000.0f * fs);
-    /* Where the signal ends: the whole text, or a ramp's length after a
-     * Stop TX (cut at full level it was a key click). */
-    size_t       total_samples = (size_t)((double)hb.size * spb_samples);
-    bool         stopping      = false;
 
-    int16_t chunk[CHUNK_SAMPLES];
-    float   phase            = 0.0f;
-    float   prev_gain_offset = gain_offset;
-    size_t  sample_idx       = 0;
-    size_t  counter          = 0;
-    double  edge_acc         = 0.0;
-    size_t  hb_idx           = 0;
-    size_t  next_edge        = 0;
+    halfbits_t hb = {0};
+    encoder_t  enc = {.ph = PH_PREAMBLE, .figs = false, .baud = baud};
+    size_t     sample_idx = 0;
+    double     edge_acc   = 0.0;
 
-    while (sample_idx < total_samples) {
-        if (tx_stop_req && !stopping) {
-            stopping = true;
-            if (total_samples - sample_idx > ramp_n) {
-                total_samples = sample_idx + ramp_n;
+    while (next_halfbits(&hb, &enc)) {
+        for (size_t h = 0; h < hb.size; h++) {
+            float  f   = hb.items[h] ? f_mark : f_space;
+            size_t end;
+
+            edge_acc += spb_samples;
+            end = (size_t)(edge_acc + 0.5);
+            for (; sample_idx < end; sample_idx++) {
+                float env = 1.0f;
+
+                if (sample_idx < ramp_n) {
+                    env = 0.5f - 0.5f * cosf((float)M_PI * (float)sample_idx / (float)ramp_n);
+                }
+                output_sample(&out, f, env);
             }
         }
-        if (counter > 30) {
-            gain_offset += get_correction() * 0.4f;
-            if (gain_offset > GAIN_MAX_DB) gain_offset = GAIN_MAX_DB;
-            if (gain_offset < GAIN_MIN_DB) gain_offset = GAIN_MIN_DB;
-        }
-
-        size_t part = LV_MIN(CHUNK_SAMPLES, total_samples - sample_idx);
-
-        for (size_t i = 0; i < part; i++, sample_idx++) {
-            while (sample_idx >= next_edge && hb_idx < hb.size) {
-                edge_acc += spb_samples;
-                next_edge = (size_t)(edge_acc + 0.5);
-                hb_idx++;
-            }
-            uint8_t sym  = (hb_idx > 0 && hb_idx <= hb.size) ? hb.items[hb_idx - 1] : 1;
-            float   f    = sym ? f_mark : f_space;
-
-            phase += 2.0f * (float)M_PI * f / fs;
-            if (phase > 2.0f * (float)M_PI) phase -= 2.0f * (float)M_PI;
-
-            float env = 1.0f;
-            if (sample_idx < ramp_n) {
-                env = 0.5f - 0.5f * cosf((float)M_PI * (float)sample_idx / (float)ramp_n);
-            } else if (total_samples - sample_idx <= ramp_n) {
-                env = 0.5f - 0.5f * cosf((float)M_PI * (float)(total_samples - sample_idx) / (float)ramp_n);
-            }
-
-            chunk[i] = (int16_t)(sinf(phase) * AMPLITUDE * env);
-        }
-
-        if (gain_offset == prev_gain_offset) {
-            if (gain_offset != 0.0f) {
-                audio_gain_db(chunk, part, gain_offset, chunk);
-            }
-        } else {
-            audio_gain_db_transition(chunk, part, prev_gain_offset, gain_offset, chunk);
-            prev_gain_offset = gain_offset;
-        }
-
-        audio_player_send(player, chunk, part);
-        counter++;
     }
+    /* key down gently, on the mark tone */
+    for (size_t k = 0; k < ramp_n; k++) {
+        output_sample(&out, f_mark, 0.5f + 0.5f * cosf((float)M_PI * (float)k / (float)ramp_n));
+    }
+    output_flush(&out);
 
-    audio_player_wait(player);
+    audio_player_wait(out.player);
     radio_set_modem(false);
     audio_set_play_vol(param_f_get(cfg.audio.play_gain_db()));
     if (saved_pwr > MAX_PWR_W) {
         radio_set_pwr(saved_pwr);
     }
-    audio_player_release(player);
+    audio_player_release(out.player);
+
+    free(hb.items);
+    return true;
+}
+
+/* One transmission after another while text keeps coming in as one
+ * ends (digi_txq_finish); text that cannot go out is dropped. */
+static void *tx_thread_fn(void *arg) {
+    (void)arg;
+
+    while (transmit()) {
+        if (!digi_txq_finish(&txq)) break;
+    }
+    if (digi_txq_running(&txq)) {
+        digi_txq_abort(&txq);
+        digi_txq_finish(&txq);
+    }
 
     /* Back to receive, on the UI thread where RTTY is closed too: checked
      * and set here, a close in between could be undone (RTTY back on,
-     * decoding, with the app closed). */
+     * decoding, with the app closed). Not between transmissions that
+     * follow each other: the state stays TX. */
     scheduler_put_noargs(tx_done_ui);
-
-    free(hb.items);
-    free(tx_text);
-    tx_text = NULL;
-    tx_stop_req = false;
-    tx_on = false;
     return NULL;
 }
 
 /* --- Public API ------------------------------------------------------ */
 
 bool rtty_tx_send(const char *text) {
-    if (tx_on || !text || !*text) {
+    if (!text || !*text) {
         return false;
     }
     /* RTTY closed (a text window left open, say): nothing is sent */
@@ -360,63 +405,81 @@ bool rtty_tx_send(const char *text) {
         return false;
     }
 
-    tx_text = strdup(text);
-    if (!tx_text) {
-        return false;
-    }
+    switch (digi_txq_put(&txq, text)) {
+        case DIGI_TXQ_ADDED:
+            break;
 
-    tx_on       = true;
-    tx_stop_req = false;
-    rtty_set_state(RTTY_TX);    /* here, on the UI thread, not in the worker */
+        case DIGI_TXQ_STARTED:
+            rtty_set_state(RTTY_TX);    /* here, on the UI thread, not in the worker */
+            if (pthread_create(&tx_thread, NULL, tx_thread_fn, NULL) != 0) {
+                digi_txq_abort(&txq);
+                digi_txq_finish(&txq);
+                rtty_set_state(RTTY_RX);
+                return false;
+            }
+            pthread_detach(tx_thread);
+            break;
+
+        default:                        /* no room */
+            return false;
+    }
 
     /* Show it in the panel so sent and received text read as one QSO. */
     panel_add_tx_text(text);
-
-    if (pthread_create(&tx_thread, NULL, tx_thread_fn, NULL) != 0) {
-        free(tx_text);
-        tx_text = NULL;
-        tx_on   = false;
-        rtty_set_state(RTTY_RX);
-        return false;
-    }
-    pthread_detach(tx_thread);
+    digi_text_tx(text);
     return true;
 }
 
 void rtty_tx_stop(void) {
-    if (tx_on) {
-        tx_stop_req = true;
-    }
+    digi_txq_abort(&txq);
 }
 
 bool rtty_tx_is_on(void) {
-    return tx_on;
+    return digi_txq_running(&txq);
 }
 
 /* --- Simple text entry UI -------------------------------------------- */
 
+bool rtty_tx_input_begin(void) {
+    if (input_active) return false;        /* a window is already open */
+    input_active = true;
+    /* release the spectrum's grip on the input group */
+    main_screen_keys_enable(false);
+    return true;
+}
+
+void rtty_tx_input_end(void) {
+    input_active = false;
+    main_screen_keys_enable(true);
+}
+
+/* OK: the text joins the transmission if one is running, and only then
+ * is the hold let go, so the transmitter never drops in between. */
 static bool input_ok_cb(void) {
     const char *text = textarea_window_get();
+    bool        was_on = rtty_tx_is_on();
 
     if (text && *text) {
         if (rtty_tx_send(text)) {
-            msg_update_text_fmt("#FFFFFF RTTY TX...");
+            msg_update_text_fmt(was_on ? "#FFFFFF RTTY: added to the transmission"
+                                       : "#FFFFFF RTTY TX...");
         } else {
-            msg_update_text_fmt("#FF0000 RTTY TX busy");
+            msg_update_text_fmt("#FF0000 RTTY: the TX buffer is full");
         }
     }
-    input_active = false;
-    main_screen_keys_enable(true);
+    digi_txq_hold(&txq, false);
+    rtty_tx_input_end();
     return true;
 }
 
 static bool input_cancel_cb(void) {
-    input_active = false;
-    main_screen_keys_enable(true);
+    digi_txq_hold(&txq, false);
+    rtty_tx_input_end();
     return true;
 }
 
 void rtty_tx_close_input(void) {
+    digi_txq_hold(&txq, false);
     if (input_active) {
         textarea_window_close();
         input_active = false;
@@ -424,15 +487,11 @@ void rtty_tx_close_input(void) {
     }
 }
 
+/* Free text. Opened while transmitting, the transmitter idles (LTRS)
+ * until the text is sent or the window cancelled. */
 void rtty_tx_open_input(void) {
-    if (tx_on) {
-        msg_update_text_fmt("#FF0000 RTTY TX busy");
-        return;
-    }
-    if (input_active) return;              /* a window is already open */
-    input_active = true;
-    /* release the spectrum's grip on the input group, then open */
-    main_screen_keys_enable(false);
+    if (!rtty_tx_input_begin()) return;
+    digi_txq_hold(&txq, true);
     textarea_window_open_w_label(input_ok_cb, input_cancel_cb, "RTTY msg:");
     lv_textarea_set_max_length(textarea_window_text(), INPUT_MAX_LEN);
 }
@@ -454,6 +513,7 @@ static void seed_default_macros(void) {
     rtty_macro_add("Report", "<CALL> DE <MYCALL> UR RST <RST> <RST> QTH ");
     rtty_macro_add("73",     "TNX FER QSO 73 73 DE <MYCALL> SK");
     rtty_macro_add("RY",     "RYRYRYRYRYRYRYRY");
+    rtty_macro_add("Info",   "<CALL> DE <MYCALL> NAME <MYNAME> QTH <MYQTH> LOC <MYLOC> <CALL> DE <MYCALL> K");
 }
 
 void rtty_macros_load(void) {
@@ -543,49 +603,25 @@ void rtty_macro_delete(int idx) {
     rtty_macros_save();
 }
 
-/* Replace <CALL>/<MYCALL>/<RST> tokens with current values. */
-static void expand_macro(const char *in, char *out, size_t out_sz) {
-    const char *mycall = PARAM_T_GET(cfg.callsign());
-    const char *call = digi_qso_dx();
-    const char *rst  = digi_qso_rst_sent();
-
-    size_t o = 0;
-    for (const char *p = *in ? in : ""; *p && o + 1 < out_sz; ) {
-        if (strncmp(p, "<CALL>", 6) == 0) {
-            for (const char *s = call; *s && o + 1 < out_sz; s++) out[o++] = *s;
-            p += 6;
-        } else if (strncmp(p, "<MYCALL>", 8) == 0) {
-            for (const char *s = mycall ? mycall : ""; *s && o + 1 < out_sz; s++) out[o++] = *s;
-            p += 8;
-        } else if (strncmp(p, "<RSTR>", 6) == 0) {
-            for (const char *s = digi_qso_rst_rcvd(); *s && o + 1 < out_sz; s++) {
-                out[o++] = *s;
-            }
-            p += 6;
-        } else if (strncmp(p, "<RST>", 5) == 0) {
-            for (const char *s = rst; *s && o + 1 < out_sz; s++) out[o++] = *s;
-            p += 5;
-        } else {
-            out[o++] = *p++;
-        }
-    }
-    out[o] = '\0';
-}
-
 void rtty_macro_expand(int idx, char *out, size_t size) {
     rtty_macro_t *m = rtty_macro_get(idx);
 
     if (size == 0) return;
     out[0] = '\0';
-    if (m) expand_macro(m->text, out, size);
+    if (m) digi_qso_expand(m->text, out, size, NULL);
 }
 
-bool rtty_macro_send(int idx) {
+bool rtty_macro_send(int idx, const char **missing) {
     rtty_macro_t *m = rtty_macro_get(idx);
+    char          expanded[RTTY_MACRO_TEXT_LEN + 128];
+
+    if (missing) *missing = NULL;
     if (!m) return false;
 
-    char expanded[RTTY_MACRO_TEXT_LEN + 32];
-    expand_macro(m->text, expanded, sizeof(expanded));
+    /* the tokens are the same in every keyboard mode: digi_qso.c */
+    if (!digi_qso_expand(m->text, expanded, sizeof(expanded), missing)) {
+        return false;
+    }
     return rtty_tx_send(expanded);
 }
 
@@ -656,7 +692,6 @@ static bool macro_name_ok_cb(void) {
 
 /* Open editor: idx < 0 to create new, >= 0 to edit existing. */
 static void macro_edit_open(int idx) {
-    if (tx_on) { msg_update_text_fmt("#FF0000 RTTY TX busy"); return; }
     if (input_active) return;
 
     input_active = true;
@@ -698,15 +733,23 @@ void rtty_macros_edit_slot(int idx) {
 static bool dx_ok_cb(void) {
     const char *t = textarea_window_get();
     if (t && *t) digi_qso_set_dx(t);
-    input_active = false;
-    main_screen_keys_enable(true);
+    rtty_tx_input_end();
+    return true;
+}
+
+static bool dx_cancel_cb(void) {
+    rtty_tx_input_end();
     return true;
 }
 
 void rtty_qso_open_dx_input(void) {
-    if (input_active) return;
-    input_active = true;
-    main_screen_keys_enable(false);
-    textarea_window_open_w_label(dx_ok_cb, input_cancel_cb, "DX call:");
-    if (digi_qso_dx()[0]) textarea_window_set(digi_qso_dx());
+    static char buf[16];
+
+    if (!rtty_tx_input_begin()) return;
+    textarea_window_open_w_label(dx_ok_cb, dx_cancel_cb, "DX call:");
+    if (digi_qso_dx()[0]) {
+        /* a copy: the window may write through the pointer it gets */
+        snprintf(buf, sizeof(buf), "%s", digi_qso_dx());
+        textarea_window_set(buf);
+    }
 }

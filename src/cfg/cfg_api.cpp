@@ -175,6 +175,10 @@ static ParamFloat *cfg_ft8_output_gain_offset(void) { return param_ref<ParamFloa
 static ParamText *cfg_ft8_cq_modifier(void) { return param_ref<ParamText>(cfg_instance().p_ft8_cq_modifier); }
 static ParamText *cfg_qth(void) { return param_ref<ParamText>(cfg_instance().p_qth); }
 static ParamText *cfg_callsign(void) { return param_ref<ParamText>(cfg_instance().p_callsign); }
+static ParamText *cfg_op_name(void) { return param_ref<ParamText>(cfg_instance().p_op_name); }
+static ParamText *cfg_op_qth(void) { return param_ref<ParamText>(cfg_instance().p_op_qth); }
+static ParamInt *cfg_digi_text_save(void) { return param_ref<ParamInt>(cfg_instance().p_digi_text_save); }
+static ParamInt *cfg_digi_auto_log(void) { return param_ref<ParamInt>(cfg_instance().p_digi_auto_log); }
 static ParamInt *cfg_wifi_enabled(void) { return param_ref<ParamInt>(cfg_instance().p_wifi_enabled); }
 static ParamInt *cfg_long_gen(void) { return param_ref<ParamInt>(cfg_instance().p_long_gen); }
 static ParamInt *cfg_long_app(void) { return param_ref<ParamInt>(cfg_instance().p_long_app); }
@@ -255,6 +259,10 @@ extern "C" const cfg_refs_t cfg = {
 
     .qth = &cfg_qth,
     .callsign = &cfg_callsign,
+    .op_name = &cfg_op_name,
+    .op_qth = &cfg_op_qth,
+    .digi_text_save = &cfg_digi_text_save,
+    .digi_auto_log = &cfg_digi_auto_log,
 
     .ui = {
         .auto_level_enabled = &cfg_auto_level_enabled,

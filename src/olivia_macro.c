@@ -43,6 +43,7 @@ static void seed_default_macros(void) {
     olivia_macro_add("Report", "<CALL> de <MYCALL> - tnx for the call, ur rst <RST> <RST> - <CALL> de <MYCALL> kn");
     olivia_macro_add("TNX",    "<CALL> de <MYCALL> - tnx for rst <RSTR> - btu <CALL> de <MYCALL> kn");
     olivia_macro_add("73",     "<CALL> de <MYCALL> - tnx fer qso, 73 es gl - <CALL> de <MYCALL> sk");
+    olivia_macro_add("Info",   "<CALL> de <MYCALL> - name <MYNAME>, qth <MYQTH>, loc <MYLOC> - <CALL> de <MYCALL> kn");
 }
 
 void olivia_macros_load(void) {
@@ -125,63 +126,8 @@ void olivia_macro_delete(int idx) {
     macro_count--;
 }
 
-static bool put_str(char *out, size_t out_sz, size_t *o, const char *s) {
-    for (; s && *s; s++) {
-        if (*o + 1 >= out_sz) return false;
-        out[(*o)++] = *s;
-    }
-    return true;
-}
-
+/* The tokens are the same in every keyboard mode: digi_qso.c. */
 bool olivia_macro_expand(const char *in, char *out, size_t out_sz,
-                      const char **missing) {
-    static const struct {
-        const char *tok;
-        int         id;
-    } toks[] = {
-        /* <RSTR> before <RST>: the shorter token is a prefix of it */
-        {"<MYCALL>", 0}, {"<CALL>", 1}, {"<RSTR>", 3}, {"<RST>", 2},
-    };
-
-    size_t o = 0;
-    bool   ok = true;
-    char   mycall[PARAM_TEXT_MAX];
-
-    if (!out || out_sz == 0) return false;
-    param_t_get_into(cfg.callsign(), mycall, sizeof(mycall));
-    out[0] = '\0';
-    if (!in) return true;
-
-    for (const char *p = in; *p; ) {
-        bool matched = false;
-
-        for (size_t t = 0; t < sizeof(toks) / sizeof(toks[0]); t++) {
-            size_t len = strlen(toks[t].tok);
-            if (strncmp(p, toks[t].tok, len) != 0) continue;
-
-            const char *val = "";
-            switch (toks[t].id) {
-                case 0: val = mycall;                break;
-                case 1: val = digi_qso_dx();         break;
-                case 2: val = digi_qso_rst_sent();   break;
-                case 3: val = digi_qso_rst_rcvd();   break;
-            }
-            if (!val || !*val) {
-                if (ok && missing) *missing = toks[t].tok;
-                ok = false;
-            } else {
-                put_str(out, out_sz, &o, val);
-            }
-            p += len;
-            matched = true;
-            break;
-        }
-
-        if (!matched) {
-            if (o + 1 < out_sz) out[o++] = *p;
-            p++;
-        }
-    }
-    out[o] = '\0';
-    return ok;
+                         const char **missing) {
+    return digi_qso_expand(in, out, out_sz, missing);
 }
