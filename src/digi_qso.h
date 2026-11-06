@@ -18,7 +18,7 @@
  *    <RST>    RST we send              <RSTR>    RST we received
  *    <NAME>   the DX operator's name   <MYNAME>  our name
  *    <QTH>    the DX station's QTH     <MYQTH>   our town
- *                                      <MYLOC>   our locator (QTH Grid app)
+ *    <CNTR>   contest serial, "001"    <MYLOC>   our locator (QTH Grid app)
  */
 
 #pragma once
@@ -56,6 +56,26 @@ time_t      digi_qso_start(void);
  * log it twice. Cleared with a new DX call. */
 bool        digi_qso_logged(void);
 void        digi_qso_set_logged(bool logged);
+
+/*
+ * Contest serial numbers. <CNTR> sends the next number ("001"); the QSO
+ * keeps it if sent again, and logging the QSO moves on to the next, so a
+ * QSO that was not logged doesn't use a number up. The number received
+ * is picked up from the text after the report ("599 012"), or typed.
+ */
+int         digi_qso_serial_next(void);
+void        digi_qso_set_serial_next(int n);
+int         digi_qso_serial_sent(void);         /* 0: none in this QSO */
+const char *digi_qso_serial_rcvd(void);         /* "": none */
+void        digi_qso_set_serial_rcvd(const char *nr);
+
+/* The app sent this macro text (before expansion): notes a <CNTR>. */
+void        digi_qso_note_sent(const char *macro_text);
+
+/* A QSO with serial `sent` (0: none) was logged, or its 73 queued: the
+ * next serial follows it. Never goes back, so a QSO logged late (after
+ * its 73 went out) cannot hand its number out twice. */
+void        digi_qso_serial_used(int sent);
 
 /* RST as a number for the log: "579" -> 579, 599 when unreadable. */
 int         digi_qso_rst_num(const char *rst);

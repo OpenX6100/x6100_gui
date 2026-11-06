@@ -73,6 +73,8 @@ void digi_log_from_qso(digi_log_qso_t *q, digi_log_mode_t mode, const char *subm
     snprintf(q->qth, sizeof(q->qth), "%s", digi_qso_qth());
     snprintf(q->rst_sent, sizeof(q->rst_sent), "%s", digi_qso_rst_sent());
     snprintf(q->rst_rcvd, sizeof(q->rst_rcvd), "%s", digi_qso_rst_rcvd());
+    q->stx = digi_qso_serial_sent();
+    snprintf(q->srx, sizeof(q->srx), "%s", digi_qso_serial_rcvd());
     q->end = time(NULL);
     q->start = digi_qso_start();
     if (q->start > q->end) {
@@ -91,6 +93,10 @@ size_t digi_log_adif(char *out, size_t size, const digi_log_qso_t *q, const char
     adif_rec_mode(&r, db_mode(q->mode), q->mode == DIGI_LOG_OLIVIA ? q->submode : NULL);
     adif_rec_str(&r, "rst_sent", q->rst_sent);
     adif_rec_str(&r, "rst_rcvd", q->rst_rcvd);
+    if (q->stx > 0) {
+        adif_rec_int(&r, "stx", q->stx);
+    }
+    adif_rec_str(&r, "srx", q->srx);
     adif_rec_times(&r, q->start, q->end);
     adif_rec_freq(&r, q->freq_hz);
     adif_rec_str(&r, "name", q->name);
@@ -148,8 +154,14 @@ bool digi_log_qso(const digi_log_qso_t *q)
     if (strcmp(digi_qso_dx(), q->call) == 0) {
         digi_qso_set_logged(true);      /* still the QSO on screen */
     }
-    msg_update_text_fmt("#FFFFFF Logged %s  %s / %s%s%s", q->call, q->rst_sent, q->rst_rcvd,
-                        q->name[0] ? "  " : "", q->name);
+    digi_qso_serial_used(q->stx);
+    if (q->stx > 0 || q->srx[0]) {
+        msg_update_text_fmt("#FFFFFF Logged %s  %s %03d / %s %s", q->call, q->rst_sent, q->stx,
+                            q->rst_rcvd, q->srx[0] ? q->srx : "-");
+    } else {
+        msg_update_text_fmt("#FFFFFF Logged %s  %s / %s%s%s", q->call, q->rst_sent, q->rst_rcvd,
+                            q->name[0] ? "  " : "", q->name);
+    }
     return true;
 }
 

@@ -36,10 +36,17 @@ static bool    autograb = true;
 const char *digi_qso_dx(void) { return qso_dx; }
 
 /* A new correspondent: nothing of the last QSO carries over. */
+/* Contest serial numbers: the one we sent in this QSO (0: none yet) and
+ * the one received. The next to send is p_digi_serial. */
+static int     serial_sent;
+static char    serial_rcvd[8];
+
 static void new_qso(void) {
     qso_name[0] = '\0';
     name_from_op = false;
     qso_qth[0] = '\0';
+    serial_sent = 0;
+    serial_rcvd[0] = '\0';
     qso_logged = false;
     qso_start = time(NULL);
     rst_s = rst_r = 9;
@@ -111,6 +118,41 @@ int digi_qso_rst_num(const char *rst) {
     int v = rst ? atoi(rst) : 0;
 
     return (v >= 111 && v <= 599) ? v : 599;
+}
+
+/* ---- contest serial numbers ------------------------------------------- */
+
+int digi_qso_serial_next(void) { return param_i_get(cfg.digi_serial()); }
+
+void digi_qso_set_serial_next(int n) {
+    param_i_set(cfg.digi_serial(), n < 1 ? 1 : (n > 9999 ? 9999 : n));
+}
+
+int digi_qso_serial_sent(void) { return serial_sent; }
+
+const char *digi_qso_serial_rcvd(void) { return serial_rcvd; }
+
+void digi_qso_set_serial_rcvd(const char *nr) {
+    size_t o = 0;
+
+    for (const char *p = nr ? nr : ""; *p && o + 1 < sizeof(serial_rcvd); p++) {
+        if (*p >= '0' && *p <= '9') {
+            serial_rcvd[o++] = *p;
+        }
+    }
+    serial_rcvd[o] = '\0';
+}
+
+void digi_qso_note_sent(const char *macro_text) {
+    if (macro_text && strstr(macro_text, "<CNTR>") && serial_sent == 0) {
+        serial_sent = digi_qso_serial_next();   /* the same one if sent again */
+    }
+}
+
+void digi_qso_serial_used(int sent) {
+    if (sent > 0 && digi_qso_serial_next() <= sent) {
+        digi_qso_set_serial_next(sent + 1);
+    }
 }
 
 void digi_qso_clear(void) {
@@ -277,6 +319,23 @@ int digi_qso_recent_words(char (*out)[16], int max) {
     return n;
 }
 
+/* "599", "579", "5NN": a report as sent in RTTY and the keyboard modes */
+static bool looks_like_rst(const char *w) {
+    return strlen(w) == 3 && w[0] == '5' && (isdigit((unsigned char)w[1]) || w[1] == 'N') &&
+           (isdigit((unsigned char)w[2]) || w[2] == 'N');
+}
+
+/* "1", "012", "1234" */
+static bool looks_like_serial(const char *w) {
+    size_t len = strlen(w);
+
+    if (len < 1 || len > 4) return false;
+    for (size_t i = 0; i < len; i++) {
+        if (!isdigit((unsigned char)w[i])) return false;
+    }
+    return true;
+}
+
 /* ---- the decoder's text ------------------------------------------------- */
 
 typedef enum { WANT_NONE, WANT_NAME, WANT_NAME_OP, WANT_QTH } want_t;
@@ -308,6 +367,7 @@ void digi_qso_feed_rx(char c) {
     static want_t want = WANT_NONE;
     static char   qth[sizeof(qso_qth)];
     static int    qth_words = 0;
+    static char   rst[8];             /* the report just heard, "599" */
     bool          is_word;
 
     if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
@@ -330,6 +390,22 @@ void digi_qso_feed_rx(char c) {
 
     if (looks_like_word(word) && !is_filler(word) && !looks_like_call(word)) {
         recent_add(word);
+    }
+
+    /* A contest exchange, "599 012 012": the number after the report is
+     * the serial received, once per QSO. A repeated report is skipped. */
+    if (looks_like_rst(word)) {
+        if (rst[0] == '\0') {
+            snprintf(rst, sizeof(rst), "%s", word);
+        }
+        return;
+    }
+    if (rst[0]) {
+        if (autograb && serial_rcvd[0] == '\0' && looks_like_serial(word)) {
+            digi_qso_set_serial_rcvd(word);
+            msg_update_text_fmt("#FFFFFF Serial received: %s", serial_rcvd);
+        }
+        rst[0] = '\0';
     }
 
     if (strcmp(word, "DE") == 0) {
@@ -432,7 +508,7 @@ qth_done:
 
 /* ---- macro tokens ---------------------------------------------------- */
 
-enum { T_MYCALL, T_CALL, T_RSTR, T_RST, T_NAME, T_QTH, T_MYNAME, T_MYQTH, T_MYLOC };
+enum { T_MYCALL, T_CALL, T_RSTR, T_RST, T_NAME, T_QTH, T_MYNAME, T_MYQTH, T_MYLOC, T_CNTR };
 
 static const struct {
     const char *tok;
@@ -448,6 +524,7 @@ static const struct {
     {"<MYNAME>", T_MYNAME, "Your name is not set - Menu > QSO > My name"},
     {"<MYQTH>",  T_MYQTH,  "Your QTH is not set - Menu > QSO > My QTH"},
     {"<MYLOC>",  T_MYLOC,  "No locator - set it in the QTH Grid app"},
+    {"<CNTR>",   T_CNTR,   "No serial number"},
 };
 
 #define N_TOKS (sizeof(toks) / sizeof(toks[0]))
@@ -466,6 +543,7 @@ bool digi_qso_expand(const char *in, char *out, size_t out_sz, const char **miss
     char   myname[PARAM_TEXT_MAX];
     char   myqth[PARAM_TEXT_MAX];
     char   myloc[PARAM_TEXT_MAX];
+    char   cntr[8];
     size_t o = 0;
     bool   ok = true;
 
@@ -481,6 +559,8 @@ bool digi_qso_expand(const char *in, char *out, size_t out_sz, const char **miss
     param_t_get_into(cfg.op_name(), myname, sizeof(myname));
     param_t_get_into(cfg.op_qth(), myqth, sizeof(myqth));
     param_t_get_into(cfg.qth(), myloc, sizeof(myloc));
+    /* the number this QSO was given, or the next one: "001" as contests send it */
+    snprintf(cntr, sizeof(cntr), "%03d", serial_sent > 0 ? serial_sent : digi_qso_serial_next());
 
     for (const char *p = in; *p;) {
         bool matched = false;
@@ -502,6 +582,7 @@ bool digi_qso_expand(const char *in, char *out, size_t out_sz, const char **miss
                 case T_MYNAME: val = myname; break;
                 case T_MYQTH:  val = myqth; break;
                 case T_MYLOC:  val = myloc; break;
+                case T_CNTR:   val = cntr; break;
             }
             if (val[0] == '\0') {
                 if (ok && missing) {

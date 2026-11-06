@@ -13,6 +13,7 @@
  *                                    from the text by themselves, else
  *                                    a word received lately, or typed
  *    RST received (press: next)      for <RSTR> and the log
+ *    Serial <CNTR>..., Serial received...   contest serial numbers
  *    My name..., My QTH...           for <MYNAME>, <MYQTH>; kept
  *    Call, name, QTH from the text: on/off (digi_qso_feed_rx)
  *    Log when 73 goes out: on/off    kept

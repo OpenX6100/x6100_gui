@@ -242,6 +242,8 @@ typedef struct {
     ParamInt *(*rate)(void); /* p_rtty_rate */
     ParamInt *(*reverse)(void); /* p_rtty_reverse */
     ParamInt *(*squelch)(void); /* p_rtty_squelch */
+    ParamInt *(*usos)(void); /* p_rtty_usos */
+    ParamInt *(*afc)(void); /* p_rtty_afc */
 } cfg_rtty_refs_t;
 
 typedef struct {
@@ -451,6 +453,7 @@ typedef struct {
     ParamText *(*op_qth)(void); /* p_op_qth */
     ParamInt *(*digi_text_save)(void); /* p_digi_text_save */
     ParamInt *(*digi_auto_log)(void); /* p_digi_auto_log */
+    ParamInt *(*digi_serial)(void); /* p_digi_serial */
 
 
     cfg_ui_refs_t ui;

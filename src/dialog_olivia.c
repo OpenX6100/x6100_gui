@@ -1229,6 +1229,7 @@ static void macro_press(int idx)
     }
 
     if (send_text(out)) {
+        digi_qso_note_sent(m->text);                /* a <CNTR> keeps its number */
         digi_qso_menu_sent(&qso_menu, m->name);     /* a 73 logs the QSO */
         digi_next_sent(&next_state, m->name, digi_qso_dx());
         if (digi_next_is_cq(m->name)) {

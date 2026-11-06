@@ -34,3 +34,8 @@ float rtty_change_rate(int16_t df);
 uint16_t rtty_change_shift(int16_t df);
 uint16_t rtty_change_center(int16_t df);
 bool rtty_change_reverse(int16_t df);
+
+/* Find the signal within 300 Hz of the centre and centre on it, from
+ * the next 1.5 s of audio (rtty_afc.h). The result is on the message
+ * line. */
+void rtty_snap(void);

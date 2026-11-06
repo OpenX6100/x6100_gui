@@ -25,6 +25,7 @@
 #include "digi_text.h"
 #include "qso_log.h"
 #include "radio.h"
+#include "rtty.h"
 #include "rtty_sql.h"
 #include "rtty_tx.h"
 
@@ -290,7 +291,8 @@ static button_data_t btn_rtty_macros = {
  * message line as it turns.
  */
 enum {
-    MENU_DX, MENU_RST_SENT, MENU_RST_RCVD, MENU_AUTO_DX, MENU_QSO, MENU_NEW_QSO, MENU_COUNT
+    MENU_DX, MENU_RST_SENT, MENU_RST_RCVD, MENU_AUTO_DX, MENU_QSO, MENU_NEW_QSO, MENU_SNAP,
+    MENU_AFC, MENU_USOS, MENU_COUNT
 };
 
 static void menu_pick(int item, void *ctx)
@@ -317,6 +319,21 @@ static void menu_pick(int item, void *ctx)
 
         case MENU_QSO:
             digi_qso_menu_open(&qso_menu);
+            break;
+
+        case MENU_SNAP:
+            rtty_snap();
+            break;
+
+        case MENU_AFC:
+            param_i_set(cfg.rtty.afc(), !param_i_get(cfg.rtty.afc()));
+            msg_update_text_fmt("#FFFFFF RTTY AFC %s", param_i_get(cfg.rtty.afc()) ? "on" : "off");
+            break;
+
+        case MENU_USOS:
+            param_i_set(cfg.rtty.usos(), !param_i_get(cfg.rtty.usos()));
+            msg_update_text_fmt("#FFFFFF Unshift on space %s",
+                                param_i_get(cfg.rtty.usos()) ? "on" : "off");
             break;
 
         case MENU_NEW_QSO:
@@ -347,6 +364,10 @@ static void menu_press_cb(button_data_t *b)
              digi_qso_autograb() ? "on" : "off", digi_qso_autograb() ? "off" : "on");
     snprintf(text[MENU_QSO], 56, "QSO: log, name, QTH...");
     snprintf(text[MENU_NEW_QSO], 56, "New QSO (clear DX call, name, RST)");
+    snprintf(text[MENU_SNAP], 56, "Snap to the signal (also: hold Center)");
+    snprintf(text[MENU_AFC], 56, "AFC, keep the signal centred: %s",
+             param_i_get(cfg.rtty.afc()) ? "on" : "off");
+    snprintf(text[MENU_USOS], 56, "Unshift on space: %s", param_i_get(cfg.rtty.usos()) ? "on" : "off");
     for (int i = 0; i < MENU_COUNT; i++) {
         items[i] = text[i];
     }
@@ -358,6 +379,15 @@ static button_data_t btn_rtty_menu = {
     .label = "Menu",
     .press = menu_press_cb,
 };
+
+/* ---- page 1's Center, held ------------------------------------------- */
+
+void rtty_center_hold_cb(button_data_t *b)
+{
+    (void)b;
+    digi_menu_close();
+    rtty_snap();
+}
 
 /* ---- page ----------------------------------------------------------- */
 

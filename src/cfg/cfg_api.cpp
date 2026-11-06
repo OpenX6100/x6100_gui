@@ -172,6 +172,8 @@ static ParamInt *cfg_rtty_shift(void) { return param_ref<ParamInt>(cfg_instance(
 static ParamInt *cfg_rtty_rate(void) { return param_ref<ParamInt>(cfg_instance().p_rtty_rate); }
 static ParamInt *cfg_rtty_reverse(void) { return param_ref<ParamInt>(cfg_instance().p_rtty_reverse); }
 static ParamInt *cfg_rtty_squelch(void) { return param_ref<ParamInt>(cfg_instance().p_rtty_squelch); }
+static ParamInt *cfg_rtty_usos(void) { return param_ref<ParamInt>(cfg_instance().p_rtty_usos); }
+static ParamInt *cfg_rtty_afc(void) { return param_ref<ParamInt>(cfg_instance().p_rtty_afc); }
 static ParamInt *cfg_cw_encoder_period(void) { return param_ref<ParamInt>(cfg_instance().p_cw_encoder_period); }
 static ParamInt *cfg_ft8_tx_freq(void) { return param_ref<ParamInt>(cfg_instance().p_ft8_tx_freq); }
 static ParamFloat *cfg_ft8_output_gain_offset(void) { return param_ref<ParamFloat>(cfg_instance().p_ft8_output_gain_offset); }
@@ -182,6 +184,7 @@ static ParamText *cfg_op_name(void) { return param_ref<ParamText>(cfg_instance()
 static ParamText *cfg_op_qth(void) { return param_ref<ParamText>(cfg_instance().p_op_qth); }
 static ParamInt *cfg_digi_text_save(void) { return param_ref<ParamInt>(cfg_instance().p_digi_text_save); }
 static ParamInt *cfg_digi_auto_log(void) { return param_ref<ParamInt>(cfg_instance().p_digi_auto_log); }
+static ParamInt *cfg_digi_serial(void) { return param_ref<ParamInt>(cfg_instance().p_digi_serial); }
 static ParamInt *cfg_wifi_enabled(void) { return param_ref<ParamInt>(cfg_instance().p_wifi_enabled); }
 static ParamInt *cfg_long_gen(void) { return param_ref<ParamInt>(cfg_instance().p_long_gen); }
 static ParamInt *cfg_long_app(void) { return param_ref<ParamInt>(cfg_instance().p_long_app); }
@@ -267,6 +270,7 @@ extern "C" const cfg_refs_t cfg = {
     .op_qth = &cfg_op_qth,
     .digi_text_save = &cfg_digi_text_save,
     .digi_auto_log = &cfg_digi_auto_log,
+    .digi_serial = &cfg_digi_serial,
 
     .ui = {
         .auto_level_enabled = &cfg_auto_level_enabled,
@@ -440,6 +444,8 @@ extern "C" const cfg_refs_t cfg = {
         .rate = &cfg_rtty_rate,
         .reverse = &cfg_rtty_reverse,
         .squelch = &cfg_rtty_squelch,
+        .usos = &cfg_rtty_usos,
+        .afc = &cfg_rtty_afc,
     },
     .network = {
         .wifi_enabled = &cfg_wifi_enabled,

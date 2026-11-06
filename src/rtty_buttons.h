@@ -15,7 +15,8 @@
  *  threshold and the live level; press hands it the MFK knob. Macros
  *  and Menu open a list over the screen: MFK to choose, MFK press to
  *  pick, VOL press to close. Free text, new and edited macros are in
- *  Macros; the DX call, both reports and Auto DX in Menu.
+ *  Macros; the DX call, both reports, Auto DX, the QSO menu, Snap, AFC
+ *  and unshift on space in Menu. Holding Center on page 1 snaps too.
  */
 
 #pragma once
@@ -27,6 +28,9 @@ extern "C" {
 #endif
 
 extern buttons_page_t buttons_page_rtty_2;
+
+/* Page 1's Center, held: snap to the signal (rtty_snap()). */
+void rtty_center_hold_cb(button_data_t *b);
 
 /* Repaint Next after the macros or the QSO changed. */
 void rtty_refresh_macro_labels(void);
