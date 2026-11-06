@@ -19,6 +19,11 @@
  *  xara answers no call unless Settings > Auto answer is on and a phone
  *  app is connected on the VARA port (xara's --answer-gate, our patch:
  *  without it xara answers every call to our callsign from the start).
+ *  The VARA and KISS ports take local addresses only (--local-only, our
+ *  patch): the VARA protocol has no password, and a client from outside
+ *  the home network could otherwise make the radio connect and transmit.
+ *  Phones and laptops on the same WiFi connect as before; the screen
+ *  shows the address of what is connected.
  *
  *  Monitor runs xara-monitor instead of xara: it decodes VARA traffic
  *  between other stations and never transmits. Record has xara write
@@ -1306,7 +1311,7 @@ static void xara_start(void) {
     char *argv[40] = {
         "xara", "--call", call, "--hf", bw, "--audio", "pulse", "--capture", XARA_CAPTURE, "--playback", XARA_PLAYBACK,
         "--radio", "--ptt", ptt, "--drive-db", drive, "--addr", "0.0.0.0", "--port", port, "--kiss-port", kiss,
-        "--ui-port", ui, "--ui-addr", "127.0.0.1", "--answer-gate", "--ptt-lead-ms", lead,
+        "--ui-port", ui, "--ui-addr", "127.0.0.1", "--answer-gate", "--local-only", "--ptt-lead-ms", lead,
     };
     unsigned argc = 0;
     while (argv[argc]) argc++;
