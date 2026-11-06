@@ -434,6 +434,15 @@ static void make_spectrum_3d(SettingsPage &page) {
     lv_obj_add_event_cb(obj, settings_change_bg_opa_cb, LV_EVENT_DEFOCUSED, &page);
 
     page.row++;
+
+    /* the band bar under the 3D view: Auto takes the QTH Grid locator's region */
+    page.label("Band plan");
+    obj = page.dropdown_int(page.grid, *cfg.ui.band_plan_region(), " Auto (QTH) \n Region 1 \n Region 2 \n Region 3");
+    lv_obj_set_size(obj, SMALL_6, 56);
+    lv_obj_set_grid_cell(obj, LV_GRID_ALIGN_START, 1, 6, LV_GRID_ALIGN_CENTER, page.row, 1);
+    lv_obj_center(obj);
+
+    page.row++;
 }
 
 /***** WATERFALL CENTER LINE *****/

@@ -276,6 +276,8 @@ class SettingsManager {
     // of the screen below the indicators (2D keeps spectrum_height)
     Parameter<int32_t> p_spectrum_3d{"spectrum_3d", false, 0, 1,
         StorageType::GLOBAL, pending_writes_, &global_params_};
+    Parameter<int32_t> p_band_plan_region{"band_plan_region", 0, 0, 3,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // 0 Auto (QTH Grid), 1-3 ITU region
     Parameter<int32_t> p_spectrum_3d_size{"spectrum_3d_size", 50, 35, 55,
         StorageType::GLOBAL, pending_writes_, &global_params_};
 
