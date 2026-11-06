@@ -28,6 +28,7 @@
 #include "radio.h"
 #include "rtty.h"
 #include "rtty_buttons.h"
+#include "scheduler.h"
 #include "textarea_window.h"
 #include "tx_info.h"
 
@@ -135,6 +136,10 @@ static bool baudot_encode(const char *text, halfbits_t *hb, float baud) {
         }
         if (c == ' ') {
             if (!hb_push_code(hb, SPACE_CODE)) return false;
+            /* Receivers with unshift-on-space (MMTTY's and fldigi's
+             * default) go back to letters here: a figure after a space
+             * needs FIGS again, or "599 599" prints "599 TOO". */
+            figs = false;
             continue;
         }
 
@@ -158,6 +163,7 @@ static bool baudot_encode(const char *text, halfbits_t *hb, float baud) {
         }
         /* unsupported char -> space keeps timing readable */
         if (!hb_push_code(hb, SPACE_CODE)) return false;
+        figs = false;
     }
 
     size_t tail_hb = (size_t)(TAIL_MS / 1000.0f * baud * 2.0f + 0.5f);
@@ -175,7 +181,7 @@ static float get_correction(void) {
     if (tx_info_refresh(&msg_id, &alc, &pwr, NULL)) {
         float target_pwr = LV_MIN(param_f_get(cfg.pwr()), MAX_PWR_W);
         if (alc > 0.5f) {
-            correction = log10f(log10f(11.1f - alc)) * 20.0f - 0.38f;
+            correction = log10f(log10f(11.1f - fminf(alc, 10.0f))) * 20.0f - 0.38f;  /* > 10.1: NaN */
         } else if (target_pwr - pwr > 0.5f) {
             correction = log10f(target_pwr / (pwr + 0.01f)) * 10.0f;
         }
@@ -184,6 +190,15 @@ static float get_correction(void) {
 }
 
 /* --- Worker thread --------------------------------------------------- */
+
+/* UI thread: the transmission is over. Unless RTTY was closed meanwhile
+ * (RTTY_OFF, which must stay so), receive again. */
+static void tx_done_ui(void *arg) {
+    (void)arg;
+    if (rtty_get_state() == RTTY_TX) {
+        rtty_set_state(RTTY_RX);
+    }
+}
 
 static void *tx_thread_fn(void *arg) {
     (void)arg;
@@ -245,12 +260,14 @@ static void *tx_thread_fn(void *arg) {
     float play_gain_offset = audio_set_play_vol(gain_offset + 6.0f);
     gain_offset           -= play_gain_offset;
 
-    rtty_set_state(RTTY_TX);
     radio_set_modem(true);
 
     const double spb_samples = (double)fs / ((double)baud * 2.0); /* samples per half-bit */
     const size_t ramp_n      = (size_t)(RAMP_MS / 1000.0f * fs);
-    const size_t total_samples = (size_t)((double)hb.size * spb_samples);
+    /* Where the signal ends: the whole text, or a ramp's length after a
+     * Stop TX (cut at full level it was a key click). */
+    size_t       total_samples = (size_t)((double)hb.size * spb_samples);
+    bool         stopping      = false;
 
     int16_t chunk[CHUNK_SAMPLES];
     float   phase            = 0.0f;
@@ -261,7 +278,13 @@ static void *tx_thread_fn(void *arg) {
     size_t  hb_idx           = 0;
     size_t  next_edge        = 0;
 
-    while (sample_idx < total_samples && !tx_stop_req) {
+    while (sample_idx < total_samples) {
+        if (tx_stop_req && !stopping) {
+            stopping = true;
+            if (total_samples - sample_idx > ramp_n) {
+                total_samples = sample_idx + ramp_n;
+            }
+        }
         if (counter > 30) {
             gain_offset += get_correction() * 0.4f;
             if (gain_offset > GAIN_MAX_DB) gain_offset = GAIN_MAX_DB;
@@ -313,11 +336,10 @@ static void *tx_thread_fn(void *arg) {
     }
     audio_player_release(player);
 
-    /* Back to receive - unless the application was closed meanwhile,
-     * in which case the state is RTTY_OFF and must stay so. */
-    if (rtty_get_state() == RTTY_TX) {
-        rtty_set_state(RTTY_RX);
-    }
+    /* Back to receive, on the UI thread where RTTY is closed too: checked
+     * and set here, a close in between could be undone (RTTY back on,
+     * decoding, with the app closed). */
+    scheduler_put_noargs(tx_done_ui);
 
     free(hb.items);
     free(tx_text);
@@ -333,6 +355,10 @@ bool rtty_tx_send(const char *text) {
     if (tx_on || !text || !*text) {
         return false;
     }
+    /* RTTY closed (a text window left open, say): nothing is sent */
+    if (rtty_get_state() == RTTY_OFF) {
+        return false;
+    }
 
     tx_text = strdup(text);
     if (!tx_text) {
@@ -341,6 +367,7 @@ bool rtty_tx_send(const char *text) {
 
     tx_on       = true;
     tx_stop_req = false;
+    rtty_set_state(RTTY_TX);    /* here, on the UI thread, not in the worker */
 
     /* Show it in the panel so sent and received text read as one QSO. */
     panel_add_tx_text(text);
@@ -349,6 +376,7 @@ bool rtty_tx_send(const char *text) {
         free(tx_text);
         tx_text = NULL;
         tx_on   = false;
+        rtty_set_state(RTTY_RX);
         return false;
     }
     pthread_detach(tx_thread);
@@ -388,6 +416,14 @@ static bool input_cancel_cb(void) {
     return true;
 }
 
+void rtty_tx_close_input(void) {
+    if (input_active) {
+        textarea_window_close();
+        input_active = false;
+        main_screen_keys_enable(true);
+    }
+}
+
 void rtty_tx_open_input(void) {
     if (tx_on) {
         msg_update_text_fmt("#FF0000 RTTY TX busy");
@@ -410,7 +446,6 @@ void rtty_tx_open_input(void) {
 static rtty_macro_t macros[RTTY_MACRO_MAX];
 static int          macro_count = 0;
 static int          macro_edit_idx = -1;   /* which macro an edit targets  */
-static bool         editing_name = false;  /* two-step add/edit state       */
 static char         edit_name_buf[RTTY_MACRO_NAME_LEN];
 
 static void seed_default_macros(void) {
@@ -578,24 +613,29 @@ static void defer_open_text_window(void) {
 
 static bool macro_text_ok_cb(void) {
     const char *text = textarea_window_get();
-    if (macro_edit_idx >= 0) {
+    bool        empty = !text || !*text;
+
+    /* Saving an empty text deletes the macro, as in PSK31: otherwise a
+     * full set of slots could never be freed. */
+    if (macro_edit_idx >= 0 && empty) {
+        rtty_macro_delete(macro_edit_idx);
+    } else if (macro_edit_idx >= 0) {
         rtty_macro_set(macro_edit_idx, NULL, text);
-    } else {
-        rtty_macro_add(edit_name_buf, text ? text : "");
+    } else if (!empty) {
+        rtty_macro_add(edit_name_buf, text);
     }
     rtty_macros_save();
     rtty_refresh_macro_labels();      /* update button captions live */
+    msg_update_text_fmt("#FFFFFF %s", macro_edit_idx >= 0 && empty ? "Macro deleted" :
+                                       empty ? "Empty macro not saved" : "Macro saved");
     macro_edit_idx = -1;
-    editing_name = false;
     input_active = false;
     main_screen_keys_enable(true);
-    msg_update_text_fmt("#FFFFFF Macro saved");
     return true;   /* framework closes this window cleanly */
 }
 
 static bool macro_edit_cancel_cb(void) {
     macro_edit_idx = -1;
-    editing_name = false;
     input_active = false;
     main_screen_keys_enable(true);
     return true;
@@ -606,7 +646,6 @@ static bool macro_name_ok_cb(void) {
     strncpy(edit_name_buf, name ? name : "", sizeof(edit_name_buf) - 1);
     edit_name_buf[sizeof(edit_name_buf) - 1] = '\0';
 
-    editing_name = false;
     /* Return true so the framework closes THIS window; then a one-shot
      * timer opens the text window once this one is gone. Opening it here
      * inline would leave two textareas in the group and misdirect keys.
@@ -626,10 +665,8 @@ static void macro_edit_open(int idx) {
 
     if (idx >= 0) {
         /* editing existing: skip straight to text, keep the name */
-        editing_name = false;
         defer_open_text_window();
     } else {
-        editing_name = true;
         textarea_window_open_w_label(macro_name_ok_cb, macro_edit_cancel_cb, "Macro name:");
     }
 }

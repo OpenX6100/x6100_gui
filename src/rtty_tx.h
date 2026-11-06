@@ -26,6 +26,10 @@ extern "C" {
  * OK starts the transmission of the entered text. */
 void rtty_tx_open_input(void);
 
+/* RTTY closing: a text window of ours still open goes too (its OK would
+ * still transmit). */
+void rtty_tx_close_input(void);
+
 /* --- Macros ---------------------------------------------------------- */
 
 #define RTTY_MACRO_MAX      16

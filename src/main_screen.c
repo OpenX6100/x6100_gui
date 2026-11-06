@@ -173,6 +173,7 @@ static void apps_disable() {
     dialog_destruct();
 
     rtty_tx_stop();
+    rtty_tx_close_input();
     rtty_sql_timer_stop();
     rtty_set_state(RTTY_OFF);
     spectrum_refresh_overlay();     /* RTTY markers off */
