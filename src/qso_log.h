@@ -40,6 +40,10 @@ typedef enum {
     /* JTTY: 10, after FT2's 9 (#288). Above JS8's line, so the FT2 and
      * JTTY PRs merge in any order. ADIF MODE "JTTY", as WSJT-X writes it. */
     MODE_JTTY = 10,
+    /* The keyboard modes' Log QSO (digi_log.c). ADIF MODE PSK SUBMODE
+     * PSK31, and MODE OLIVIA. */
+    MODE_PSK31 = 11,
+    MODE_OLIVIA = 12,
     MODE_JS8 = 8,       /* stored in qso_log.db: never reused or changed */
     MODE_FT2 = 9,
 } qso_log_mode_t;

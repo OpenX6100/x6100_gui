@@ -71,6 +71,9 @@
 #include "digi_qso.h"           /* shared QSO state: DX call and RST */
 #include "digi_menu.h"
 #include "digi_next.h"
+#include "digi_log.h"
+#include "digi_qso_menu.h"
+#include "digi_text.h"
 
 #include <math.h>
 #include <pthread.h>
@@ -165,6 +168,8 @@
 #define SQL_CONF_PATH   "/mnt/psk.conf"
 #endif
 
+#define TEXT_PATH       "/mnt/psk31_text.txt"
+
 /* ------------------------------------------------------------------ */
 /* Standard PSK31 dial frequencies (USB)                               */
 
@@ -207,7 +212,7 @@ static int cur_band = -1;
 static void construct_cb(lv_obj_t *parent);
 static void destruct_cb(void);
 static void key_cb(lv_event_t *e);
-static void rotary_cb(int32_t diff);
+static void rotary_cb(int32_t diff, uint16_t dt);
 static void band_cb(lv_event_t *e);
 
 static lv_obj_t   *waterfall = NULL;
@@ -567,8 +572,9 @@ static void rx_char_ui(void *data)
     }
 
     txt_put(c, false);
+    digi_text_rx_char(c);
 
-    /* Catch the correspondent's call from "DE <call>". */
+    /* Catch the correspondent's call, name and QTH. */
     snprintf(before, sizeof(before), "%s", digi_qso_dx());
     digi_qso_feed_rx(c);
     if (strcmp(before, digi_qso_dx()) != 0)
@@ -589,6 +595,8 @@ static void tx_echo_cb(const char *text)
 
     if (!alive || !text)
         return;
+
+    digi_text_tx(text);
 
     /* The line breaks sent around every transmission are for the other
      * station's screen; here each transmission gets its own line. */
@@ -1036,6 +1044,7 @@ static void load_band(int8_t dir)
     /* Frequency first, then mode - the order cfg_digital_load() uses. */
     cparam_i_set(cfg.cur.fg_freq(), (int32_t)psk_bands[idx].dial_hz);
     cparam_i_set(cfg.cur.mode(), x6100_mode_usb_dig);
+    digi_text_new_header();
 
     msg_update_text_fmt("PSK31 %s  %u.%03u MHz", psk_bands[idx].label,
                         (unsigned)(psk_bands[idx].dial_hz / 1000000u),
@@ -1090,6 +1099,7 @@ static void dial_apply(void)
 
     f = (uint32_t)((int32_t)psk_bands[cur_band].dial_hz + dial_offset_hz);
     cparam_i_set(cfg.cur.fg_freq(), (int32_t)f);
+    digi_text_new_header();
 
     /* What the waterfall and the averages hold belongs to the old dial.
      * The received text stays: it is still the same conversation. */
@@ -1312,6 +1322,7 @@ static void focus_timer_cb(lv_timer_t *t)
 static void input_end(void)
 {
     input_active = false;
+    psk_tx_hold(false);         /* typed during TX: it may end now */
     if (!focus_timer) {
         focus_timer = lv_timer_create(focus_timer_cb, 100, NULL);
         lv_timer_set_repeat_count(focus_timer, 1);
@@ -1334,31 +1345,68 @@ static bool input_cancel_cb(void)
     return true;
 }
 
+/* ---- QSO menu and log ------------------------------------------------- */
+
+static lv_obj_t *qso_parent(void)
+{
+    return dialog.obj;
+}
+
+static bool qso_input_begin(void)
+{
+    if (!alive || input_active)
+        return false;
+    input_begin();
+    return true;
+}
+
+static void qso_changed(void)
+{
+    refresh_btn(&btn_next);
+    refresh_btn(&btn_dx);
+    refresh_btn(&btn_rst);
+}
+
+/* What went out: the dial plus the audio offset, USB. */
+static uint64_t qso_freq(void)
+{
+    return (uint64_t)cparam_i_get(cfg.cur.fg_freq()) + psk_tx_get_center();
+}
+
+static const digi_qso_menu_t qso_menu = {
+    .parent      = qso_parent,
+    .input_begin = qso_input_begin,
+    .input_end   = input_end,
+    .changed     = qso_changed,
+    .mode        = DIGI_LOG_PSK31,
+    .submode     = NULL,
+    .freq        = qso_freq,
+};
+
 /* ---- Transmit --------------------------------------------------------- */
 
+/* While a transmission runs the text joins its end (digi_txq.h). */
 static bool send_text(const char *text)
 {
     char buf[PSK_MACRO_TEXT_LEN + 400];
+    bool on = psk_tx_is_on();
 
     if (!text || !*text)
         return false;
 
-    if (psk_tx_is_on()) {
-        msg_update_text_fmt("#FF0000 PSK31 TX busy");
-        return false;
-    }
-
-    /* Start and finish on a fresh line on the other station's screen. */
-    snprintf(buf, sizeof(buf), "\n%s\n", text);
+    /* Start and finish on a fresh line on the other station's screen;
+     * text added to a transmission follows the line break it ends with. */
+    snprintf(buf, sizeof(buf), on ? "%s\n" : "\n%s\n", text);
 
     if (psk_tx_send(buf)) {
-        msg_update_text_fmt("#FFFFFF PSK31 TX...");
+        msg_update_text_fmt(on ? "#FFFFFF PSK31: added to the transmission"
+                               : "#FFFFFF PSK31 TX...");
         was_tx = true;
         refresh_btn(&btn_status);
         refresh_btn(&btn_next);
         return true;
     }
-    msg_update_text_fmt("#FF0000 PSK31 TX busy");
+    msg_update_text_fmt("#FF0000 PSK31: the TX buffer is full");
     return false;
 }
 
@@ -1372,18 +1420,17 @@ static bool free_text_ok_cb(void)
     return true;
 }
 
+/* Opened while transmitting, the transmitter idles until the text is
+ * sent or the window cancelled, so the text joins the transmission. */
 static void text_press_cb(button_data_t *b)
 {
     (void)b;
 
     if (input_active)
         return;
-    if (psk_tx_is_on()) {
-        msg_update_text_fmt("#FF0000 PSK31 TX busy");
-        return;
-    }
 
     input_begin();
+    psk_tx_hold(true);
     textarea_window_open_w_label(free_text_ok_cb, input_cancel_cb, "PSK31 msg:");
     /* The stock window takes 64 characters. */
     lv_textarea_set_max_length(textarea_window_text(), PSK_MACRO_TEXT_LEN - 1);
@@ -1434,14 +1481,12 @@ static void macro_press(int idx)
     }
 
     if (!psk_macro_expand(m->text, out, sizeof(out), &missing)) {
-        if (missing && strcmp(missing, "<CALL>") == 0)
-            msg_update_text_fmt("#FF0000 No DX call - set it under Menu");
-        else
-            msg_update_text_fmt("#FF0000 %s is empty", missing ? missing : "?");
+        msg_update_text_fmt("#FF0000 %s", digi_qso_missing_hint(missing));
         return;
     }
 
     if (send_text(out)) {
+        digi_qso_menu_sent(&qso_menu, m->name);     /* a 73 logs the QSO */
         digi_next_sent(&next_state, m->name, digi_qso_dx());
         if (digi_next_is_cq(m->name)) {
             digi_qso_clear();           /* a CQ starts a new QSO */
@@ -1666,7 +1711,7 @@ static void macros_press_cb(button_data_t *b)
 
 enum {
     MENU_SQL, MENU_SQL_ONOFF, MENU_DIAL, MENU_DIAL_BACK, MENU_BAND_UP, MENU_BAND_DOWN,
-    MENU_DX, MENU_RST, MENU_NEW_QSO, MENU_CLEAR, MENU_COUNT
+    MENU_DX, MENU_RST, MENU_QSO, MENU_NEW_QSO, MENU_CLEAR, MENU_COUNT
 };
 
 static void menu_pick(int item, void *ctx)
@@ -1681,6 +1726,7 @@ static void menu_pick(int item, void *ctx)
         case MENU_BAND_DOWN: band_down_cb(NULL); break;
         case MENU_DX:        dx_press_cb(&btn_dx); break;
         case MENU_RST:       rst_press_cb(&btn_rst); break;
+        case MENU_QSO:       digi_qso_menu_open(&qso_menu); break;
         case MENU_NEW_QSO:
             dx_hold_cb(&btn_dx);
             memset(&next_state, 0, sizeof(next_state));
@@ -1711,7 +1757,8 @@ static void menu_press_cb(button_data_t *b)
     snprintf(text[MENU_BAND_DOWN], 48, "Band down");
     snprintf(text[MENU_DX], 48, "DX call...  (%s)", (dx && *dx) ? dx : "none");
     snprintf(text[MENU_RST], 48, "RST sent: %s  (press: next)", digi_qso_rst_sent());
-    snprintf(text[MENU_NEW_QSO], 48, "New QSO (clear DX call, RST)");
+    snprintf(text[MENU_QSO], 48, "QSO: log, name, QTH...");
+    snprintf(text[MENU_NEW_QSO], 48, "New QSO (clear DX call, name, RST)");
     snprintf(text[MENU_CLEAR], 48, "Clear the text");
     for (int i = 0; i < MENU_COUNT; i++)
         items[i] = text[i];
@@ -1814,10 +1861,12 @@ static void reveal_waterfall(void)
 /* ---- Dialog callbacks ------------------------------------------------- */
 
 /* Main encoder: coarse, then snap onto the signal once it stops. */
-static void rotary_cb(int32_t diff)
+static void rotary_cb(int32_t diff, uint16_t dt)
 {
     int32_t mag = diff < 0 ? -diff : diff;
     int32_t step = ROTARY_HZ * (mag > 6 ? 6 : (mag > 3 ? 3 : 1));
+
+    (void)dt;
 
     set_center((int)psk_tx_get_center() + (int)(diff * step));
     quiet_since = lv_tick_get();
@@ -2010,6 +2059,9 @@ static void construct_cb(lv_obj_t *parent)
 
     /* Receiver and transmitter, routed to this window */
 
+    digi_log_open();
+    digi_text_open("PSK31", TEXT_PATH, qso_freq);
+
     psk_rx_init();
     psk_rx_set_text_cb(rx_text_cb);
     psk_rx_set_audio_tap(rx_tap);
@@ -2032,7 +2084,7 @@ static void del_timer(lv_timer_t **t)
 
 static void destruct_cb(void)
 {
-    digi_menu_close();
+    digi_qso_menu_close();
     alive = false;
     tx_frame = NULL;            /* deleted with the window */
 
@@ -2057,9 +2109,9 @@ static void destruct_cb(void)
     /*
      * Let a transmission finish its postamble before the frequency is
      * put back, or the radio would retune while keyed. The stop request
-     * ends the character being sent and then 16 bits, well under a
-     * second. If the sound server stalls past the wait, unkey here: the
-     * frequency and mode must never change while keyed.
+     * drops what is queued: the current character and 16 bits remain,
+     * well under a second. If the sound server stalls past the wait,
+     * unkey here: the frequency and mode must never change while keyed.
      */
     psk_tx_stop();
     for (int i = 0; i < 100 && psk_tx_is_on(); i++)
@@ -2072,6 +2124,9 @@ static void destruct_cb(void)
     psk_rx_set_text_cb(NULL);
     psk_rx_set_audio_tap(NULL);
     psk_tx_set_echo_cb(NULL);
+
+    digi_text_close();
+    digi_log_close();
 
     pthread_mutex_lock(&spec_mux);
     if (spec_ok)

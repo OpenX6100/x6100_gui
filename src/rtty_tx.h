@@ -23,12 +23,19 @@ extern "C" {
 #endif
 
 /* Open the on-screen text window (USB/BT keyboard friendly).
- * OK starts the transmission of the entered text. */
+ * OK sends the entered text; opened while transmitting, the text joins
+ * the transmission, which idles (LTRS) until OK or Cancel. */
 void rtty_tx_open_input(void);
 
 /* RTTY closing: a text window of ours still open goes too (its OK would
  * still transmit). */
 void rtty_tx_close_input(void);
+
+/* Keyboard focus around any other text window opened from the RTTY
+ * pages: begin gives the keyboard to the window (false when one is
+ * open already), end gives it back to the main screen. */
+bool rtty_tx_input_begin(void);
+void rtty_tx_input_end(void);
 
 /* --- Macros ---------------------------------------------------------- */
 
@@ -57,13 +64,14 @@ void rtty_macro_delete(int idx);
 /* What macro idx would send now, its tokens expanded (for a preview). */
 void rtty_macro_expand(int idx, char *out, size_t size);
 
-/* Expand <CALL>/<RST> tokens and transmit macro idx. */
-bool rtty_macro_send(int idx);
+/* Expand the tokens (digi_qso.h) and transmit macro idx. False with
+ * *missing set when a token has no value yet, false with *missing NULL
+ * when the transmit queue has no room. */
+bool rtty_macro_send(int idx, const char **missing);
 
 /* --- QSO state ------------------------------------------------------
- * Macros carry <CALL>, <RST> and <RSTR> tokens; the values they expand
- * to live in digi_qso.c (callsign typed in or picked up from the
- * received text, RST sent/received). */
+ * Macros carry the tokens listed in digi_qso.h (<CALL>, <RST>, <NAME>,
+ * <MYQTH>, ...); the values they expand to live in digi_qso.c. */
 
 /* Type the correspondent's callsign in. */
 void        rtty_qso_open_dx_input(void);
@@ -72,11 +80,13 @@ void        rtty_qso_open_dx_input(void);
 void rtty_macros_open_menu(void);
 void rtty_macros_edit_slot(int idx);
 
-/* Start transmitting a text asynchronously (worker thread).
- * Returns false if a transmission is already running. */
+/* Transmit a text asynchronously (worker thread). While a transmission
+ * runs the text is added to its end (digi_txq.h). Returns false when the
+ * queue has no room for it. */
 bool rtty_tx_send(const char *text);
 
-/* Request the running transmission to stop after the current block. */
+/* Request the running transmission to stop: what is still queued is
+ * dropped, the current character finishes, then the tail. */
 void rtty_tx_stop(void);
 
 /* True while the worker thread is transmitting. */

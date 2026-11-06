@@ -19,6 +19,7 @@
 
 #include "audio.h"
 #include "cfg/cfg_api.h"
+#include "digi_txq.h"
 #include "radio.h"
 #include "tx_info.h"
 
@@ -59,10 +60,8 @@ static const struct {
 };
 
 static pthread_t     tx_thread;
-static volatile bool tx_on = false;
-static volatile bool tx_stop_req = false;
+static digi_txq_t    txq = DIGI_TXQ_INITIALIZER;
 static volatile bool tx_quick_stop = false;   /* no closing blocks */
-static char         *tx_text = NULL;
 static uint16_t      center_hz = CENTER_DEFAULT;
 static olivia_mode_t cur_mode = OLIVIA_MODE_32_1000;
 static olivia_tx_echo_cb_t echo_cb = NULL;
@@ -75,7 +74,7 @@ olivia_mode_t olivia_tx_get_mode(void) {
 
 void olivia_tx_set_mode(olivia_mode_t mode) {
     if (mode < 0 || mode >= OLIVIA_MODE_COUNT) return;
-    if (tx_on) return;                  /* not while transmitting */
+    if (digi_txq_running(&txq)) return; /* not while transmitting */
     cur_mode = mode;
 }
 
@@ -128,17 +127,26 @@ static float get_correction(void) {
 
 /* --- Worker thread ---------------------------------------------------- */
 
-static void finish_text(void) {
-    free(tx_text);
-    tx_text = NULL;
-    tx_stop_req = false;
-    tx_quick_stop = false;
-    tx_on = false;
+/* Up to one block of characters from the queue, padded with zeros.
+ * Returns how many were taken. */
+static int take_chars(uint8_t *chars, int bits) {
+    int got = 0;
+
+    while (got < bits) {
+        int c = digi_txq_get(&txq);
+
+        if (c < 0) break;
+        if (c == '\n') c = '\r';      /* Olivia uses CR */
+        if (c > 127)  c = '?';          /* the alphabet is 7-bit */
+        chars[got++] = (uint8_t)c;
+    }
+    for (int i = got; i < bits; i++) chars[i] = 0;
+    return got;
 }
 
-static void *tx_thread_fn(void *arg) {
-    (void)arg;
-
+/* One transmission, until the queue closes. False when it could not
+ * start. */
+static bool transmit(void) {
     olivia_mod_t    mod;
     olivia_resamp_t res;
     int tones = mode_table[cur_mode].tones;
@@ -146,14 +154,12 @@ static void *tx_thread_fn(void *arg) {
 
     if (olivia_mod_init(&mod, tones, bw, OLIVIA_NOMINAL_RATE,
                         (double)center_hz - bw / 2.0) < 0) {
-        finish_text();
-        return NULL;
+        return false;
     }
 
     if (olivia_resamp_init(&res, OLIVIA_NOMINAL_RATE, AUDIO_PLAY_RATE) < 0) {
         olivia_mod_free(&mod);
-        finish_text();
-        return NULL;
+        return false;
     }
 
     int    bits = mod.cfg.bits;
@@ -170,8 +176,7 @@ static void *tx_thread_fn(void *arg) {
         free(res_buf);
         olivia_resamp_free(&res);
         olivia_mod_free(&mod);
-        finish_text();
-        return NULL;
+        return false;
     }
 
     /* A different seed for every transmission, so that a repeated macro
@@ -205,40 +210,53 @@ static void *tx_thread_fn(void *arg) {
     size_t  counter = 0;
     float   prev_gain_offset = gain_offset;
 
-    size_t text_len = strlen(tx_text);
-    size_t text_pos = 0;
-    int    lead = LEAD_BLOCKS;
-    int    tail = TAIL_BLOCKS;
-    bool   done = false;
+    /*
+     * Run-in, then the text a block at a time as it is taken from the
+     * queue - text added meanwhile joins this transmission - empty
+     * blocks while the operator is still typing, and the tail. Text that
+     * arrives during the tail carries on; a stop skips what is left of
+     * the run-in.
+     */
+    enum { PH_LEAD, PH_TEXT, PH_TAIL } ph = PH_LEAD;
+    int  lead = LEAD_BLOCKS;
+    int  tail = 0;
+    bool done = false;
+
+    tx_quick_stop = false;
 
     while (!done) {
         uint8_t chars[OLIVIA_MAX_BITS];
-        int i;
-        int in_n;
-        bool flush = false;
+        bool    flush = false;
+        int     in_n;
 
-        if (lead > 0 && !tx_stop_req) {
-            /* run-in: zeros only */
-            for (i = 0; i < bits; i++) chars[i] = 0;
-            lead--;
-        } else if (text_pos < text_len && !tx_stop_req) {
-            for (i = 0; i < bits; i++) {
-                if (text_pos < text_len) {
-                    unsigned char c = (unsigned char)tx_text[text_pos++];
-
-                    if (c == '\n') c = '\r';    /* Olivia uses CR */
-                    if (c > 127)   c = '?';     /* the alphabet is 7-bit */
-                    chars[i] = c;
-                } else {
-                    chars[i] = 0;               /* padding with zeros */
-                }
+        if (ph == PH_LEAD) {
+            memset(chars, 0, sizeof(chars));
+            if (--lead <= 0) ph = PH_TEXT;
+            if (digi_txq_pending(&txq) == 0 && !digi_txq_held(&txq)) {
+                ph = PH_TEXT;           /* stopped during the run-in */
+                continue;
             }
-        } else if (tail > 0 && !tx_quick_stop) {
-            for (i = 0; i < bits; i++) chars[i] = 0;
-            tail--;
-        } else {
-            flush = true;
-            done = true;
+        } else if (ph == PH_TEXT) {
+            if (take_chars(chars, bits) == 0 && !digi_txq_held(&txq)) {
+                ph = PH_TAIL;
+                tail = TAIL_BLOCKS;
+            }
+        }
+        if (ph == PH_TAIL) {
+            if (tx_quick_stop) {
+                tail = 0;               /* closing the window: no tail */
+            }
+            if (tail == 0) {
+                if (!digi_txq_close_if_empty(&txq)) {
+                    ph = PH_TEXT;       /* more came during the tail */
+                    continue;
+                }
+                flush = true;
+                done = true;
+            } else {
+                memset(chars, 0, sizeof(chars));
+                tail--;
+            }
         }
 
         if (flush) {
@@ -302,47 +320,64 @@ static void *tx_thread_fn(void *arg) {
     free(res_buf);
     olivia_resamp_free(&res);
     olivia_mod_free(&mod);
-    finish_text();
+    return true;
+}
+
+/* One transmission after another while text keeps coming in as one
+ * ends (digi_txq_finish); text that cannot go out is dropped. */
+static void *tx_thread_fn(void *arg) {
+    (void)arg;
+
+    while (transmit()) {
+        if (!digi_txq_finish(&txq)) return NULL;
+    }
+    digi_txq_abort(&txq);
+    digi_txq_finish(&txq);
     return NULL;
 }
 
 /* --- Public API ------------------------------------------------------- */
 
 bool olivia_tx_send(const char *text) {
-    if (tx_on || !text || !*text) return false;
+    if (!text || !*text) return false;
 
-    tx_text = strdup(text);
-    if (!tx_text) return false;
+    switch (digi_txq_put(&txq, text)) {
+        case DIGI_TXQ_ADDED:
+            break;
 
-    tx_on = true;
-    tx_stop_req = false;
-    tx_quick_stop = false;
+        case DIGI_TXQ_STARTED:
+            if (pthread_create(&tx_thread, NULL, tx_thread_fn, NULL) != 0) {
+                digi_txq_abort(&txq);
+                digi_txq_finish(&txq);
+                return false;
+            }
+            pthread_detach(tx_thread);
+            break;
 
+        default:                        /* no room */
+            return false;
+    }
     if (echo_cb) {
         echo_cb(text);
     }
-
-    if (pthread_create(&tx_thread, NULL, tx_thread_fn, NULL) != 0) {
-        free(tx_text);
-        tx_text = NULL;
-        tx_on = false;
-        return false;
-    }
-    pthread_detach(tx_thread);
     return true;
 }
 
 void olivia_tx_stop(void) {
-    if (tx_on) tx_stop_req = true;
+    digi_txq_abort(&txq);
 }
 
 void olivia_tx_stop_quick(void) {
-    if (tx_on) {
+    if (digi_txq_running(&txq)) {
         tx_quick_stop = true;
-        tx_stop_req = true;
+        digi_txq_abort(&txq);
     }
 }
 
 bool olivia_tx_is_on(void) {
-    return tx_on;
+    return digi_txq_running(&txq);
+}
+
+bool olivia_tx_hold(bool on) {
+    return digi_txq_hold(&txq, on);
 }

@@ -12,8 +12,9 @@
  *  Storage only - no user interface lives here. The editor is in the
  *  PSK31 window, which has to manage the keyboard focus itself.
  *
- *  The QSO values the tokens expand to (<CALL>, <RST>, <RSTR>) come from
- *  digi_qso.c, shared with any other keyboard mode window.
+ *  The tokens (<CALL>, <RST>, <RSTR>, <NAME>, <QTH>, <MYCALL>, <MYNAME>,
+ *  <MYQTH>, <MYLOC>) and the QSO values they expand to come from
+ *  digi_qso.c, shared with the other keyboard mode windows.
  */
 
 #pragma once
@@ -50,11 +51,11 @@ void               psk_macro_set(int idx, const char *name, const char *text);
 void               psk_macro_delete(int idx);
 
 /*
- * Replace <MYCALL>, <CALL>, <RST> (sent) and <RSTR> (received).
+ * Replace the tokens listed in digi_qso.h.
  *
  * Returns false and leaves *missing pointing at the token's name when
- * the text needs a value that is empty - in practice <CALL> before any
- * callsign has been caught or typed. Sending "UR RST 599" to nobody is
+ * the text needs a value that is empty - <CALL> before any callsign has
+ * been caught or typed, <NAME> before the DX name has been entered. Sending "UR RST 599" to nobody is
  * worse than not sending at all.
  */
 bool               psk_macro_expand(const char *in, char *out, size_t out_sz,

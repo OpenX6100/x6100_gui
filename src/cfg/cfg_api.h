@@ -440,6 +440,10 @@ typedef struct {
 
     ParamText *(*qth)(void); /* p_qth */
     ParamText *(*callsign)(void); /* p_callsign */
+    ParamText *(*op_name)(void); /* p_op_name */
+    ParamText *(*op_qth)(void); /* p_op_qth */
+    ParamInt *(*digi_text_save)(void); /* p_digi_text_save */
+    ParamInt *(*digi_auto_log)(void); /* p_digi_auto_log */
 
 
     cfg_ui_refs_t ui;
