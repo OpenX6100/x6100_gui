@@ -1,7 +1,6 @@
 /*
  * SPDX-License-Identifier: LGPL-2.1-or-later
  * Copyright (C) 2026 Hany El Imam - 1KO125 firmware for the Xiegu X6100
- * See NOTICE-1KO125.md.
  */
 /*
  * Xiegu X6100 - NAVTEX bulletins, included by dialog_navtex.c.
@@ -468,7 +467,7 @@ static void nav_list_draw_cb(lv_event_t *e)
     lv_coord_t W = box.x2 - box.x1 + 1, H = box.y2 - box.y1 + 1;
 
     if (nav_count == 0) {
-        const char *t = test_mode ? "Playing " NAVTEX_TEST_WAV "..." : "Listening - no NAVTEX bulletins yet";
+        const char *t = "Listening - no NAVTEX bulletins yet";
         nav_text(ctx, &sony_22, NB_C_SUB, box.x1 + (W - nav_text_w(&sony_22, t)) / 2, box.y1 + H / 2 - 14,
                  0, LV_TEXT_ALIGN_LEFT, t);
         return;
@@ -835,7 +834,7 @@ static void nav_poll(void)
     }
 }
 
-/* decoder replaced (test WAV, clear): close what was being received */
+/* decoder replaced (scan, clear): close what was being received */
 static void nav_flush(void)
 {
     nav_poll();

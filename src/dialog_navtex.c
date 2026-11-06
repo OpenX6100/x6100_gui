@@ -1,7 +1,6 @@
 /*
  * SPDX-License-Identifier: LGPL-2.1-or-later
  * Copyright (C) 2026 Hany El Imam - 1KO125 firmware for the Xiegu X6100
- * See NOTICE-1KO125.md.
  */
 /*
  * Xiegu X6100 Sitor-B/NavTex viewer
@@ -40,8 +39,6 @@
 #include <string.h>
 #include <unistd.h>
 
-#define NAVTEX_TEST_WAV "/mnt/navtex_test.wav"
-#define NAVTEX_TEST_CHUNK 256
 #define NAVTEX_SAMPLE_RATE 12000
 
 /* Live text history (what Save writes).  The panel shows only its newest
@@ -71,10 +68,6 @@ static void destruct_cb(void);
 static void audio_cb(size_t n, float *samples);
 static void close_cb(button_data_t *data);
 static void clear_cb(button_data_t *data);
-static void test_cb(button_data_t *data);
-static void *test_thread_cb(void *arg);
-static bool start_test(void);
-static void stop_test(void);
 static bool reset_decoder(void);
 static void ui_timer_cb(lv_timer_t *timer);
 static void char_cb(int c, void *userdata);
@@ -161,12 +154,6 @@ static char text_buf[NAVTEX_TEXT_MAX];
 static size_t text_len = 0;
 static bool follow_tail = true;
 
-static pthread_t test_thread;
-static bool test_thread_valid = false;
-static volatile bool test_stop_requested = false;
-static volatile bool test_finished = false;
-static volatile bool test_mode = false;
-
 static button_data_t btn_page = {
     .type = BTN_TEXT,
     .label = "(SITORB 1:2)",
@@ -195,12 +182,6 @@ static button_data_t btn_clear = {
     .type = BTN_TEXT,
     .label = "Clear",
     .press = clear_cb
-};
-
-static button_data_t btn_test = {
-    .type = BTN_TEXT,
-    .label = "Test",
-    .press = test_cb
 };
 
 static button_data_t btn_save_clear = {
@@ -513,191 +494,10 @@ static bool reset_decoder(void)
     return ok;
 }
 
-/* Locate the PCM data in a RIFF/WAVE file.  Do not assume a 44-byte
- * header: afconvert may place extra chunks before the audio data.
- */
-static bool open_test_wav(FILE **out, uint32_t *data_bytes)
-{
-    unsigned char hdr[12];
-    unsigned char chunk[8];
-    bool fmt_ok = false;
-    FILE *f = fopen(NAVTEX_TEST_WAV, "rb");
-
-    if (!f) {
-        fprintf(stderr, "NAVTEX TEST: cannot open %s\n", NAVTEX_TEST_WAV);
-        return false;
-    }
-
-    if (fread(hdr, 1, sizeof(hdr), f) != sizeof(hdr) ||
-        memcmp(hdr, "RIFF", 4) != 0 ||
-        memcmp(hdr + 8, "WAVE", 4) != 0) {
-        fprintf(stderr, "NAVTEX TEST: invalid WAV file\n");
-        fclose(f);
-        return false;
-    }
-
-    while (fread(chunk, 1, sizeof(chunk), f) == sizeof(chunk)) {
-        uint32_t size = read_le32(chunk + 4);
-
-        if (memcmp(chunk, "fmt ", 4) == 0) {
-            unsigned char fmt[16];
-
-            if (size < sizeof(fmt) ||
-                fread(fmt, 1, sizeof(fmt), f) != sizeof(fmt)) {
-                fprintf(stderr, "NAVTEX TEST: invalid fmt chunk\n");
-                fclose(f);
-                return false;
-            }
-
-            uint16_t format = read_le16(fmt);
-            uint16_t channels = read_le16(fmt + 2);
-            uint32_t rate = read_le32(fmt + 4);
-            uint16_t bits = read_le16(fmt + 14);
-
-            fmt_ok = (format == 1 && channels == 1 &&
-                      rate == NAVTEX_SAMPLE_RATE && bits == 16);
-
-            if (size > sizeof(fmt))
-                fseek(f, (long)(size - sizeof(fmt)), SEEK_CUR);
-        } else if (memcmp(chunk, "data", 4) == 0) {
-            if (!fmt_ok) {
-                fprintf(stderr,
-                        "NAVTEX TEST: WAV must be mono 12000 Hz PCM Int16\n");
-                fclose(f);
-                return false;
-            }
-
-            *out = f;
-            *data_bytes = size;
-            return true;
-        } else {
-            fseek(f, (long)size, SEEK_CUR);
-        }
-
-        if (size & 1)
-            fseek(f, 1, SEEK_CUR);
-    }
-
-    fprintf(stderr, "NAVTEX TEST: data chunk not found\n");
-    fclose(f);
-    return false;
-}
-
-static void *test_thread_cb(void *arg)
-{
-    (void)arg;
-
-    FILE *f = NULL;
-    uint32_t bytes_left = 0;
-    int16_t pcm[NAVTEX_TEST_CHUNK];
-    float samples[NAVTEX_TEST_CHUNK];
-
-    if (!open_test_wav(&f, &bytes_left)) {
-        test_finished = true;
-        return NULL;
-    }
-
-    fprintf(stderr, "NAVTEX TEST: playing %s\n", NAVTEX_TEST_WAV);
-
-    while (!test_stop_requested && bytes_left >= 2) {
-        size_t want = NAVTEX_TEST_CHUNK;
-        size_t available = bytes_left / 2;
-
-        if (want > available)
-            want = available;
-
-        size_t n = fread(pcm, sizeof(int16_t), want, f);
-        if (n == 0)
-            break;
-
-        bytes_left -= (uint32_t)(n * sizeof(int16_t));
-
-        for (size_t i = 0; i < n; ++i)
-            samples[i] = (float)pcm[i] / 32768.0f;
-
-        pthread_mutex_lock(&decoder_mutex);
-        if (decoder)
-            navtex_decoder_process(decoder, samples, (unsigned int)n);
-        pthread_mutex_unlock(&decoder_mutex);
-
-        /* Feed the decoder at the same speed as live 12000 Hz audio. */
-        usleep((useconds_t)((1000000ULL * n) / NAVTEX_SAMPLE_RATE));
-    }
-
-    fclose(f);
-
-    if (test_stop_requested)
-        fprintf(stderr, "NAVTEX TEST: stopped\n");
-    else
-        fprintf(stderr, "NAVTEX TEST: finished\n");
-
-    test_finished = true;
-    return NULL;
-}
-
-static bool start_test(void)
-{
-    if (test_mode)
-        return false;
-
-    /* From this point audio_cb stops feeding live RX audio. */
-    test_mode = true;
-    test_stop_requested = false;
-    test_finished = false;
-
-    if (!reset_decoder()) {
-        test_mode = false;
-        return false;
-    }
-
-    int rc = pthread_create(&test_thread, NULL, test_thread_cb, NULL);
-    if (rc != 0) {
-        fprintf(stderr, "NAVTEX TEST: pthread_create failed: %d\n", rc);
-        test_mode = false;
-        reset_decoder();
-        return false;
-    }
-
-    test_thread_valid = true;
-    return true;
-}
-
-static void stop_test(void)
-{
-    if (!test_mode && !test_thread_valid)
-        return;
-
-    test_stop_requested = true;
-
-    if (test_thread_valid) {
-        pthread_join(test_thread, NULL);
-        test_thread_valid = false;
-    }
-
-    test_finished = false;
-    test_mode = false;
-    reset_decoder();
-}
-
 
 static void ui_timer_cb(lv_timer_t *timer)
 {
     (void)timer;
-
-    /* The worker never touches LVGL or destroys the decoder.  When a test
-     * reaches EOF, finish the thread here in the UI context and return to
-     * a fresh decoder for normal live reception.
-     */
-    if (test_mode && test_finished) {
-        if (test_thread_valid) {
-            pthread_join(test_thread, NULL);
-            test_thread_valid = false;
-        }
-        test_finished = false;
-        test_mode = false;
-        reset_decoder();
-        nav_flush();        /* the end of the WAV closes its last bulletin */
-    }
 
     /* NAVTEX mode: characters -> bulletins (also while SITORB is shown) */
     nav_poll();
@@ -780,11 +580,6 @@ static void construct_cb(lv_obj_t *parent)
     parent_obj = parent;
     browser_open = false;
 
-    test_mode = false;
-    test_thread_valid = false;
-    test_stop_requested = false;
-    test_finished = false;
-
     reset_decoder();
 
     if (dsp_audio_sub_id == AUDIO_SUB_INVALID)
@@ -858,9 +653,6 @@ static void destruct_cb(void)
     if (dsp_audio_sub_id != AUDIO_SUB_INVALID)
         dsp_audio_set_active(dsp_audio_sub_id, false);
 
-    /* Stop the WAV worker before destroying decoder/UI objects. */
-    if (test_mode || test_thread_valid)
-        stop_test();
     if (ui_timer) {
         lv_timer_del(ui_timer);
         ui_timer = NULL;
@@ -890,10 +682,6 @@ static void destruct_cb(void)
 
 static void audio_cb(size_t n, float *samples)
 {
-    /* Never mix live receiver audio with the WAV test stream. */
-    if (test_mode)
-        return;
-
     scan_audio(samples, n);     /* the tones, while the scan measures */
 
     pthread_mutex_lock(&decoder_mutex);
@@ -991,20 +779,6 @@ static void clear_cb(button_data_t *data)
 
     if (scroll)
         lv_obj_scroll_to_y(scroll, 0, LV_ANIM_OFF);
-}
-
-
-static void test_cb(button_data_t *data)
-{
-    (void)data;
-
-    if (test_mode) {
-        stop_test();
-        return;
-    }
-
-    if (!start_test())
-        fprintf(stderr, "NAVTEX TEST: unable to start\n");
 }
 
 

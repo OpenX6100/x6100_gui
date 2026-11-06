@@ -1,7 +1,6 @@
 /*
  * SPDX-License-Identifier: LGPL-2.1-or-later
  * Copyright (C) 2026 Hany El Imam - 1KO125 firmware for the Xiegu X6100
- * See NOTICE-1KO125.md.
  */
 /*
  * Xiegu X6100 - NAVTEX / SITOR-B scan ("Scan"), included by dialog_navtex.c.
@@ -321,10 +320,6 @@ static bool scan_step(void)
 
 static void scan_start(void)
 {
-    if (test_mode) {
-        msg_update_text_fmt("Scan: not during the test");
-        return;
-    }
     scan_wait_load();
     scan_bins_init();
     if (!scan_resume)
