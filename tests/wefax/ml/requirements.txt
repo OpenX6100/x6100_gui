@@ -1,0 +1,4 @@
+numpy>=1.24
+Pillow>=10.0
+# torch: see README.md (Nvidia card: --index-url https://download.pytorch.org/whl/cu128)
+truststore

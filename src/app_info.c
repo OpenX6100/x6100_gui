@@ -54,11 +54,14 @@ static const char *const bodies[] = {
     "Align moves the picture sideways, Tilt straightens a slanted picture. The Tilt is "
     "remembered for each station; Auto Slant measures it on the phasing signal of each fax.\n\n"
     H("DENOISE")
-    "With Denoise ON (default) the receiver measures the white and the black tone separately "
-    "and follows the level of each one, so that when one tone fades white areas do not turn "
-    "into black streaks; each line is then lightly sharpened. Denoise OFF is the classic "
-    "receiver: try it if a picture with real shades of gray (a satellite picture) looks "
-    "wrong.\n\n"
+    "With Denoise Classic (default) the receiver measures the white and the black tone "
+    "separately and follows the level of each one, so that when one tone fades white areas "
+    "do not turn into black streaks; each line is then lightly sharpened. Denoise OFF is the "
+    "classic receiver: try it if a picture with real shades of gray (a satellite picture) "
+    "looks wrong. Denoise Post Proc. is Classic, and every saved fax is also cleaned by a "
+    "neural network trained on weather charts and saved next to it as NAME_pp.png; the fax "
+    "as received is always kept. It takes some time after the save; the radio can be used "
+    "meanwhile.\n\n"
     H("FILES")
     "Saved faxes: /mnt/wefax (PNG). Open them with Fax Browser.\n\n"
     H("MICROPHONE")

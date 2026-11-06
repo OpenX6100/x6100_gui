@@ -57,7 +57,7 @@ target_sources(${PROJECT_NAME} PUBLIC
     olivia_resamp.c olivia_tx.c olivia_app.c olivia_macro.c
     psk_spec.c digi_qso.c digi_menu.c digi_next.c
     # WeFax
-    dialog_wefax.c wefax/decoder.c wefax/stations.c
+    dialog_wefax.c wefax/decoder.c wefax/stations.c wefax/wefax_pp.c
     # SSTV
     dialog_sstv.c sstv_resources.c sstv/decoder.c sstv/encoder.c sstv/autodetect.c sstv/vis.c sstv/linesync.c sstv/preview.c sstv/sstv_denoise.c sstv/sstv_dnn.c sstv/syncgrid.c
 )
