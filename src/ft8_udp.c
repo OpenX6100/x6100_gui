@@ -117,6 +117,11 @@ static void qb_str(qbuf_t *b, const char *s) {
 }
 
 /* QTime: milliseconds since midnight (UTC) */
+/* QTime: ms since UTC midnight of `utc_ms` (ms since the epoch). */
+static void qb_time_utc(qbuf_t *b, int64_t utc_ms) {
+    qb_u32(b, (uint32_t)(utc_ms % 86400000LL));
+}
+
 static void qb_time_now_utc(qbuf_t *b) {
     struct timeval tv;
     gettimeofday(&tv, NULL);
@@ -406,12 +411,21 @@ void ft8_udp_send_status(uint64_t dial_freq_hz, const char *mode,
 
 void ft8_udp_send_decode(bool is_new, const char *mode, const char *message,
                          int32_t snr, float delta_t_sec, uint32_t df_hz) {
+    ft8_udp_send_decode_at(0, is_new, mode, message, snr, delta_t_sec, df_hz);
+}
+
+void ft8_udp_send_decode_at(int64_t slot_utc_ms, bool is_new, const char *mode, const char *message,
+                            int32_t snr, float delta_t_sec, uint32_t df_hz) {
     if (!emitters_on() || !message || !*message) return;
 
     qbuf_t b;
     qb_header(&b, MSG_DECODE);
     qb_bool(&b, is_new);
-    qb_time_now_utc(&b);
+    if (slot_utc_ms > 0) {
+        qb_time_utc(&b, slot_utc_ms);
+    } else {
+        qb_time_now_utc(&b);
+    }
     qb_i32(&b, snr);
     qb_double(&b, (double)delta_t_sec);
     qb_u32(&b, df_hz);

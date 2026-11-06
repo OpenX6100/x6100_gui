@@ -23,6 +23,7 @@
 #include <vector>
 
 #include <ft8lib/constants.h>
+#include "../ft8/ft2.h"
 
 #include "../common/math.h"
 #include "../settings_types.h"
@@ -141,7 +142,7 @@ class SettingsManager {
     // FT8
     Parameter<int32_t> p_ft8_show_all{"ft8_show_all", true, 0, 1,
         StorageType::GLOBAL, pending_writes_, &global_params_};
-    Parameter<int32_t> p_ft8_protocol{"ft8_protocol", FTX_PROTOCOL_FT8, 0, 2 /* FT2, ft8/ft2.h */,
+    Parameter<int32_t> p_ft8_protocol{"ft8_protocol", FTX_PROTOCOL_FT8, 0, FTX_PROTOCOL_FT2,
         StorageType::GLOBAL, pending_writes_, &global_params_};
     Parameter<int32_t> p_ft8_auto{"ft8_auto", true, 0, 1,
         StorageType::GLOBAL, pending_writes_, &global_params_};

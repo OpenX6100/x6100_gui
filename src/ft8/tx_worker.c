@@ -21,6 +21,7 @@
 
 #include "../cfg/cfg_api.h"
 #include "worker.h"
+#include "ft2.h"
 
 /* FT8 audio tone offset inside the radio passband. */
 #define SIGNAL_FREQ_HZ   1325
@@ -64,12 +65,11 @@ static float get_correction(void) {
  * one the slots are counted by: NTP or GPS). */
 static float sec_into_slot(void) {
     struct timespec now;
-    float slot = (param_i_get(cfg.ft8.protocol()) == FTX_PROTOCOL_FT4) ? FT4_SLOT_TIME : FT8_SLOT_TIME;
-    float sec;
+    float           sec;
 
     clock_gettime(CLOCK_REALTIME, &now);
-    sec = (float)(now.tv_sec % 60) + now.tv_nsec / 1.0e9f;
-    return fmodf(sec, slot);
+    ftx_slot_pos(param_i_get(cfg.ft8.protocol()), now, &sec);  /* FT2: 3.75 s slots */
+    return sec;
 }
 
 /* Keyed: wait for TX_START_SEC, or return how many samples are already

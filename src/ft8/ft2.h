@@ -20,6 +20,10 @@
 
 #include <ft8lib/constants.h>
 
+#include <math.h>
+#include <stdbool.h>
+#include <time.h>
+
 #define FTX_PROTOCOL_FT2   ((ftx_protocol_t)2)
 #define FT2_SYMBOL_PERIOD  (0.024f)
 #define FT2_SLOT_TIME      (3.75f)
@@ -32,4 +36,14 @@ static inline float ftx_slot_time(int proto) {
     if (proto == (int)FTX_PROTOCOL_FT2) return FT2_SLOT_TIME;
     if (proto == (int)FTX_PROTOCOL_FT4) return FT4_SLOT_TIME;
     return FT8_SLOT_TIME;
+}
+
+/* Where `now` (CLOCK_REALTIME) is in the slots of `proto`: seconds into the
+ * current one, and whether it is an odd one. The one place slots are
+ * counted (the window, the receiver and the transmitter). */
+static inline bool ftx_slot_pos(int proto, struct timespec now, float *sec_into) {
+    float sec  = (float)(now.tv_sec % 60) + now.tv_nsec / 1.0e9f;
+    float slot = ftx_slot_time(proto);
+    *sec_into  = fmodf(sec, slot);
+    return ((int)(sec / slot) % 2) != 0;
 }
