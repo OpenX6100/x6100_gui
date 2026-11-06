@@ -55,7 +55,7 @@ target_sources(${PROJECT_NAME} PUBLIC
     # Olivia
     dialog_olivia.c olivia.c olivia_mod.c olivia_demod.c olivia_rx.c
     olivia_resamp.c olivia_tx.c olivia_app.c olivia_macro.c
-    psk_spec.c digi_qso.c digi_menu.c digi_next.c
+    psk_spec.c digi_qso.c digi_menu.c digi_next.c itu_region.c
     # WeFax
     dialog_wefax.c wefax/decoder.c wefax/stations.c wefax/wefax_pp.c
     # SSTV
