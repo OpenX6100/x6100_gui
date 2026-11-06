@@ -111,6 +111,12 @@ static int s_cond_dirty = 1;
 #define SPEC3D_MAX_LINES 96
 #define SPEC3D_PERIOD_US 100000
 
+/* The 3D view colours and scales every trace in the stack with one level pair,
+ * so it follows the auto levels slowly: a lightning crash lifts the noise
+ * floor for a moment, and following that at once would recolour the whole
+ * stack. Slow, only the crash itself shows hot. */
+#define SPEC3D_LEVEL_TAU_US 4000000
+
 typedef struct {
     float    val[SPECTRUM_NFFT];
     uint32_t base_freq;
@@ -122,6 +128,10 @@ static int           s3d_count;
 static uint64_t      s3d_last_push_us;
 static bool          s3d_on;
 static lv_obj_t     *s3d_label;
+static float         s3d_min, s3d_max;
+static bool          s3d_lvl_ok;  /* false: take the levels as they are */
+static bool          s3d_lvl_tx;
+static uint64_t      s3d_lvl_us;
 
 static void on_zoom_changed(Subject *subj, void *user_data);
 static void update_filters(Subject *subj, void *user_data);
@@ -534,7 +544,8 @@ void spectrum_clear() {
         spectrum_peak[i].val  = S_MIN;
         spectrum_peak[i].time = now;
     }
-    s3d_count = 0;
+    s3d_count  = 0;
+    s3d_lvl_ok = false;
 }
 
 static void on_spectrum_3d_changed(Subject *subj, void *user_data) {
@@ -545,7 +556,8 @@ static void on_spectrum_3d_changed(Subject *subj, void *user_data) {
             s3d_on = false;
         }
     }
-    s3d_count = 0;
+    s3d_count  = 0;
+    s3d_lvl_ok = false;
     lv_label_set_text(s3d_label, s3d_on ? "3D" : "2D");
     __atomic_store_n(&s_cond_dirty, 1, __ATOMIC_RELEASE);
 }
@@ -971,11 +983,32 @@ static void spec3d_trace(uint32_t *buf, int stride, int16_t *horizon, const floa
     }
 }
 
+/* Levels for the 3D view: spectrum_min/max smoothed over SPEC3D_LEVEL_TAU_US.
+ * Taken as they are after a clear (band, mode, zoom) and when TX starts or
+ * ends, where the change is real and waiting for it would only look slow. */
+static void spec3d_levels(float *min, float *max) {
+    uint64_t now = spec3d_now_us();
+
+    if (!s3d_lvl_ok || spectrum_tx != s3d_lvl_tx) {
+        s3d_min    = spectrum_min;
+        s3d_max    = spectrum_max;
+        s3d_lvl_ok = true;
+        s3d_lvl_tx = spectrum_tx;
+    } else {
+        float a = 1.0f - expf(-(float)(now - s3d_lvl_us) / SPEC3D_LEVEL_TAU_US);
+        s3d_min += (spectrum_min - s3d_min) * a;
+        s3d_max += (spectrum_max - s3d_max) * a;
+    }
+    s3d_lvl_us = now;
+    *min       = s3d_min;
+    *max       = s3d_max;
+}
+
 static void spectrum_render_3d(uint32_t *buf, int stride) {
     static int16_t horizon[SPECTRUM_NFFT];
 
-    float min = spectrum_min;
-    float max = spectrum_max;
+    float min, max;
+    spec3d_levels(&min, &max);
     if (max <= min) {
         max = min + 1.0f;
     }
