@@ -41,8 +41,6 @@ uint8_t rtty_change_squelch(int16_t df);
 
 /* Live readings for the SQL button and the MFK message. */
 float   rtty_get_level_db(void);    /* smoothed absolute level          */
-float   rtty_get_noise_db(void);    /* tracked floor, for display only  */
-float   rtty_get_snr_db(void);      /* level above the floor            */
 
 #ifdef __cplusplus
 }

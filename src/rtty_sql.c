@@ -110,12 +110,3 @@ float rtty_get_level_db(void)
     return sql_level_db;
 }
 
-float rtty_get_noise_db(void)
-{
-    return noise_floor_db;
-}
-
-float rtty_get_snr_db(void)
-{
-    return sql_snr_db;
-}

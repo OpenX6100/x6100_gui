@@ -6,6 +6,7 @@
  *  Copyright (c) 2022-2023 Belousov Oleg aka R1CBU
  */
 #include "rtty.h"
+#include "scheduler.h"
 #include "rtty_sql.h"
 #include "digi_qso.h"
 
@@ -191,6 +192,11 @@ static bool is_mark() {
     return rx_symbol[SYMBOL_LEN / 2];
 }
 
+/* UI thread: a decoded character for the DX call pick-up. */
+static void feed_rx_ui(void *arg) {
+    digi_qso_feed_rx(*(char *)arg);
+}
+
 static void add_symbol(float pwr) {
     for (uint8_t i = 1; i < SYMBOL_LEN; i++) {
         rx_symbol[i - 1]     = rx_symbol[i];
@@ -270,7 +276,10 @@ static void add_symbol(float pwr) {
                         char str[2] = {c, 0};
 
                         panel_add_text(str);
-                        digi_qso_feed_rx(c);
+                        /* The DX call is read and set on the UI thread:
+                         * written here, mid-read, a torn call could be
+                         * sent. */
+                        scheduler_put(feed_rx_ui, &c, sizeof(c));
                     }
                 }
                 rx_state = RX_STATE_IDLE;

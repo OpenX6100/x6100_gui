@@ -314,8 +314,8 @@ class SettingsManager {
         StorageType::GLOBAL, pending_writes_, {}, &global_params_};
     Parameter<int32_t> p_rtty_reverse{"rtty_reverse", false, 0, 1,
         StorageType::GLOBAL, pending_writes_, &global_params_};
-    Parameter<int32_t> p_rtty_squelch{"rtty_squelch", 8, 0, 90,
-        StorageType::GLOBAL, pending_writes_, &global_params_};
+    Parameter<int32_t> p_rtty_squelch{"rtty_squelch", 0, 0, 90,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // 0: open, the receiver as before the squelch
 
     // CW beacon period (legacy cw field; CW group lives below)
     Parameter<int32_t> p_cw_encoder_period{"cw_encoder_period", 10, {},
