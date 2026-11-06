@@ -8,6 +8,10 @@
 
 #include "map_scene.h"
 
+#include "cfg/cfg_api.h"
+#include "events.h"
+#include "keyboard.h"
+#include "msg.h"
 #include "styles.h"
 
 #include <math.h>
@@ -28,6 +32,13 @@ static uint32_t hash_str(uint32_t h, const char *s) {
     return map_widget_hash(h, s ? s : "", s ? strlen(s) : 0);
 }
 
+bool map_scene_km(const char *my_call, const char *my_grid, const char *call, const char *grid, double *km) {
+    js8_map_place_t home, p;
+    if (!js8_map_place(my_call, my_grid, &home) || !js8_map_place(call, grid, &p)) return false;
+    *km = js8_map_distance_km(home.lat, home.lon, p.lat, p.lon);
+    return true;
+}
+
 void map_scene_distance(const map_scene_t *sc, int i, char *buf, size_t size) {
     js8_map_place_t home;
     buf[0] = '\0';
@@ -36,13 +47,13 @@ void map_scene_distance(const map_scene_t *sc, int i, char *buf, size_t size) {
     snprintf(buf, size, "  %.0f %s", sc->miles ? km * 0.621371 : km, sc->miles ? "mi" : "km");
 }
 
-/* The status line, top right, on a dark box. */
-static void draw_status(const char *text) {
+/* A status line, top right (`row` 0, 1 under it), on a dark box. */
+static void draw_status(const char *text, int row) {
     if (!text || !text[0]) return;
     const map_widget_geom_t *g = map_widget_geom();
     lv_point_t               sz;
     lv_txt_get_size(&sz, text, &sony_18, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-    int x = g->w - 12 - sz.x, y = 6;
+    int x = g->w - 12 - sz.x, y = 6 + row * (sz.y + 6);
     map_widget_rect(x - 4, y - 2, sz.x + 8, sz.y + 4, 0x000000, LV_OPA_50, 0, 0, 3);
     map_widget_take(x - 4, y - 2, g->w, y + sz.y + 2);
     map_widget_text(x, y, sz.x + 4, &sony_18, 0xFFFFFF, text);
@@ -92,6 +103,7 @@ void map_scene_draw(const map_scene_t *sc, bool force) {
         sig                          = hash_str(sig, s->call);
         sig                          = hash_str(sig, s->grid);
         sig                          = hash_str(sig, s->tag);
+        sig                          = hash_str(sig, s->extra);
         sig                          = map_widget_hash(sig, &s->color, sizeof(s->color));
         sig                          = map_widget_hash(sig, &s->opa, sizeof(s->opa));
         sig                          = map_widget_hash(sig, &s->snr, sizeof(s->snr));
@@ -113,6 +125,7 @@ void map_scene_draw(const map_scene_t *sc, bool force) {
     sig = hash_str(sig, sc->my_call);
     sig = hash_str(sig, sc->my_grid);
     sig = hash_str(sig, sc->status);
+    sig = hash_str(sig, sc->status2);
     sig = hash_str(sig, sc->hint);
     sig = map_widget_hash(sig, &sc->mode, sizeof(sc->mode));
     if (!force && !base_new && sig == scene_sig) return;
@@ -129,8 +142,32 @@ void map_scene_draw(const map_scene_t *sc, bool force) {
     else snprintf(right, sizeof(right), "%s%s", map_widget_continent_name(my_cont),
                   sc->mode == JS8_MAP_CLOSE ? " (close-in)" : "");
     map_widget_legend(sc->legend, sc->nlegend, right, legend_y, MAP_SCENE_LEGEND_H);
-    draw_hint(sc->hint, legend_y - MAP_SCENE_HINT_H);
-    draw_status(sc->status);
+    /* The selected station's details on the hint line, always readable
+     * there (beside it, a long label covers its neighbours), then the
+     * app's hint. */
+    char hint_line[160];
+    int  len = 0;
+    hint_line[0]  = '\0';
+    if (sc->sel >= 0 && sc->sel < (int)n && scene_shown[sc->sel]) {
+        int                        i = sc->sel;
+        const map_scene_station_t *s = &sc->st[i];
+        len = snprintf(hint_line, sizeof(hint_line), "%s  %s", s->call, scene_pl[i].where);
+        if (s->has_snr && len < (int)sizeof(hint_line)) len += snprintf(hint_line + len, sizeof(hint_line) - len, "  %+d dB", s->snr);
+        if (s->extra[0] && len < (int)sizeof(hint_line)) len += snprintf(hint_line + len, sizeof(hint_line) - len, "  %s", s->extra);
+        if (have_home && len < (int)sizeof(hint_line)) {
+            char dist[24];
+            map_scene_distance(sc, i, dist, sizeof(dist));
+            len += snprintf(hint_line + len, sizeof(hint_line) - len, "%s", dist);
+            if (len < (int)sizeof(hint_line))
+                len += snprintf(hint_line + len, sizeof(hint_line) - len, "  az %.0f",
+                                js8_map_bearing_deg(home.lat, home.lon, scene_pl[i].lat, scene_pl[i].lon));
+        }
+    }
+    if (sc->hint && sc->hint[0] && len < (int)sizeof(hint_line))
+        snprintf(hint_line + len, sizeof(hint_line) - len, "%s%s", len ? "     " : "", sc->hint);
+    draw_hint(hint_line, legend_y - MAP_SCENE_HINT_H);
+    draw_status(sc->status, 0);
+    draw_status(sc->status2, 1);
 
     lv_draw_line_dsc_t line;
     lv_draw_line_dsc_init(&line);
@@ -213,24 +250,17 @@ void map_scene_draw(const map_scene_t *sc, bool force) {
         low_tag[i] = map_widget_badge_box_at(scene_cx[i], scene_cy[i], gside, low_text[i], true, &low_box[i]);
     }
 
-    /* The selected station: red box, its details. */
+    /* The selected station: red box and its call. */
     if (sc->sel >= 0 && sc->sel < (int)n && scene_shown[sc->sel]) {
         int                        i = sc->sel;
         const map_scene_station_t *s = &sc->st[i];
         map_widget_rect(scene_cx[i] - 9, scene_cy[i] - 9, 19, 19, 0, LV_OPA_TRANSP, MAP_WIDGET_SELECT, 2, 0);
         map_widget_take(scene_cx[i] - 10, scene_cy[i] - 10, scene_cx[i] + 10, scene_cy[i] + 10);
-        char text[112];
-        int  len = snprintf(text, sizeof(text), "%s  %s", s->call, scene_pl[i].where);
-        if (s->has_snr && len < (int)sizeof(text)) len += snprintf(text + len, sizeof(text) - len, "  %+d dB", s->snr);
-        if (have_home && len < (int)sizeof(text)) {
-            char dist[24];
-            map_scene_distance(sc, i, dist, sizeof(dist));
-            len += snprintf(text + len, sizeof(text) - len, "%s", dist);
-            if (len < (int)sizeof(text))
-                snprintf(text + len, sizeof(text) - len, "  az %.0f",
-                         js8_map_bearing_deg(home.lat, home.lon, scene_pl[i].lat, scene_pl[i].lon));
-        }
-        map_widget_label(scene_cx[i], scene_cy[i], text, 0xFFFFFF, 0x6E0000, 225, 13, true);
+        /* Its call beside it where that's free, else a little further
+         * out, else over whatever is there; the details are on the hint line. */
+        if (!map_widget_label(scene_cx[i], scene_cy[i], s->call, 0xFFFFFF, 0x6E0000, 225, 13, false) &&
+            !map_widget_label(scene_cx[i], scene_cy[i], s->call, 0xFFFFFF, 0x6E0000, 225, 30, false))
+            map_widget_label(scene_cx[i], scene_cy[i], s->call, 0xFFFFFF, 0x6E0000, 225, 13, true);
     }
 
     /* Calls beside the stations that ask for it, where they fit. */
@@ -266,4 +296,134 @@ int map_scene_step(const map_scene_t *sc, int sel, int dir) {
     }
 #undef BEFORE
     return best < 0 && from ? sel : best;
+}
+
+/* ---- The map in an app's window ---- */
+
+#ifndef MAP_DATA_PATH
+#define MAP_DATA_PATH "/usr/share/x6100/js8/js8_map.bin" /* the JS8 map's data (tools/map_data) */
+#endif
+#ifndef MAP_CTY_PATH
+#define MAP_CTY_PATH "/usr/share/x6100/cty.dat" /* as FT8's countries (dxcc.c) */
+#endif
+#define MAP_CTY_SD_PATH "/mnt/cty.dat" /* a newer list put on the card wins */
+#define REDRAW_MS       1000
+
+static bool            shown;
+static lv_obj_t       *list_obj;
+static lv_timer_t     *timer;
+static js8_map_mode_t  mode = JS8_MAP_AUTO;
+static map_scene_app_t app;
+
+static const char *const mode_names[3] = {"Auto", "Close-in", "World"};
+
+static void timer_cb(lv_timer_t *t) {
+    (void)t;
+    if (shown && app.redraw) app.redraw(false);
+}
+
+static void key_cb(lv_event_t *e) {
+    uint32_t key = *((uint32_t *)lv_event_get_param(e));
+    switch (key) {
+    case LV_KEY_RIGHT:
+    case LV_KEY_DOWN:
+        if (app.on_step) app.on_step(1);
+        break;
+    case LV_KEY_LEFT:
+    case LV_KEY_UP:
+        if (app.on_step) app.on_step(-1);
+        break;
+    case LV_KEY_ESC:
+        /* Closing deletes this focused canvas: the held key mustn't turn
+         * into a long press in whatever gets the focus next. */
+        if (lv_indev_get_act()) lv_indev_wait_release(lv_indev_get_act());
+        if (app.on_close) app.on_close();
+        break;
+    case KEY_VOL_LEFT_EDIT:
+    case KEY_VOL_LEFT_SELECT:
+        if (app.on_vol_change) app.on_vol_change(-1);
+        break;
+    case KEY_VOL_RIGHT_EDIT:
+    case KEY_VOL_RIGHT_SELECT:
+        if (app.on_vol_change) app.on_vol_change(1);
+        break;
+    }
+}
+
+static void pressed_cb(lv_event_t *e) {
+    (void)e;
+    if (app.on_press) app.on_press();
+}
+
+static bool make(lv_obj_t *parent) {
+    if (map_widget_made()) return true;
+    /* The whole inside of the window's frame, as the JS8 map. */
+    int                     border = param_i_get(cfg.ui.theme()) == THEME_BLACK ? 0 : 1;
+    int                     w = DIALOG_WIDTH - 2 * border, h = DIALOG_HEIGHT - 2 * border;
+    const map_widget_geom_t g = {border, border, w, h, h - MAP_SCENE_BOTTOM_H, h - MAP_SCENE_BOTTOM_H};
+    if (!map_widget_create(parent, &g, MAP_DATA_PATH, MAP_CTY_SD_PATH, MAP_CTY_PATH)) return false;
+    lv_obj_t *canvas = map_widget_canvas();
+    lv_obj_add_event_cb(canvas, key_cb, LV_EVENT_KEY, NULL);
+    lv_obj_add_event_cb(canvas, pressed_cb, LV_EVENT_PRESSED, NULL);
+    return true;
+}
+
+bool map_scene_show(lv_obj_t *parent, lv_obj_t *list, bool on, const map_scene_app_t *a) {
+    if (on == shown) return true;
+    if (on) {
+        if (!make(parent)) {
+            msg_update_text_fmt("Map: not enough memory");
+            return false;
+        }
+        app       = *a;
+        list_obj  = list;
+        shown     = true;
+        scene_sig = 0;
+        map_widget_view_reset();
+        map_widget_show(true);
+        /* The MFK goes to the map while it shows. */
+        lv_obj_t *canvas = map_widget_canvas();
+        if (list_obj) lv_group_remove_obj(list_obj);
+        lv_group_add_obj(keyboard_group, canvas);
+        lv_group_focus_obj(canvas);
+        lv_group_set_editing(keyboard_group, true);
+        if (app.redraw) app.redraw(true);
+        if (!timer) timer = lv_timer_create(timer_cb, REDRAW_MS, NULL);
+        else lv_timer_resume(timer);
+    } else {
+        shown = false;
+        if (timer) lv_timer_pause(timer);
+        lv_group_remove_obj(map_widget_canvas());
+        map_widget_show(false);
+        if (list_obj) {
+            lv_group_add_obj(keyboard_group, list_obj);
+            lv_group_focus_obj(list_obj);
+            lv_group_set_editing(keyboard_group, true);
+        }
+    }
+    return true;
+}
+
+bool map_scene_shown(void) {
+    return shown;
+}
+
+const char *map_scene_next_mode(void) {
+    mode = (js8_map_mode_t)((mode + 1) % 3);
+    if (shown && app.redraw) app.redraw(true);
+    return mode_names[mode];
+}
+
+js8_map_mode_t map_scene_mode(void) {
+    return mode;
+}
+
+void map_scene_destroy(void) {
+    if (timer) lv_timer_del(timer);
+    timer     = NULL;
+    shown     = false;
+    list_obj  = NULL;
+    scene_sig = 0;
+    memset(&app, 0, sizeof(app));
+    map_widget_free(); /* its objects go with the window */
 }

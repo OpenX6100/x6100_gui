@@ -263,7 +263,7 @@ void map_widget_take(lv_coord_t x1, lv_coord_t y1, lv_coord_t x2, lv_coord_t y2)
     if (map_ntaken < MAP_TAKEN) map_taken[map_ntaken++] = (lv_area_t){x1, y1, x2, y2};
 }
 
-void map_widget_label(int x, int y, const char *text, uint32_t fg, uint32_t bg, lv_opa_t bg_opa, int dx, bool force) {
+bool map_widget_label(int x, int y, const char *text, uint32_t fg, uint32_t bg, lv_opa_t bg_opa, int dx, bool force) {
     lv_point_t sz;
     lv_txt_get_size(&sz, text, &sony_18, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
     const int places[4][2] = {{x + dx, y - sz.y / 2},
@@ -301,10 +301,11 @@ void map_widget_label(int x, int y, const char *text, uint32_t fg, uint32_t bg, 
         }
     }
 #undef LABEL_FREE
-    if (!found) return;
+    if (!found) return false;
     map_widget_take(box.x1, box.y1, box.x2, box.y2);
     map_widget_rect(box.x1, box.y1, box.x2 - box.x1, box.y2 - box.y1, bg, bg_opa, 0, 0, 3);
     map_widget_text(bx, by, sz.x + 4, &sony_18, fg, text);
+    return true;
 }
 
 int map_widget_station_mark(const char *grid, const js8_map_place_t *pl, uint32_t color, lv_opa_t opa,

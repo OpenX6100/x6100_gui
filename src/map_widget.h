@@ -91,8 +91,9 @@ void map_widget_take(lv_coord_t x1, lv_coord_t y1, lv_coord_t x2, lv_coord_t y2)
 
 /* A label on a dark box beside (x, y): right of it, else left, above or
  * below, wherever it covers nothing taken. A forced one takes the first
- * place that fits on the map; any other is left out if none is free. */
-void map_widget_label(int x, int y, const char *text, uint32_t fg, uint32_t bg, lv_opa_t bg_opa, int dx, bool force);
+ * place that fits on the map; any other is left out if none is free.
+ * True if it was drawn. */
+bool map_widget_label(int x, int y, const char *text, uint32_t fg, uint32_t bg, lv_opa_t bg_opa, int dx, bool force);
 
 /* A station's square in its grid square (6-20 px, `grow` more or less), or
  * a hollow box where it is placed by callsign. Its centre in *cx, *cy;

@@ -10,33 +10,19 @@
 #include "map_view.h"
 
 #include "../cfg/cfg_api.h"
-#include "../dialog.h"
-#include "../keyboard.h"
 #include "../map_scene.h"
 #include "../msg.h"
-#include "../events.h"
-#include "../styles.h"
 
-#include <ctype.h>
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
 #include <time.h>
-
-#ifndef FT8_MAP_DATA_PATH
-#define FT8_MAP_DATA_PATH "/usr/share/x6100/js8/js8_map.bin" /* the JS8 map's data (tools/map_data) */
-#endif
-#ifndef FT8_CTY_PATH
-#define FT8_CTY_PATH "/usr/share/x6100/cty.dat" /* the file the list's countries come from (dxcc.c) */
-#endif
-#define FT8_CTY_SD_PATH "/mnt/cty.dat" /* a newer list put on the card wins */
 
 #define ST_MAX     100
 #define HEARD_MS   (15 * 60 * 1000) /* stations heard in the last 15 min */
 #define CALLING_MS (2 * 60 * 1000)  /* yellow for 2 min after their last message to you */
 #define QSO_MS     (2 * 60 * 1000)  /* your QSO's red path, 2 min after its last message */
 #define LINK_MS    (2 * 60 * 1000)  /* others' QSOs: grey lines for 2 min */
-#define REDRAW_MS  1000
 
 typedef struct {
     char        call[13];
@@ -58,13 +44,7 @@ static char       sel_call[13];
 static char       qso_call[13]; /* your QSO */
 static int64_t    qso_ms;
 static char       title[32] = "FT8";
-static bool       shown;
-static lv_obj_t  *table_obj;
-static lv_timer_t *timer;
-static js8_map_mode_t     mode = JS8_MAP_AUTO;
 static map_view_actions_t act;
-
-static const char *const mode_names[3] = {"Auto", "Close-in", "World"};
 
 static int64_t now_ms(void) {
     struct timespec t;
@@ -153,19 +133,19 @@ void map_view_add(const cell_data_t *cell) {
     default:
         return;
     }
-    if (shown) redraw(false);
+    if (map_scene_shown()) redraw(false);
 }
 
 void map_view_clear(void) {
     st_n        = 0;
     sel_call[0] = '\0';
     qso_call[0] = '\0';
-    if (shown) redraw(true);
+    if (map_scene_shown()) redraw(true);
 }
 
 void map_view_set_title(const char *t) {
     snprintf(title, sizeof(title), "%s", t);
-    if (shown) redraw(false);
+    if (map_scene_shown()) redraw(false);
 }
 
 /* ---- The scene ---- */
@@ -174,7 +154,7 @@ static map_scene_station_t sc_st[ST_MAX];
 static station_t          *sc_src[ST_MAX]; /* the station behind each one drawn */
 static map_scene_link_t    sc_links[ST_MAX];
 static map_scene_t         scene;
-static char                my_call[16], my_grid[9], status[96], hint[80];
+static char                my_call[16], my_grid[9], status[96], status2[48], hint[80];
 
 static const map_legend_item_t legend[] = {
     {MAP_SCENE_GREEN, MAP_LEGEND_SQUARE, "CQ"},
@@ -233,11 +213,23 @@ static void build(int64_t now) {
             }
     }
     if (sel < 0) sel_call[0] = '\0';
+    int    info  = param_i_get(cfg.ui.ft8_info());
+    bool   miles = info == TABLE_INFO_MI || info == TABLE_INFO_COUNTRY_MI;
     snprintf(status, sizeof(status), "%s   %d heard  %d CQ  %d calling you", title, n, ncq, ncall);
+    double best  = -1, km;
+    int    dx    = -1;
+    for (int i = 0; i < n; i++) /* the farthest heard: "DX ZL2AB 11300 km" */
+        if (map_scene_km(my_call, my_grid, sc_st[i].call, sc_st[i].grid, &km) && km > best) {
+            best = km;
+            dx   = i;
+        }
+    status2[0] = '\0';
+    if (dx >= 0)
+        snprintf(status2, sizeof(status2), "DX %s %.0f %s", sc_st[dx].call, miles ? best * 0.621371 : best,
+                 miles ? "mi" : "km");
     if (!n) snprintf(hint, sizeof(hint), "No stations heard in the last 15 min");
     else if (sel < 0) snprintf(hint, sizeof(hint), "Turn MFK: pick a station");
-    else snprintf(hint, sizeof(hint), "Turn MFK: pick a station    Press MFK: call %s", sel_call);
-    int info  = param_i_get(cfg.ui.ft8_info());
+    else snprintf(hint, sizeof(hint), "Press MFK: call");
     scene     = (map_scene_t){.st      = sc_st,
                               .n       = (unsigned)n,
                               .links   = sc_links,
@@ -245,11 +237,12 @@ static void build(int64_t now) {
                               .sel     = sel,
                               .my_call = my_call,
                               .my_grid = my_grid,
-                              .mode    = mode,
-                              .miles   = info == TABLE_INFO_MI || info == TABLE_INFO_COUNTRY_MI,
+                              .mode    = map_scene_mode(),
+                              .miles   = miles,
                               .legend  = legend,
                               .nlegend = sizeof(legend) / sizeof(legend[0]),
                               .status  = status,
+                              .status2 = status2,
                               .hint    = hint};
 }
 
@@ -258,12 +251,7 @@ static void redraw(bool force) {
     map_scene_draw(&scene, force);
 }
 
-static void timer_cb(lv_timer_t *t) {
-    (void)t;
-    redraw(false);
-}
-
-/* ---- Keys ---- */
+/* ---- Keys, showing ---- */
 
 static void select_step(int dir) {
     int i = map_scene_step(&scene, scene.sel, dir);
@@ -272,112 +260,38 @@ static void select_step(int dir) {
     redraw(false);
 }
 
-static void key_cb(lv_event_t *e) {
-    uint32_t key = *((uint32_t *)lv_event_get_param(e));
-    switch (key) {
-    case LV_KEY_RIGHT:
-    case LV_KEY_DOWN:
-        select_step(1);
-        break;
-    case LV_KEY_LEFT:
-    case LV_KEY_UP:
-        select_step(-1);
-        break;
-    case LV_KEY_ESC:
-        /* Closing deletes this focused canvas: the held key mustn't turn
-         * into a long press in whatever gets the focus next. */
-        if (lv_indev_get_act()) lv_indev_wait_release(lv_indev_get_act());
-        if (act.on_close) act.on_close();
-        break;
-    case KEY_VOL_LEFT_EDIT:
-    case KEY_VOL_LEFT_SELECT:
-        if (act.on_vol_change) act.on_vol_change(-1);
-        break;
-    case KEY_VOL_RIGHT_EDIT:
-    case KEY_VOL_RIGHT_SELECT:
-        if (act.on_vol_change) act.on_vol_change(1);
-        break;
-    }
-}
-
 /* MFK pressed: call the selected station, as pressing its row does. */
-static void pressed_cb(lv_event_t *e) {
-    (void)e;
+static void press(void) {
     station_t *s = sel_call[0] ? find(sel_call) : NULL;
     if (!s) {
         msg_update_text_fmt("Turn MFK to pick a station first");
         return;
     }
-    if (!s->has_cell || !act.on_press) return;
-    act.on_press(&s->cell);
-}
-
-/* ---- Showing ---- */
-
-static bool make(lv_obj_t *parent) {
-    if (map_widget_made()) return true;
-    /* The whole inside of the window's frame, as the JS8 map. */
-    int                     border = param_i_get(cfg.ui.theme()) == THEME_BLACK ? 0 : 1;
-    int                     w = DIALOG_WIDTH - 2 * border, h = DIALOG_HEIGHT - 2 * border;
-    const map_widget_geom_t g = {border, border, w, h, h - MAP_SCENE_BOTTOM_H, h - MAP_SCENE_BOTTOM_H};
-    if (!map_widget_create(parent, &g, FT8_MAP_DATA_PATH, FT8_CTY_SD_PATH, FT8_CTY_PATH)) return false;
-    lv_obj_t *canvas = map_widget_canvas();
-    lv_obj_add_event_cb(canvas, key_cb, LV_EVENT_KEY, NULL);
-    lv_obj_add_event_cb(canvas, pressed_cb, LV_EVENT_PRESSED, NULL);
-    return true;
+    if (s->has_cell && act.on_press) act.on_press(&s->cell);
 }
 
 bool map_view_show(lv_obj_t *parent, lv_obj_t *table, bool on, const map_view_actions_t *actions) {
-    if (on == shown) return true;
-    if (on) {
-        if (!make(parent)) {
-            msg_update_text_fmt("Map: not enough memory");
-            return false;
-        }
-        act       = *actions;
-        table_obj = table;
-        shown     = true;
-        map_widget_view_reset();
-        map_widget_show(true);
-        /* The MFK goes to the map while it shows. */
-        lv_obj_t *canvas = map_widget_canvas();
-        if (table_obj) lv_group_remove_obj(table_obj);
-        lv_group_add_obj(keyboard_group, canvas);
-        lv_group_focus_obj(canvas);
-        lv_group_set_editing(keyboard_group, true);
-        redraw(true);
-        if (!timer) timer = lv_timer_create(timer_cb, REDRAW_MS, NULL);
-        else lv_timer_resume(timer);
-    } else {
-        shown = false;
-        if (timer) lv_timer_pause(timer);
-        lv_group_remove_obj(map_widget_canvas());
-        map_widget_show(false);
-        if (table_obj) {
-            lv_group_add_obj(keyboard_group, table_obj);
-            lv_group_focus_obj(table_obj);
-            lv_group_set_editing(keyboard_group, true);
-        }
-    }
-    return true;
+    if (on) act = *actions;
+    const map_scene_app_t app = {
+        .redraw        = redraw,
+        .on_step       = select_step,
+        .on_press      = press,
+        .on_close      = act.on_close,
+        .on_vol_change = act.on_vol_change,
+    };
+    return map_scene_show(parent, table, on, &app);
 }
 
 bool map_view_shown(void) {
-    return shown;
+    return map_scene_shown();
 }
 
 const char *map_view_next_mode(void) {
-    mode = (js8_map_mode_t)((mode + 1) % 3);
-    if (shown) redraw(true);
-    return mode_names[mode];
+    return map_scene_next_mode();
 }
 
 void map_view_destroy(void) {
-    if (timer) lv_timer_del(timer);
-    timer     = NULL;
-    shown     = false;
-    table_obj = NULL;
-    map_widget_free(); /* its objects go with the window */
+    map_scene_destroy();
     st_n        = 0;
     sel_call[0] = '\0';
     qso_call[0] = '\0';

@@ -9,7 +9,8 @@
  *  hands over its stations (colour, tags, a path from you), lines between
  *  stations, the selected one and the legend; this draws them the way the
  *  JS8 map does: squares in their grid squares (hollow where placed by
- *  callsign), you in orange, the selected station in red with its details,
+ *  callsign), you in orange, the selected station in red (its details on
+ *  the hint line),
  *  "CQ" tags, a count tag where stations share a square, a status line at
  *  the top right, a hint line and the legend at the bottom.
  *
@@ -43,6 +44,7 @@ typedef struct {
     bool     cq;        /* the "CQ" tag */
     bool     label;     /* its call beside it, in its colour */
     char     tag[8];    /* a small tag on its bottom right ("-12"), "" none */
+    char     extra[24]; /* more for the selected one's details ("23 dBm"), "" none */
     uint32_t path;      /* a path from you in this colour, 0 none */
     uint8_t  path_w;    /* its width, 0: 3 px */
 } map_scene_station_t;
@@ -67,6 +69,7 @@ typedef struct {
     const map_legend_item_t   *legend;
     unsigned                   nlegend;
     const char                *status;   /* top right, "" none */
+    const char                *status2;  /* under it ("DX ZL2AB 11300 km", may hold a \n), "" none */
     const char                *hint;     /* bottom left, above the legend, "" none */
 } map_scene_t;
 
@@ -79,5 +82,36 @@ void map_scene_draw(const map_scene_t *sc, bool force);
  * first or the last. -1 if none is shown. */
 int map_scene_step(const map_scene_t *sc, int sel, int dir);
 
+/* How far a station is from you, km (by grid, else by callsign); false if
+ * either place isn't known. For the apps' "DX" (the farthest heard). */
+bool map_scene_km(const char *my_call, const char *my_grid, const char *call, const char *grid, double *km);
+
 /* "  1234 km" (or mi) from you to a station's place, "" if either isn't known. */
 void map_scene_distance(const map_scene_t *sc, int i, char *buf, size_t size);
+
+/* ---- The map in an app's window ----------------------------------------
+ *
+ * Show: Map puts the map over the whole inside of the window's frame and
+ * gives it the MFK (the app's list gets it back with Show: List). The app
+ * keeps its stations and draws them with map_scene_draw() in `redraw`,
+ * called once a second while the map shows and whenever it asks. */
+typedef struct {
+    void (*redraw)(bool force);
+    void (*on_step)(int dir);         /* MFK turned: pick the next station, map_scene_step() */
+    void (*on_press)(void);           /* MFK pressed, NULL: nothing */
+    void (*on_close)(void);           /* ESC: the app closes */
+    void (*on_vol_change)(int32_t d); /* VOL turned */
+} map_scene_app_t;
+
+/* The map over `parent` (the window) or the list back (`list` focused
+ * again). False if the map couldn't be made (a message says so). */
+bool map_scene_show(lv_obj_t *parent, lv_obj_t *list, bool on, const map_scene_app_t *app);
+bool map_scene_shown(void);
+
+/* Auto -> Close-in -> World (the map redrawn); returns the new view's name. */
+const char    *map_scene_next_mode(void);
+js8_map_mode_t map_scene_mode(void);
+
+/* The window closes: the timer, the buffers, the map data (the objects go
+ * with the window). */
+void map_scene_destroy(void);

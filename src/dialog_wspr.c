@@ -43,6 +43,7 @@
 
 #include "wspr_app.h"
 #include "wspr_demod.h"
+#include "wspr_map.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -119,6 +120,11 @@ static void txf_hold_cb(button_data_t *b);
 static void clear_press_cb(button_data_t *b);
 static void band_up_cb(button_data_t *b);
 static void band_down_cb(button_data_t *b);
+static const char *map_label_getter(void);
+static void show_map_cb(button_data_t *b);
+static void map_mode_cb(button_data_t *b);
+static void on_table_close(void);
+static void on_table_vol_change(int32_t delta);
 
 #define table (table_view_obj())
 
@@ -173,13 +179,17 @@ static button_data_t button_center = {
     .type = BTN_TEXT_FN, .label_fn = txf_label_getter,
     .press = txf_press_cb, .hold = txf_hold_cb,
 };
+static button_data_t button_show_map = {
+    .type = BTN_TEXT_FN, .label_fn = map_label_getter,
+    .press = show_map_cb, .hold = map_mode_cb,
+};
 
 static buttons_page_t btn_page_1 = {
     {&button_page_1, &button_tx, &button_pwr, &button_status, &button_clear}
 };
 
 static buttons_page_t btn_page_2 = {
-    {&button_page_2, &button_band_down, &button_band_up, &button_center}
+    {&button_page_2, &button_band_down, &button_band_up, &button_center, &button_show_map}
 };
 
 static dialog_t dialog = {
@@ -252,8 +262,14 @@ static void restart_rx(void)
 
 static void clean_screen(void)
 {
+    char title[24];
+
     table_view_reset();
     lv_waterfall_clear_data(waterfall);
+
+    snprintf(title, sizeof(title), "WSPR %s", cur_band >= 0 ? wspr_bands[cur_band].label : "");
+    wspr_map_set_title(title);
+    wspr_map_clear();
 }
 
 static void change_band(int8_t dir)
@@ -371,6 +387,7 @@ static void on_spot(const wspr_spot_t *spot, void *ctx)
     }
 
     scheduler_put(table_view_add_msg_cb, &cd, sizeof(cd));
+    scheduler_put(wspr_map_spot_cb, (void *)spot, sizeof(*spot));
 }
 
 static void on_slot_end(void *ctx)
@@ -547,6 +564,33 @@ static void clear_press_cb(button_data_t *b)
 {
     (void)b;
     clean_screen();
+}
+
+/* ---- Show: Map (wspr_map.c) ------------------------------------------ */
+
+static const char *map_label_getter(void)
+{
+    return wspr_map_shown() ? "Show:\nList" : "Show:\nMap";
+}
+
+static void show_map_cb(button_data_t *b)
+{
+    char title[24];
+
+    snprintf(title, sizeof(title), "WSPR %s", cur_band >= 0 ? wspr_bands[cur_band].label : "");
+    wspr_map_set_title(title);
+    if (wspr_map_show(dialog.obj, table, !wspr_map_shown(), on_table_close, on_table_vol_change) &&
+        wspr_map_shown())
+        msg_update_text_fmt("Map: turn MFK to pick a station. Hold: Auto/Close-in/World");
+    buttons_refresh(b);
+}
+
+/* Held: the map's view, Auto -> Close-in -> World. */
+static void map_mode_cb(button_data_t *b)
+{
+    (void)b;
+    if (wspr_map_shown())
+        msg_update_text_fmt("Map: %s", wspr_map_next_mode());
 }
 
 /* ---- Transmit frequency ---------------------------------------------- */
@@ -811,6 +855,7 @@ static void destruct_cb(void)
     wspr_app_set_active(false);
     wspr_app_set_ui_cb(NULL);
 
+    wspr_map_destroy();     /* its objects go with the window */
     table_view_destroy();
 
     waterfall_set_enabled(true);
