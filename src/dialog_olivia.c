@@ -34,6 +34,7 @@
 #include "styles.h"
 #include "cfg/cfg_api.h"
 #include "radio.h"
+#include "common/time.h"
 #include "audio.h"
 #include "dsp.h"
 #include "events.h"
@@ -220,7 +221,9 @@ static void macro_press(int idx);
 static void macro_hold(int idx);
 
 /*
- * One page of buttons: Next, Send..., Macros, Mode, Menu.
+ * One page of buttons: Next, Send..., Macros, Status, Menu (as PSK31's;
+ * the mode, rarely changed, is in the Menu). Status shows whether the
+ * receiver has locked on: "LOCK 87% / +3 Hz", or "Search / best 3.2".
  *
  * Next (also a press of the MFK) sends the macro the QSO needs now and
  * says which on its label (digi_next.c: CQ, Answer, Report, TNX, 73);
@@ -249,18 +252,19 @@ static button_data_t btn_text = {
 static button_data_t btn_macros = {
     .type = BTN_TEXT, .label = "Macros", .press = macros_press_cb,
 };
-static button_data_t btn_mode = {
-    .type = BTN_TEXT_FN, .label_fn = mode_label_getter,
-    .press = mode_press_cb,
-};
 static button_data_t btn_menu = {
     .type = BTN_TEXT, .label = "Menu", .press = menu_press_cb,
 };
 
-/* not on the page, see above */
 static button_data_t btn_status = {
     .type = BTN_TEXT_FN, .label_fn = status_label_getter,
     .press = status_press_cb, .hold = status_hold_cb,
+};
+
+/* not on the page, see above */
+static button_data_t btn_mode = {
+    .type = BTN_TEXT_FN, .label_fn = mode_label_getter,
+    .press = mode_press_cb,
 };
 static button_data_t btn_dial = {
     .type = BTN_TEXT_FN, .label_fn = dial_label_getter,
@@ -276,7 +280,7 @@ static button_data_t btn_rst = {
 };
 
 static buttons_page_t page_1 = {
-    {&btn_next, &btn_text, &btn_macros, &btn_mode, &btn_menu}
+    {&btn_next, &btn_text, &btn_macros, &btn_status, &btn_menu}
 };
 
 static dialog_t dialog = {
@@ -435,6 +439,11 @@ static void text_timer_cb(lv_timer_t *t)
     }
 }
 
+/* The receiver's text is ignored this long after our transmission ends:
+ * our own signal is still draining from the audio. */
+#define RX_AFTER_TX_MS 500
+static uint64_t tx_end_ms;
+
 /* UI thread: one decoded block, at most 8 characters. */
 static void rx_text_ui(void *data)
 {
@@ -442,6 +451,12 @@ static void rx_text_ui(void *data)
     char before[16];
 
     if (!alive)
+        return;
+
+    /* While we transmit, and just after as the audio drains, the receiver
+     * hears our own signal: printing it would show our text as received
+     * and "de <our call>" would become the DX call. */
+    if (olivia_tx_is_on() || get_time() - tx_end_ms < RX_AFTER_TX_MS)
         return;
 
     snprintf(before, sizeof(before), "%s", digi_qso_dx());
@@ -587,14 +602,20 @@ static int cur_bandwidth(void)
     return olivia_tx_mode_bandwidth(olivia_tx_get_mode());
 }
 
+/* Inside the filter, and where the receiver can be built (at 32/1000 a
+ * centre below ~610 Hz left it unable to start). */
 static int center_min(void)
 {
-    return (int)ceilf(sp_edge_lo) + cur_bandwidth() / 2;
+    int lo = (int)ceilf(sp_edge_lo) + cur_bandwidth() / 2;
+
+    return lo > olivia_app_center_min() ? lo : olivia_app_center_min();
 }
 
 static int center_max(void)
 {
-    return (int)floorf(sp_edge_hi) - cur_bandwidth() / 2;
+    int hi = (int)floorf(sp_edge_hi) - cur_bandwidth() / 2;
+
+    return hi < olivia_app_center_max() ? hi : olivia_app_center_max();
 }
 
 static void update_finder(void)
@@ -947,7 +968,17 @@ static const char *rst_label_getter(void)
 
 static void status_timer_cb(lv_timer_t *t)
 {
+    static bool was_tx;
+    bool         tx = olivia_tx_is_on();
+
     (void)t;
+    /* TX over: the receiver was locked on our own signal and would hold it
+     * for blocks (~6 s) before searching again; start it afresh. */
+    if (was_tx && !tx) {
+        tx_end_ms = get_time();
+        rebuild_rx();
+    }
+    was_tx = tx;
     refresh_btn(&btn_status);
     refresh_btn(&btn_next);
 }
@@ -1095,7 +1126,7 @@ static void mode_press_cb(button_data_t *b)
     rebuild_rx();
 
     msg_update_text_fmt("#FFFFFF Olivia %s", olivia_tx_mode_name(m));
-    buttons_refresh(b);
+    refresh_btn(b);
 }
 
 static void status_press_cb(button_data_t *b)
@@ -1308,16 +1339,29 @@ static void macro_edit_pick(int item, void *ctx)
     macro_hold(item);
 }
 
-/* Macros: every macro with what it sends now, then New and Edit. */
-static void macros_pick(int item, void *ctx)
+/* Macros listed in the Macros menu: as many as fit with its two rows
+ * after them (New, Edit). */
+static int macros_listed(void)
 {
     int n = olivia_macros_count();
 
+    return n < DIGI_MENU_MAX - 2 ? n : DIGI_MENU_MAX - 2;
+}
+
+/* Macros: every macro with what it sends now, then New and Edit. The rows
+ * are counted as listed: with more macros than fit, "New macro..." and
+ * "Edit a macro..." were taken for macros and sent one. */
+static void macros_pick(int item, void *ctx)
+{
+    int n = olivia_macros_count();
+    int listed = macros_listed();
+
     (void)ctx;
-    if (item < n) {
+    if (item < listed) {
         macro_press(item);
-    } else if (item == n) {
-        macro_hold(n);                  /* a new one, at the end */
+    } else if (item == listed) {
+        if (n < OLIVIA_MACRO_MAX)
+            macro_hold(n);              /* a new one, at the end */
     } else {
         static char  text[OLIVIA_MACRO_MAX][OLIVIA_MACRO_NAME_LEN + 8];
         const char  *items[OLIVIA_MACRO_MAX];
@@ -1344,7 +1388,7 @@ static void macros_press_cb(button_data_t *b)
         digi_menu_close();
         return;
     }
-    for (int i = 0; i < n && k < DIGI_MENU_MAX - 2; i++) {
+    for (int i = 0; i < macros_listed(); i++) {
         const olivia_macro_t *m = olivia_macro_get(i);
         char                  out[OLIVIA_MACRO_TEXT_LEN + 128];
         const char           *missing = NULL;
@@ -1363,7 +1407,7 @@ static void macros_press_cb(button_data_t *b)
 }
 
 enum {
-    MENU_DIAL, MENU_DIAL_BACK, MENU_BAND_UP, MENU_BAND_DOWN, MENU_DX, MENU_RST,
+    MENU_MODE, MENU_DIAL, MENU_DIAL_BACK, MENU_BAND_UP, MENU_BAND_DOWN, MENU_DX, MENU_RST,
     MENU_NEW_QSO, MENU_RESYNC, MENU_CLEAR, MENU_COUNT
 };
 
@@ -1371,6 +1415,7 @@ static void menu_pick(int item, void *ctx)
 {
     (void)ctx;
     switch (item) {
+        case MENU_MODE:      mode_press_cb(&btn_mode); break;
         case MENU_DIAL:      dial_press_cb(&btn_dial); break;
         case MENU_DIAL_BACK: dial_hold_cb(&btn_dial); break;
         case MENU_BAND_UP:   band_up_cb(NULL); break;
@@ -1400,6 +1445,7 @@ static void menu_press_cb(button_data_t *b)
         digi_menu_close();
         return;
     }
+    snprintf(text[MENU_MODE], 48, "Mode: %s  (press: next)", olivia_tx_mode_name(olivia_tx_get_mode()));
     snprintf(text[MENU_DIAL], 48, "Dial with the knob  (%+d kHz)", (int)(dial_offset_hz / 1000));
     snprintf(text[MENU_DIAL_BACK], 48, "Dial back to the band's");
     snprintf(text[MENU_BAND_UP], 48, "Band up");
@@ -1738,12 +1784,17 @@ static void destruct_cb(void)
 
     /*
      * Let a transmission finish before the frequency is put back, or the
-     * radio would retune while keyed. The stop request finishes the
-     * current block and sends one more: up to about 4 s at 32/1000.
+     * radio would retune while keyed. The quick stop finishes the
+     * current block and fades out, no closing block: at most about 2 s
+     * (32/1000) of the screen waiting.
      */
-    olivia_tx_stop();
+    olivia_tx_stop_quick();
     for (int i = 0; i < 300 && olivia_tx_is_on(); i++)
         usleep(20000);
+    /* Still keyed after the wait (the sound server stalled): unkey here,
+     * the frequency and mode must never change while keyed. */
+    if (olivia_tx_is_on())
+        radio_set_modem(false);
 
     /* After set_active(false) returns, neither hook runs again. */
     olivia_app_set_active(false);

@@ -74,6 +74,11 @@ int olivia_mod_block(olivia_mod_t *mod, const uint8_t *chars, float *out);
 /* Samples in one block. */
 int olivia_mod_block_samples(const olivia_mod_t *mod);
 
+/* The end of a transmission: what the last symbols' windows still hold in
+ * the overlap buffer (symbol_len - symbol_separ samples, fading to zero).
+ * Without it the signal stops on a non-zero sample: a key click. */
+int olivia_mod_flush(olivia_mod_t *mod, float *out);
+
 /* Centre frequency of a tone in Hz - for the waterfall and tuning. */
 double olivia_mod_tone_freq(const olivia_mod_t *mod, int tone);
 

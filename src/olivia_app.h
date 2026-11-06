@@ -31,6 +31,10 @@ extern "C" {
 /* Subscribes to the DSP once (inactive). Safe to call again. */
 void olivia_app_init(void);
 
+/* The centre frequencies the receiver can be built for, this mode. */
+int olivia_app_center_min(void);
+int olivia_app_center_max(void);
+
 /* Receiving on and off. While off it costs nothing. */
 void olivia_app_set_active(bool on);
 bool olivia_app_is_active(void);
