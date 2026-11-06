@@ -31,7 +31,7 @@ target_sources(${PROJECT_NAME} PUBLIC
     dialog.c dialog_swrscan.c
     dxcc.c
     dialog_ft8.c dialog_freq.c dialog_gps.c dialog_msg_cw.c
-    ft8_ui/table_view.c
+    ft8_ui/table_view.c ft8_ui/map_view.c
     ft8_udp.c
     dialog_msg_voice.c dialog_recorder.c dialog_qth.c dialog_callsign.c digi_menu.c
     textarea_window.c cw_encoder.c buttons.cpp vol.cpp recorder.c
@@ -41,7 +41,7 @@ target_sources(${PROJECT_NAME} PUBLIC
     bt_audio.c
     knobs.cpp lock_manager.c indicators.cpp freq_info.cpp
     dialog_bt.c bt_ctl.c bt_dev.c bt_spp.c
-    map_widget.c
+    map_widget.c map_scene.c
     # JTTY
     dialog_jtty.c jtty/jtty_proto.c jtty/jtty_fec.c jtty/jtty_source.c
     jtty/jtty_demod.c jtty/jtty_rx.c jtty/jtty_mod.c jtty/jtty_pack.c jtty_tx.c jtty_log.c

@@ -39,6 +39,7 @@
 #include "ft8/ft2.h"
 #include "ft8/cq_scheduler.h"
 #include "ft8_ui/table_view.h"
+#include "ft8_ui/map_view.h"
 #include "ft8/tx_worker.h"
 #include "widgets/lv_waterfall.h"
 #include "widgets/lv_finder.h"
@@ -193,6 +194,10 @@ static void cq_modifier_cb(struct button_data_t *btn_data);
 static void time_sync(struct button_data_t *btn_data);
 
 static void force_save_qso(struct button_data_t *btn_data);
+static const char * map_label_getter();
+static void show_map_cb(struct button_data_t *btn_data);
+static void map_mode_cb(struct button_data_t *btn_data);
+static void add_msg_cb(void *data);
 
 static void on_table_press(const cell_data_t *cell_data);
 static void on_table_close(void);
@@ -224,6 +229,7 @@ static button_data_t button_page_2 = { .type=BTN_TEXT, .label = "(Page: 2:3)", .
 static button_data_t button_hold_freq = { .type=BTN_TEXT_FN, .label_fn = hold_freq_label_getter, .press = hold_tx_freq_cb };
 static button_data_t button_auto_en_dis = { .type=BTN_TEXT_FN, .label_fn = auto_label_getter, .press = mode_auto_cb };
 static button_data_t button_force_save = { .type=BTN_TEXT, .label = "Force QSO\nsave", .press = force_save_qso };
+static button_data_t button_show_map = { .type=BTN_TEXT_FN, .label_fn = map_label_getter, .press = show_map_cb, .hold = map_mode_cb };
 
 static button_data_t button_page_3 = { .type=BTN_TEXT, .label = "(Page: 3:3)", .press = button_next_page_cb, .next=&btn_page_1};
 static button_data_t button_cq_mod = { .type=BTN_TEXT, .label = "CQ\nModifier", .press = cq_modifier_cb };
@@ -234,7 +240,7 @@ static buttons_page_t btn_page_1 = {
 };
 
 static buttons_page_t btn_page_2 = {
-    {&button_page_2, &button_hold_freq, &button_auto_en_dis, &button_force_save}
+    {&button_page_2, &button_hold_freq, &button_auto_en_dis, &button_force_save, &button_show_map}
 };
 
 static buttons_page_t btn_page_3 = {
@@ -457,6 +463,7 @@ static void destruct_cb() {
     }
     ft8_udp_deinit();
 
+    map_view_destroy();     /* its objects go with the window */
     table_view_destroy();
 
     waterfall_set_enabled(true);
@@ -502,6 +509,8 @@ static void load_band(int8_t dir) {
 /// @brief Clean waterfall and table
 static void clean_screen() {
     table_view_reset();
+    map_view_clear();
+    map_view_set_title(ftx_mode_name());
     lv_waterfall_clear_data(waterfall);
 
     int32_t *c = malloc(sizeof(int32_t));
@@ -779,6 +788,38 @@ const char *auto_label_getter() {
     return buf;
 }
 
+/* ---- Show: Map (ft8_ui/map_view.c) ------------------------------------ */
+
+/* Every message for the list goes to the map too (both on the LVGL thread). */
+static void add_msg_cb(void *data) {
+    table_view_add_msg_cb(data);
+    map_view_add((const cell_data_t *)data);
+}
+
+static const char *map_label_getter() {
+    return map_view_shown() ? "Show:\nList" : "Show:\nMap";
+}
+
+static void show_map_cb(struct button_data_t *btn_data) {
+    if (disable_buttons) return;
+    const map_view_actions_t actions = {
+        .on_press      = on_table_press,
+        .on_close      = on_table_close,
+        .on_vol_change = on_table_vol_change,
+    };
+    map_view_set_title(ftx_mode_name());
+    if (map_view_show(dialog.obj, table, !map_view_shown(), &actions) && map_view_shown())
+        msg_update_text_fmt("Map: turn MFK to pick a station, press to call it. Hold: Auto/Close-in/World");
+    buttons_refresh(btn_data);
+}
+
+/* Held: the map's view, Auto -> Close-in -> World. */
+static void map_mode_cb(struct button_data_t *btn_data) {
+    (void)btn_data;
+    if (disable_buttons || !map_view_shown()) return;
+    msg_update_text_fmt("Map: %s", map_view_next_mode());
+}
+
 static void show_cq_all_cb(struct button_data_t *btn_data) {
     if (disable_buttons) return;
     param_i_set(cfg.ft8.show_all(), !param_i_get(cfg.ft8.show_all()));
@@ -946,7 +987,7 @@ static void on_table_press(const cell_data_t *cell_data) {
             cell_data_t cd;
             cd.cell_type = CELL_START_QSO;
             snprintf(cd.text, sizeof(cd.text), "Start QSO with %s", cell_data->meta.call_de);
-            scheduler_put(table_view_add_msg_cb, &cd, sizeof(cell_data_t));
+            scheduler_put(add_msg_cb, &cd, sizeof(cell_data_t));
         }
         msg_schedule_text_fmt("Next TX: %s", tx_msg.msg);
     } else {
@@ -1045,7 +1086,7 @@ static void add_info(const char * fmt, ...) {
     vsnprintf(cell_data.text, sizeof(cell_data.text), fmt, args);
     va_end(args);
 
-    scheduler_put(table_view_add_msg_cb, &cell_data, sizeof(cell_data_t));
+    scheduler_put(add_msg_cb, &cell_data, sizeof(cell_data_t));
 }
 
 /**
@@ -1059,7 +1100,7 @@ static void add_tx_text(const char * text) {
     if (strncmp(cell_data.text, "CQ_", 3) == 0) {
         cell_data.text[2] = ' ';
     }
-    scheduler_put(table_view_add_msg_cb, &cell_data, sizeof(cell_data_t));
+    scheduler_put(add_msg_cb, &cell_data, sizeof(cell_data_t));
 }
 
 /**
@@ -1133,7 +1174,7 @@ static void add_rx_text(int16_t snr, const char * text, slot_info_t *s_info, flo
     } else {
         cell_data.dist = 0;
     }
-    scheduler_put(table_view_add_msg_cb, (void*)&cell_data, sizeof(cell_data_t));
+    scheduler_put(add_msg_cb, (void*)&cell_data, sizeof(cell_data_t));
 }
 
 /* ---- audio_worker callbacks (run on the worker thread) ---------------- */
