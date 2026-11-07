@@ -8,6 +8,7 @@
 
 #include "wspr_app.h"
 
+#include <ctype.h>
 #include <math.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -26,6 +27,7 @@
 #include "wspr_demod.h"
 #include "wspr_encode.h"
 #include "wspr_mod.h"
+#include "wspr_net.h"
 #include "wspr_worker.h"
 
 #define GAIN_MIN_DB   (-30.0f)
@@ -65,6 +67,8 @@ static uint8_t          cfg_tx_period = 0;
 static uint16_t         cfg_tx_mw = WSPR_PWR_DEFAULT_MW;
 
 static volatile bool    transmitting = false;
+static volatile bool    sent_in_slot = false;  /* for WSPRnet's report */
+static volatile uint32_t dial_hz = 0;          /* set by the window   */
 
 /* Audio in: one DSP subscription for the life of the process, switched
  * on and off with the application. */
@@ -241,6 +245,31 @@ static void get_callsign(char *out, size_t out_sz)
     param_t_get_into(cfg.callsign(), out, out_sz);
 }
 
+/* Who we are for WSPRnet: the call as set (a /P is fine there), the
+ * whole 6 character grid, where we listen and what we'd send. */
+static void get_station(wspr_net_station_t *me)
+{
+    char   qth[PARAM_TEXT_MAX];
+    size_t i;
+
+    memset(me, 0, sizeof(*me));
+    get_callsign(me->call, sizeof(me->call));
+    for (i = 0; me->call[i]; i++)
+        me->call[i] = (char)toupper((unsigned char)me->call[i]);
+
+    param_t_get_into(cfg.qth(), qth, sizeof(qth));
+    for (i = 0; i < 6 && qth[i]; i++)
+        me->grid[i] = qth[i];
+    if (i != 4 && i != 6)
+        i = i < 4 ? 0 : 4;
+    me->grid[i] = '\0';
+
+    me->dial_hz = dial_hz;
+    me->tx_hz   = cfg_tx_freq;
+    me->dbm     = dbm_from_mw(cfg_tx_mw);
+    me->tpct    = cfg_tx_period ? 100 / cfg_tx_period : 0;
+}
+
 const char *wspr_app_tx_blocked_reason(void)
 {
     char loc[8];
@@ -287,8 +316,13 @@ const char *wspr_app_tx_blocked_reason(void)
 static void on_spot(const wspr_spot_t *spot, void *ctx)
 {
     (void)ctx;
+    wspr_net_station_t me;
+
     spot_count++;
     slot_spots++;
+
+    get_station(&me);
+    wspr_net_spot(spot, &me);
 
     if (ui.on_spot)
         ui.on_spot(spot, ui.ctx);
@@ -297,8 +331,13 @@ static void on_spot(const wspr_spot_t *spot, void *ctx)
 static void on_slot_end(void *ctx)
 {
     char text[64];
+    wspr_net_station_t me;
 
     (void)ctx;
+
+    get_station(&me);
+    wspr_net_slot_end(&me, sent_in_slot);
+    sent_in_slot = false;
 
     snprintf(text, sizeof(text), "Slot decoded: %u spot%s in %.1f s",
              (unsigned)slot_spots, slot_spots == 1 ? "" : "s",
@@ -417,6 +456,7 @@ static void transmit_message(void)
 
     tx_stop = false;
     transmitting = true;
+    sent_in_slot = true;
     radio_set_modem(true);
 
     for (k = 0; k < WSPR_SYMBOLS && !tx_abort && !tx_stop; k++) {
@@ -627,6 +667,12 @@ void wspr_app_put_audio_samples(size_t n, float *samples)
         return;
 
     wspr_worker_feed(worker, (unsigned int)n, samples);
+}
+
+/* The USB dial frequency, for WSPRnet (the window keeps it fixed). */
+void wspr_app_set_dial(uint32_t hz)
+{
+    dial_hz = hz;
 }
 
 void wspr_app_stop_tx(void)
