@@ -33,7 +33,7 @@ typedef enum {
     /* The ACTION_APP_* values are saved on the card (long-press keys), so
      * each is written out and never reused or changed; a new app takes
      * the next free number. 109 WeFax, 110 NavTex, 111 SSTV (Murus),
-     * 112 JS8, 117 Channels, 118 JTTY, 119 XARA are taken. */
+     * 112 JS8, 117 Channels, 118 JTTY, 120 XARA are taken; 119 is DSC's (Hany, coming). */
     ACTION_APP_RTTY = 100,
     ACTION_APP_FT8,
     ACTION_APP_SWRSCAN,
@@ -65,7 +65,7 @@ typedef enum {
     /* JTTY: APP menu only, not a long-press action */
     ACTION_APP_JTTY = 118,
     /* XARA: APP menu only, not a long-press action */
-    ACTION_APP_XARA = 119,
+    ACTION_APP_XARA = 120,
 } press_action_t;
 
 typedef enum {
