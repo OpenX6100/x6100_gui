@@ -21,7 +21,7 @@
 #include "dsc/dsc_decoder.h"
 #include "dsc/dsc_format.h"
 #include "dsc/dsc_ships.h"
-#include "dsc/dsc_qrcodegen.h"
+#include "lvgl/src/extra/libs/qrcode/qrcodegen.h"   /* Nayuki's, inside LVGL */
 #include "dsc/dsc_flags.h"
 #include "dialog.h"
 #include "styles.h"
@@ -1108,7 +1108,7 @@ static lv_coord_t d_text_wrap(lv_draw_ctx_t *ctx, const lv_font_t *font, uint32_
 #define QR_MOD      3                   /* pixels per module (2 when space is short) */
 #define QR_QUIET    2                   /* white modules around the code */
 
-static uint8_t qr_code[dscqr_BUFFER_LEN_FOR_VERSION(6)];
+static uint8_t qr_code[qrcodegen_BUFFER_LEN_FOR_VERSION(6)];
 static char qr_for[16] = "";            /* MMSI of qr_code, "" = none */
 
 static bool id_full(const char *id)
@@ -1132,13 +1132,13 @@ static int qr_make(const char *mmsi)
 {
     if (strcmp(qr_for, mmsi)) {
         char url[80];
-        uint8_t tmp[dscqr_BUFFER_LEN_FOR_VERSION(6)];
+        uint8_t tmp[qrcodegen_BUFFER_LEN_FOR_VERSION(6)];
         snprintf(url, sizeof(url), QR_URL, mmsi);
         qr_for[0] = '\0';
-        if (!dscqr_encodeText(url, tmp, qr_code, dscqr_Ecc_LOW, 1, 6, dscqr_Mask_AUTO, true)) return 0;
+        if (!qrcodegen_encodeText(url, tmp, qr_code, qrcodegen_Ecc_LOW, 1, 6, qrcodegen_Mask_AUTO, true)) return 0;
         snprintf(qr_for, sizeof(qr_for), "%s", mmsi);
     }
-    return dscqr_getSize(qr_code);
+    return qrcodegen_getSize(qr_code);
 }
 
 /* the code at (x, y), quiet zone included: black runs on white */
@@ -1150,9 +1150,9 @@ static void d_qr(lv_draw_ctx_t *ctx, lv_coord_t x, lv_coord_t y, int n, int m)
     y += QR_QUIET * m;
     for (int r = 0; r < n; ++r) {
         for (int c = 0; c < n; ) {
-            if (!dscqr_getModule(qr_code, c, r)) { c++; continue; }
+            if (!qrcodegen_getModule(qr_code, c, r)) { c++; continue; }
             int e = c;
-            while (e < n && dscqr_getModule(qr_code, e, r)) e++;
+            while (e < n && qrcodegen_getModule(qr_code, e, r)) e++;
             d_rect(ctx, x + c * m, y + r * m, x + e * m - 1, y + (r + 1) * m - 1, 0x000000, 0, 0, 0);
             c = e;
         }
