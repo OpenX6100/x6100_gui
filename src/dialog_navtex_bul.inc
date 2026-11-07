@@ -523,7 +523,7 @@ static void nav_hdr_draw_cb(lv_event_t *e)
              LV_TEXT_ALIGN_LEFT, code);
     char sn[24];
     snprintf(sn, sizeof(sn), "%d / %d", nav_sel + 1, nav_count);
-    nav_text(ctx, &sony_20, tc, a.x1 + (bw - nav_text_w(&sony_16, sn)) / 2, a.y1 + 52, 0,
+    nav_text(ctx, &sony_20, tc, a.x1 + (bw - nav_text_w(&sony_20, sn)) / 2, a.y1 + 52, 0,
              LV_TEXT_ALIGN_LEFT, sn);
 
     lv_coord_t x = a.x1 + bw + 14, r = a.x2 - 12;
