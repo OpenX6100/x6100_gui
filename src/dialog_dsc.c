@@ -561,6 +561,93 @@ static bool ensure_dir(void)
     return false;
 }
 
+/* ---- saving on a worker thread (Randal on #353, 5) ----------------------------
+ * The UI thread names the file and writes the text in memory; the worker
+ * writes it as PATH.tmp, fsyncs and renames it, so the screen does not wait
+ * for the SD card. */
+#define DSC_SAVE_QUEUE 16
+typedef struct { char path[128]; char *text; } save_job_t;
+static save_job_t save_q[DSC_SAVE_QUEUE];
+static int save_head, save_count;
+static bool save_quit;
+static pthread_t save_thread;
+static bool save_thread_on;
+static pthread_mutex_t save_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t save_cond = PTHREAD_COND_INITIALIZER;
+
+static void save_write(const save_job_t *j)
+{
+    char tmp[136];
+    snprintf(tmp, sizeof(tmp), "%s.tmp", j->path);
+    FILE *f = fopen(tmp, "w");
+    if (!f) { fprintf(stderr, "DSC: cannot write %s\n", tmp); return; }
+    fputs(j->text, f);
+    bool ok = !ferror(f) && fflush(f) == 0 && fsync(fileno(f)) == 0;
+    if (fclose(f) != 0 || !ok || rename(tmp, j->path) != 0) {
+        fprintf(stderr, "DSC: cannot write %s\n", j->path);
+        remove(tmp);
+    }
+}
+
+static void *save_thread_fn(void *arg)
+{
+    (void)arg;
+    pthread_mutex_lock(&save_mutex);
+    for (;;) {
+        while (save_count == 0 && !save_quit)
+            pthread_cond_wait(&save_cond, &save_mutex);
+        if (save_count == 0) break;             /* quit, queue empty */
+        save_job_t j = save_q[save_head];
+        save_head = (save_head + 1) % DSC_SAVE_QUEUE;
+        save_count--;
+        pthread_mutex_unlock(&save_mutex);
+        save_write(&j);
+        free(j.text);
+        pthread_mutex_lock(&save_mutex);
+    }
+    pthread_mutex_unlock(&save_mutex);
+    return NULL;
+}
+
+static void save_start(void)
+{
+    if (save_thread_on) return;
+    save_quit = false;
+    save_thread_on = pthread_create(&save_thread, NULL, save_thread_fn, NULL) == 0;
+}
+
+/* writes what is queued, then ends the worker */
+static void save_stop(void)
+{
+    if (!save_thread_on) return;
+    pthread_mutex_lock(&save_mutex);
+    save_quit = true;
+    pthread_cond_signal(&save_cond);
+    pthread_mutex_unlock(&save_mutex);
+    pthread_join(save_thread, NULL);
+    save_thread_on = false;
+}
+
+/* hands text (malloc'd) to the worker; written here when it cannot take it */
+static void save_queue(const char *path, char *text)
+{
+    save_job_t j;
+    snprintf(j.path, sizeof(j.path), "%s", path);
+    j.text = text;
+    pthread_mutex_lock(&save_mutex);
+    bool queued = save_thread_on && save_count < DSC_SAVE_QUEUE;
+    if (queued) {
+        save_q[(save_head + save_count) % DSC_SAVE_QUEUE] = j;
+        save_count++;
+        pthread_cond_signal(&save_cond);
+    }
+    pthread_mutex_unlock(&save_mutex);
+    if (!queued) {
+        save_write(&j);
+        free(text);
+    }
+}
+
 static void save_call(dsc_call_t *c)
 {
     if (!ensure_dir()) return;
@@ -574,13 +661,13 @@ static void save_call(dsc_call_t *c)
         snprintf(c->file, sizeof(c->file), "%s-%d" DSC_SAVE_EXT, base, k);
         snprintf(path, sizeof(path), DSC_SAVE_DIR "/%s", c->file);
     }
-    /* written as PATH.tmp and renamed when complete: a power-off during the
-     * save leaves no broken call in the browser (browser_load() deletes the
-     * .tmp left behind) */
-    char tmp[136];
-    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
-    FILE *f = fopen(tmp, "w");
-    if (!f) { fprintf(stderr, "DSC: cannot write %s\n", tmp); c->file[0] = '\0'; return; }
+    /* the text in memory; written as PATH.tmp and renamed when complete by
+     * the worker: a power-off during the save leaves no broken call in the
+     * browser (browser_load() deletes the .tmp left behind) */
+    char *text = NULL;
+    size_t text_len = 0;
+    FILE *f = open_memstream(&text, &text_len);
+    if (!f) { c->file[0] = '\0'; return; }
     char ts[32];
     strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", &tm);
     fprintf(f, "DSC call\nutc=%s\nfreq_hz=%ld\ncenter_hz=%.0f\nvalid=%d/%d\nrepaired=%d\nunsure=%d\nverified=%d\nsymbols=",
@@ -595,12 +682,8 @@ static void save_call(dsc_call_t *c)
     char ex[512];
     explain_call(c, ex, sizeof(ex));
     fprintf(f, "\nMeaning: %s\n", ex);
-    bool ok = !ferror(f) && fflush(f) == 0 && fsync(fileno(f)) == 0;
-    if (fclose(f) != 0 || !ok || rename(tmp, path) != 0) {
-        fprintf(stderr, "DSC: cannot write %s\n", path);
-        remove(tmp);
-        c->file[0] = '\0';
-    }
+    if (fclose(f) != 0 || !text) { free(text); c->file[0] = '\0'; return; }
+    save_queue(path, text);
 }
 
 static bool load_call(const char *name, dsc_call_t *c)
@@ -693,6 +776,45 @@ static void prune_files(char **list, int n)
                 deleted, DSC_KEEP_FILES, kept);
 }
 
+/* Which filters each saved call passes, by file name: a saved call never
+ * changes, so with a filter that shows few calls (Show only emergency) the
+ * others are not read again at every opening (Randal on #353, 5) */
+typedef struct { char name[48]; uint8_t pass; } bcache_t;
+static bcache_t *bcache;
+static int nbcache, capbcache;
+
+static int bcache_find(const char *name)
+{
+    for (int i = 0; i < nbcache; ++i)
+        if (!strcmp(bcache[i].name, name)) return i;
+    return -1;
+}
+
+static void bcache_put(const char *name, const dsc_call_t *c)
+{
+    filter_t keep = filter;
+    uint8_t pass = 0;
+    for (int f = 0; f < FLT_N; ++f) {
+        filter = (filter_t)f;
+        if (call_shown(c)) pass |= (uint8_t)(1u << f);
+    }
+    filter = keep;
+    int k = bcache_find(name);
+    if (k < 0) {
+        if (nbcache == capbcache) {
+            int nc = capbcache ? capbcache * 2 : 256;
+            if (nc > 4096) return;
+            bcache_t *t = realloc(bcache, sizeof(*t) * (size_t)nc);
+            if (!t) return;
+            bcache = t;
+            capbcache = nc;
+        }
+        k = nbcache++;
+        snprintf(bcache[k].name, sizeof(bcache[k].name), "%s", name);
+    }
+    bcache[k].pass = pass;
+}
+
 static void browser_load(void)
 {
     browser_free();
@@ -727,8 +849,15 @@ static void browser_load(void)
     int keep = n < DSC_BROWSER_MAX ? n : DSC_BROWSER_MAX;
     bcalls = calloc((size_t)keep, sizeof(dsc_call_t));
     for (int i = 0; i < n; ++i) {
-        if (bcalls && nbcalls < keep && load_call(list[i], &bcalls[nbcalls]) && call_shown(&bcalls[nbcalls]))
-            nbcalls++;
+        if (bcalls && nbcalls < keep) {
+            int k = bcache_find(list[i]);
+            if (k >= 0 && !(bcache[k].pass & (1u << filter))) {
+                /* known not to pass this filter: not read */
+            } else if (load_call(list[i], &bcalls[nbcalls])) {
+                bcache_put(list[i], &bcalls[nbcalls]);
+                if (call_shown(&bcalls[nbcalls])) nbcalls++;
+            }
+        }
         free(list[i]);
     }
     free(list);
@@ -1826,6 +1955,9 @@ static void delete_at(src_t src, int idx)
     if (file[0]) {
         char path[160];
         snprintf(path, sizeof(path), DSC_SAVE_DIR "/%s", file);
+        /* a call just received may still be in the worker's queue: let it
+         * be written first, or it would come back after the delete */
+        if (src == SRC_LIVE) { save_stop(); save_start(); }
         if (unlink(path) != 0) fprintf(stderr, "DSC: cannot delete %s\n", path);
     }
     /* drop it from both lists */
@@ -1938,6 +2070,7 @@ static void construct_cb(lv_obj_t *parent)
     dsc_flags_open();
 
     pthread_mutex_lock(&decoder_mutex);
+    save_start();                               /* calls are saved on its thread */
     if (!decoder) decoder = dsc_decoder_create(DSC_SAMPLE_RATE, message_cb, NULL);
     pthread_mutex_unlock(&decoder_mutex);
     if (!decoder) fprintf(stderr, "DSC: unable to create the decoder\n");
@@ -2024,6 +2157,7 @@ static void destruct_cb(void)
     fifo_head = fifo_count = 0;
     tune_n = tune_i = 0;
     pthread_mutex_unlock(&fifo_mutex);
+    save_stop();                                /* the calls queued are written first */
     ui_last_hz = 0;
 
     /* names are read again at the next opening (the file may have changed) */
