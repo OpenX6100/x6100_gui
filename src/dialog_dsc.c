@@ -154,7 +154,7 @@ static fifo_call_t fifo[DSC_FIFO_LEN];
  * dsc_message_t.start_t) and the channel tuned since each moment of it:
  * a call is stamped with the channel of its start, even if the operator
  * tunes away during the seconds the decoder keeps it to remove copies. */
-#define DSC_TUNE_HIST 16
+#define DSC_TUNE_HIST 128                /* 12.8 s of changes noted every 100 ms */
 static double audio_t;                          /* under decoder_mutex */
 static struct { double t; int32_t hz; } tune_hist[DSC_TUNE_HIST];
 static int tune_n, tune_i;                      /* under fifo_mutex */
@@ -1766,7 +1766,8 @@ static void message_cb(const dsc_message_t *m, void *user)
                 best = tune_hist[k].t;
                 f->hz = tune_hist[k].hz;
             }
-        if (f->hz == 0 && tune_n > 0) f->hz = tune_hist[(tune_i + DSC_TUNE_HIST - 1) % DSC_TUNE_HIST].hz;
+        /* none from before it kept: the oldest kept is the closest */
+        if (f->hz == 0 && tune_n > 0) f->hz = tune_hist[tune_n < DSC_TUNE_HIST ? 0 : tune_i].hz;
         /* its time: now less the audio processed since it started */
         double ago = audio_t - m->start_t;
         f->utc = time(NULL) - (ago > 0.0 ? (time_t)ago : 0);
