@@ -51,9 +51,20 @@
 #define NB_T_COORD          "6ad0ff"        /* position */
 #define NB_T_FIXED          "5ee08a"        /* digit put back */
 
+/* A bulletin of the list: its summary only (what the cards and the header
+ * show) and its file.  The whole bulletin (~12 KB with the qualities) is
+ * read from the file when it is opened (nav_open_b) or merged with a copy
+ * received again.  Randal on #350, 9. */
 typedef struct {
-    nb_bulletin_t b;
-    char file[64];
+    char       b1, b2;
+    int        num;
+    bool       lost_head, lost_tail, sitor;
+    time_t     last_rx;
+    int        receptions;
+    int        quality;                     /* nb_quality() */
+    nb_level_t level;                       /* nb_level() */
+    char       st[48], dtg[48], t1[80], t2[80];  /* nb_summary() */
+    char       file[64];
 } nav_item_t;
 
 static bool nav_mode = true;                /* true: NAVTEX bulletins, false: SITOR-B text */
@@ -62,6 +73,9 @@ static nav_item_t *nav_items[NB_STORE_MAX]; /* newest first */
 static int nav_count = 0;
 static int nav_sel = 0, nav_top = 0;
 static bool nav_detail = false;
+static nav_item_t *nav_open_it = NULL;      /* the one open in nav_detail */
+static nb_bulletin_t nav_open_b;            /* its whole text, read from its file */
+static nb_bulletin_t nav_tmp_b;             /* a stored copy read for a merge */
 static bool nav_receiving = false;          /* a bulletin is being received */
 
 static lv_obj_t *nav_frame = NULL;
@@ -128,21 +142,65 @@ static bool nav_ensure_dir(void)
     return mkdir(NAVTEX_SAVE_DIR, 0755) == 0;
 }
 
-static void nav_save(nav_item_t *it)
+/* the summary of a whole bulletin */
+static void nav_summarize(nav_item_t *it, const nb_bulletin_t *b)
 {
+    it->b1 = b->b1;
+    it->b2 = b->b2;
+    it->num = b->num;
+    it->lost_head = b->lost_head;
+    it->lost_tail = b->lost_tail;
+    it->sitor = b->sitor;
+    it->last_rx = b->last_rx;
+    it->receptions = b->receptions;
+    it->quality = nb_quality(b);
+    it->level = nb_level(b);
+    static char st[80], dtg[80], t1[80], t2[80];
+    nb_summary(b, st, dtg, t1, t2, sizeof(t1));
+    snprintf(it->st, sizeof(it->st), "%s", st);
+    snprintf(it->dtg, sizeof(it->dtg), "%s", dtg);
+    snprintf(it->t1, sizeof(it->t1), "%s", t1);
+    snprintf(it->t2, sizeof(it->t2), "%s", t2);
+}
+
+static void nav_path(const nav_item_t *it, char *path, size_t sz)
+{
+    snprintf(path, sz, NAVTEX_SAVE_DIR "/%s", it->file);
+}
+
+/* the whole bulletin of an item, from its file */
+static bool nav_read(const nav_item_t *it, nb_bulletin_t *b)
+{
+    char path[160];
+    nav_path(it, path, sizeof(path));
+    return it->file[0] && nb_load(b, path);
+}
+
+/* writes b as the item's file (named on the first save) and its summary */
+static void nav_save(nav_item_t *it, const nb_bulletin_t *b)
+{
+    nav_summarize(it, b);
     if (!nav_ensure_dir()) return;
     if (!it->file[0]) {
         struct tm tm;
-        time_t t = it->b.first_rx ? it->b.first_rx : time(NULL);
+        time_t t = b->first_rx ? b->first_rx : time(NULL);
         gmtime_r(&t, &tm);
         char ts[24];
         strftime(ts, sizeof(ts), "%Y%m%d-%H%M%S", &tm);
         snprintf(it->file, sizeof(it->file), NB_PREFIX "%s-%c%c%02d" NB_EXT, ts,
-                 it->b.b1 ? it->b.b1 : 'X', it->b.b2 ? it->b.b2 : 'X', it->b.num >= 0 ? it->b.num : 99);
+                 b->b1 ? b->b1 : 'X', b->b2 ? b->b2 : 'X', b->num >= 0 ? b->num : 99);
     }
     char path[160];
-    snprintf(path, sizeof(path), NAVTEX_SAVE_DIR "/%s", it->file);
-    if (!nb_save(&it->b, path)) fprintf(stderr, "NAVTEX: cannot write %s\n", path);
+    nav_path(it, path, sizeof(path));
+    if (!nb_save(b, path)) fprintf(stderr, "NAVTEX: cannot write %s\n", path);
+}
+
+/* the index of an item in the list, -1 when it is not there any more */
+static int nav_index_of(const nav_item_t *it)
+{
+    for (int i = 0; i < nav_count; ++i)
+        if (nav_items[i] == it) return i;
+    return -1;
 }
 
 static void nav_move_to_top(int i)
@@ -157,24 +215,34 @@ static void nav_done_cb(const nb_bulletin_t *b, void *user)
 {
     (void)user;
 
-    /* received again: improve the stored copy */
+    bool open_gone = false;
+
+    /* received again: improve the stored copy.  Only a copy that can be the
+     * same bulletin is read from its file: a different known header cannot */
+    bool skey = b->b1 && b->b2 && b->num >= 0;
     for (int i = 0; i < nav_count; ++i) {
-        if (nb_merge(&nav_items[i]->b, b)) {
-            nav_save(nav_items[i]);
-            nav_move_to_top(i);
-            fprintf(stderr, "NAVTEX: %c%c%02d received again (%d copies, quality %d%%)\n",
-                    b->b1 ? b->b1 : '?', b->b2 ? b->b2 : '?', b->num >= 0 ? b->num : 99,
-                    nav_items[0]->b.receptions, nb_quality(&nav_items[0]->b));
-            goto shown;
-        }
+        nav_item_t *c = nav_items[i];
+        bool dkey = c->b1 && c->b2 && c->num >= 0;
+        if (dkey && skey && (c->b1 != b->b1 || c->b2 != b->b2 || c->num != b->num)) continue;
+        if (!dkey && !skey) continue;
+        if (!nav_read(c, &nav_tmp_b) || !nb_merge(&nav_tmp_b, b)) continue;
+        nav_save(c, &nav_tmp_b);
+        nav_move_to_top(i);
+        fprintf(stderr, "NAVTEX: %c%c%02d received again (%d copies, quality %d%%)\n",
+                b->b1 ? b->b1 : '?', b->b2 ? b->b2 : '?', b->num >= 0 ? b->num : 99,
+                c->receptions, c->quality);
+        goto shown;
     }
 
     nav_item_t *it = malloc(sizeof(*it));
     if (!it) return;
-    it->b = *b;
     it->file[0] = '\0';
-    nav_save(it);
-    if (nav_count == NB_STORE_MAX) free(nav_items[--nav_count]);    /* the file stays */
+    nav_save(it, b);
+    if (nav_count == NB_STORE_MAX) {                                 /* the file stays */
+        nav_item_t *old = nav_items[--nav_count];
+        if (old == nav_open_it) open_gone = true;
+        free(old);
+    }
     memmove(&nav_items[1], &nav_items[0], sizeof(nav_items[0]) * (size_t)nav_count);
     nav_items[0] = it;
     nav_count++;
@@ -190,9 +258,21 @@ static void nav_done_cb(const nb_bulletin_t *b, void *user)
     }
 
 shown:
-    /* the selection follows the newest bulletin, unless one is open */
-    if (!nav_detail) { nav_sel = 0; nav_top = 0; }
-    else if (nav_sel < nav_count - 1) nav_sel++;    /* keep the open one */
+    /* the selection follows the newest bulletin, unless one is open: then it
+     * follows the open one wherever the list moved it (Randal on #350, 1) */
+    if (!nav_detail) {
+        nav_sel = 0;
+        nav_top = 0;
+    } else if (open_gone) {
+        nav_open_it = NULL;                 /* dropped from the list: back to it */
+        nav_sel = 0;
+        if (nav_mode) nav_show_list();
+        else nav_detail = false;            /* SITOR-B view shown: the list on return */
+    } else {
+        int k = nav_index_of(nav_open_it);
+        if (k >= 0) nav_sel = k;
+        if (nav_hdr) lv_obj_invalidate(nav_hdr);
+    }
     if (nav_list) lv_obj_invalidate(nav_list);
 }
 
@@ -216,7 +296,7 @@ static char nav_file_subject(const char *name)
 static int nav_item_cmp(const void *a, const void *b)
 {
     const nav_item_t *x = *(nav_item_t *const *)a, *y = *(nav_item_t *const *)b;
-    return (y->b.last_rx > x->b.last_rx) - (y->b.last_rx < x->b.last_rx);
+    return (y->last_rx > x->last_rx) - (y->last_rx < x->last_rx);
 }
 
 static void nav_load_dir(void)
@@ -261,7 +341,8 @@ static void nav_load_dir(void)
         snprintf(path, sizeof(path), NAVTEX_SAVE_DIR "/%s", files[i].name);
         if (nav_count < NB_STORE_MAX) {
             nav_item_t *it = malloc(sizeof(*it));
-            if (it && nb_load(&it->b, path)) {
+            if (it && nb_load(&nav_tmp_b, path)) {
+                nav_summarize(it, &nav_tmp_b);  /* only the summary is kept */
                 snprintf(it->file, sizeof(it->file), "%s", files[i].name);
                 nav_items[nav_count++] = it;
             } else {
@@ -286,6 +367,7 @@ static void nav_free_all(void)
 {
     for (int i = 0; i < nav_count; ++i) free(nav_items[i]);
     nav_count = 0;
+    nav_open_it = NULL;
 }
 
 /* ---- drawing helpers (as DSC) ----------------------------------------------------- */
@@ -364,19 +446,19 @@ static uint32_t nav_subject_color(char b2)
 }
 
 /* side bar / subject block of a bulletin */
-static uint32_t nav_color(const nb_bulletin_t *b)
+static uint32_t nav_color(const nav_item_t *b)
 {
     return b->sitor ? NB_C_SITOR : nav_subject_color(b->b2);
 }
 
 /* subject in words, or what is known of it */
-static const char *nav_subject(const nb_bulletin_t *b, const char *start_lost)
+static const char *nav_subject(const nav_item_t *b, const char *start_lost)
 {
     if (b->sitor) return "SITOR-B message";
     return b->b2 ? nb_subject_name(b->b2) : start_lost;
 }
 
-static void nav_code(const nb_bulletin_t *b, char *dst, size_t sz)
+static void nav_code(const nav_item_t *b, char *dst, size_t sz)
 {
     if (b->sitor) { snprintf(dst, sz, "SB"); return; }
     char n[4] = "--";
@@ -384,9 +466,9 @@ static void nav_code(const nb_bulletin_t *b, char *dst, size_t sz)
     snprintf(dst, sz, "%c%c%s", b->b1 ? b->b1 : '-', b->b2 ? b->b2 : '-', n);
 }
 
-static void nav_level(const nb_bulletin_t *b, const char **name, uint32_t *color)
+static void nav_level(const nav_item_t *b, const char **name, uint32_t *color)
 {
-    switch (nb_level(b)) {
+    switch (b->level) {
     case NB_LEVEL_OK:      *name = "OK";         *color = NB_C_OK;   break;
     case NB_LEVEL_DAMAGED: *name = "DAMAGED";    *color = NB_C_WARN; break;
     default:               *name = "UNREADABLE"; *color = NB_C_BAD;  break;
@@ -402,21 +484,21 @@ static void nav_time(time_t t, char *dst, size_t sz)
 }
 
 /* quality pill "OK 97%" right-aligned at x; returns its left x */
-static lv_coord_t nav_pill(lv_draw_ctx_t *ctx, const nb_bulletin_t *b, lv_coord_t x, lv_coord_t y,
+static lv_coord_t nav_pill(lv_draw_ctx_t *ctx, const nav_item_t *b, lv_coord_t x, lv_coord_t y,
                            const lv_font_t *font)
 {
     const char *ln;
     uint32_t lc;
     nav_level(b, &ln, &lc);
     char t[32];
-    snprintf(t, sizeof(t), "%s %d%%", ln, nb_quality(b));
+    snprintf(t, sizeof(t), "%s %d%%", ln, b->quality);
     lv_coord_t w = nav_text_w(font, t) + 16, h = lv_font_get_line_height(font) + 4;
     nav_rect(ctx, x - w, y, x, y + h, lc, h / 2, 0, 0);
     nav_text(ctx, font, lc == NB_C_WARN ? 0x141414 : 0xffffff, x - 8, y + 2, 0, LV_TEXT_ALIGN_RIGHT, t);
     return x - w;
 }
 
-static void nav_draw_card(lv_draw_ctx_t *ctx, const nb_bulletin_t *b, lv_coord_t x1, lv_coord_t y1,
+static void nav_draw_card(lv_draw_ctx_t *ctx, const nav_item_t *b, lv_coord_t x1, lv_coord_t y1,
                           lv_coord_t x2, lv_coord_t y2, bool sel)
 {
     nav_rect(ctx, x1, y1, x2, y2, sel ? NB_C_PANEL_SEL : NB_C_PANEL, 6,
@@ -424,10 +506,10 @@ static void nav_draw_card(lv_draw_ctx_t *ctx, const nb_bulletin_t *b, lv_coord_t
     uint32_t sc = nav_color(b);
     nav_rect(ctx, x1 + (sel ? 3 : 1), y1 + 8, x1 + 10, y2 - 8, sc, 2, 0, 0);
 
-    char code[8], ts[24], st[80], dtg[80], t1[80], t2[80];
+    char code[8], ts[24];
     nav_code(b, code, sizeof(code));
     nav_time(b->last_rx, ts, sizeof(ts));
-    nb_summary(b, st, dtg, t1, t2, sizeof(t1));
+    const char *st = b->st, *t1 = b->t1, *t2 = b->t2;
 
     lv_coord_t x = x1 + 20, r = x2 - 10;
     /* 1: code, subject, time */
@@ -487,7 +569,7 @@ static void nav_list_draw_cb(lv_event_t *e)
         if (k >= nav_count) break;
         lv_coord_t x = box.x1 + (i % NB_COLS) * (cw + NB_GAP);
         lv_coord_t y = box.y1 + (i / NB_COLS) * (ch + NB_GAP);
-        nav_draw_card(ctx, &nav_items[k]->b, x, y, x + cw - 1, y + ch - 1, k == nav_sel);
+        nav_draw_card(ctx, nav_items[k], x, y, x + cw - 1, y + ch - 1, k == nav_sel);
     }
 
     /* bottom line: position in the list, reception in progress */
@@ -506,7 +588,7 @@ static void nav_hdr_draw_cb(lv_event_t *e)
     lv_obj_t *obj = lv_event_get_target(e);
     lv_draw_ctx_t *ctx = lv_event_get_draw_ctx(e);
     if (nav_sel < 0 || nav_sel >= nav_count) return;
-    const nb_bulletin_t *b = &nav_items[nav_sel]->b;
+    const nav_item_t *b = nav_items[nav_sel];
     lv_area_t a;
     lv_obj_get_coords(obj, &a);
 
@@ -527,8 +609,8 @@ static void nav_hdr_draw_cb(lv_event_t *e)
              LV_TEXT_ALIGN_LEFT, sn);
 
     lv_coord_t x = a.x1 + bw + 14, r = a.x2 - 12;
-    char st[80], dtg[80], t1[80], t2[80], line[200], ts[24];
-    nb_summary(b, st, dtg, t1, t2, sizeof(t1));
+    char line[200], ts[24];
+    const char *st = b->st, *dtg = b->dtg;
 
     /* 1: subject, quality */
     lv_coord_t pl = nav_pill(ctx, b, r, a.y1 + 6, &sony_20);
@@ -593,8 +675,13 @@ static void nav_show_detail(void)
 {
     if (!nav_frame || nav_count == 0) return;
     nav_fix_top();
+    nav_open_it = nav_items[nav_sel];
+    if (!nav_read(nav_open_it, &nav_open_b)) {      /* its file is gone or broken */
+        msg_update_text_fmt("Cannot read %s", nav_open_it->file);
+        return;
+    }
     nav_detail = true;
-    nav_build_body(&nav_items[nav_sel]->b);
+    nav_build_body(&nav_open_b);
     lv_obj_add_flag(nav_list, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(nav_hdr, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(nav_body, LV_OBJ_FLAG_HIDDEN);
@@ -610,6 +697,7 @@ static void nav_show_list(void)
 {
     if (!nav_frame) return;
     nav_detail = false;
+    nav_open_it = NULL;
     lv_obj_add_flag(nav_hdr, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(nav_body, LV_OBJ_FLAG_HIDDEN);
     lv_label_set_text_static(nav_body_label, "");
@@ -680,9 +768,10 @@ static void nav_delete_cb(button_data_t *d)
     nav_item_t *it = nav_items[nav_sel];
     if (it->file[0]) {
         char path[160];
-        snprintf(path, sizeof(path), NAVTEX_SAVE_DIR "/%s", it->file);
+        nav_path(it, path, sizeof(path));
         if (unlink(path) != 0) fprintf(stderr, "NAVTEX: cannot delete %s\n", path);
     }
+    if (it == nav_open_it) nav_open_it = NULL;
     free(it);
     memmove(&nav_items[nav_sel], &nav_items[nav_sel + 1], sizeof(nav_items[0]) * (size_t)(nav_count - nav_sel - 1));
     nav_count--;
