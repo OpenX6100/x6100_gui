@@ -815,6 +815,25 @@ static void bcache_put(const char *name, const dsc_call_t *c)
     bcache[k].pass = pass;
 }
 
+/* The .tmp of a save cut by a power-off (see save_call()): removed once on
+ * opening, before the save worker starts, so never a .tmp it is writing. */
+static void save_tmp_cleanup(void)
+{
+    DIR *d = opendir(DSC_SAVE_DIR);
+    if (!d) return;
+    struct dirent *de;
+    size_t pl = strlen(DSC_SAVE_PREFIX);
+    while ((de = readdir(d))) {
+        size_t l = strlen(de->d_name);
+        if (l > pl + 4 && !strncmp(de->d_name, DSC_SAVE_PREFIX, pl) && !strcmp(de->d_name + l - 4, ".tmp")) {
+            char tmp[160];
+            snprintf(tmp, sizeof(tmp), DSC_SAVE_DIR "/%s", de->d_name);
+            unlink(tmp);
+        }
+    }
+    closedir(d);
+}
+
 static void browser_load(void)
 {
     browser_free();
@@ -826,12 +845,6 @@ static void browser_load(void)
     size_t pl = strlen(DSC_SAVE_PREFIX), el = strlen(DSC_SAVE_EXT);
     while ((de = readdir(d))) {
         size_t l = strlen(de->d_name);
-        if (l > pl + 4 && !strncmp(de->d_name, DSC_SAVE_PREFIX, pl) && !strcmp(de->d_name + l - 4, ".tmp")) {
-            char tmp[160];                  /* a save cut by a power-off: see save_call() */
-            snprintf(tmp, sizeof(tmp), DSC_SAVE_DIR "/%s", de->d_name);
-            unlink(tmp);
-            continue;
-        }
         if (l <= pl + el || strncmp(de->d_name, DSC_SAVE_PREFIX, pl) || strcmp(de->d_name + l - el, DSC_SAVE_EXT))
             continue;
         if (n == cap) {
@@ -2069,6 +2082,7 @@ static void construct_cb(lv_obj_t *parent)
     dsc_ships_open();
     dsc_flags_open();
 
+    save_tmp_cleanup();
     pthread_mutex_lock(&decoder_mutex);
     save_start();                               /* calls are saved on its thread */
     if (!decoder) decoder = dsc_decoder_create(DSC_SAMPLE_RATE, message_cb, NULL);
