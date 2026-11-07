@@ -235,6 +235,7 @@ static void nf_activate_cb(void *user, int index)
     (void)user;
     if (nf_is_head(index)) return;              /* a heading: nothing to tune */
     nf_tune_row(index);
+    wait_release();                             /* the list goes: see wait_release() */
     nf_close();
 }
 

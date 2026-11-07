@@ -102,6 +102,7 @@ static button_data_t btn_scan, btn_scan_wait;
 static void scan_poll(void);
 static void scan_stop(const char *why);
 static bool scan_running(void);
+static void wait_release(void);
 static void scan_audio(const float *samples, size_t n);
 static void scan_q_cb(int c, int quality, void *user);
 static void scan_wait_load(void);
@@ -1149,10 +1150,21 @@ static void view_key_cb(lv_event_t *e)
     lv_obj_scroll_to_y(obj, y, LV_ANIM_OFF);
 }
 
+/* Before deleting the focused object from its own key / press handler: wait
+ * for the release, or LVGL takes the held key as a long press on the next
+ * focused object (as digi_menu.c does) */
+static void wait_release(void)
+{
+    lv_indev_t *indev = lv_indev_get_act();
+    if (indev)
+        lv_indev_wait_release(indev);
+}
+
 static void view_pressed_cb(lv_event_t *e)
 {
     (void)e;
     /* MFK press closes the text and returns to the list. */
+    wait_release();
     view_close();
 }
 
