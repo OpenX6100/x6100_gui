@@ -253,7 +253,7 @@ static _Atomic float tx_alc, tx_pwr; /* the last readings while keyed, for the s
 static atomic_bool   tx_meter;       /* readings have come in this transmission */
 static bool  ignore_busy = false; /* xara's busy detector bypassed (SIGUSR1 / SIGUSR2) */
 static bool  busy_sent;           /* this xara run has been told */
-static bool  record_on   = true;  /* Settings: Record (on while we test xara against VARA) */
+static bool  record_on   = false; /* Settings: Record (off until turned on) */
 static bool  auto_answer;         /* Settings: Auto answer; off every time XARA opens */
 static bool  full_speed;          /* Settings: Full speed (registered); off every time XARA opens */
 static int   lead_idx    = 4;     /* Settings: PTT lead, lead_ms[] (100 ms: the base keys 60-90 ms after MODEM ON, ptt.log) */
