@@ -564,6 +564,8 @@ void spectrum_clear() {
         spectrum_peak[i].time = now;
     }
     s3d_count  = 0;
+    /* the DSP thread's last frame is from before the change */
+    __atomic_store_n(&s3d_src_ok, false, __ATOMIC_RELAXED);
     s3d_lvl_ok = false;
 }
 
@@ -914,18 +916,21 @@ static int32_t spec3d_vfo_freq(void) {
     return cur_base_lo_freq ? cur_base_lo_freq : fg_freq + mode_lo_offset - if_shift + rit;
 }
 
+/* The frequency the history is drawn against: the one now, or while
+ * transmitting the last receive frame's (the TX frames' base frequency
+ * differs by the RIT / IF shift, and the RX history would jump sideways). */
+static int32_t s3d_rx_ref;
+
+static int32_t spec3d_ref_freq(void) {
+    return (spectrum_tx && s3d_rx_ref) ? s3d_rx_ref : spec3d_vfo_freq();
+}
+
 /* Keep a copy of the live trace every SPEC3D_PERIOD_US (main thread). */
 static void spec3d_push(void) {
     uint64_t now = get_time_us();
 
     if (s3d_count && now - s3d_last_push_us < SPEC3D_PERIOD_US) {
         return;
-    }
-    /* Stay on the period's grid unless we fell behind (closed screen etc.) */
-    if (s3d_count && now - s3d_last_push_us < 2 * SPEC3D_PERIOD_US) {
-        s3d_last_push_us += SPEC3D_PERIOD_US;
-    } else {
-        s3d_last_push_us = now;
     }
 
     /* The DSP thread's latest frame, trace and base frequency together; if
@@ -958,6 +963,17 @@ static void spec3d_push(void) {
      * follows tuning. */
     if (row->base_freq == 0) {
         row->base_freq = (uint32_t)spec3d_vfo_freq();
+    }
+    s3d_rx_ref = (int32_t)row->base_freq;
+    /* Only now, with a row stored: a skipped push (TX, no frame yet) moved
+     * the clock on before, and the stack slid back a slot and snapped
+     * forward with nothing new (10 times a second while sending). Now it
+     * holds still until a row comes. Stay on the period's grid unless we
+     * fell behind (closed screen, a transmission). */
+    if (s3d_count && now - s3d_last_push_us < 2 * SPEC3D_PERIOD_US) {
+        s3d_last_push_us += SPEC3D_PERIOD_US;
+    } else {
+        s3d_last_push_us = now;
     }
     s3d_head = (s3d_head + 1) % SPEC3D_MAX_LINES;
     if (s3d_count < SPEC3D_MAX_LINES) {
@@ -1117,7 +1133,7 @@ static void spectrum_render_3d(uint32_t *buf, int stride) {
             break;
         }
         const spec3d_row_t *row   = &s3d_rows[(s3d_head - j + SPEC3D_MAX_LINES) % SPEC3D_MAX_LINES];
-        float               shift = (float)((int64_t)spec3d_vfo_freq() - row->base_freq) * SPECTRUM_NFFT / width_hz;
+        float               shift = (float)((int64_t)spec3d_ref_freq() - row->base_freq) * SPECTRUM_NFFT / width_hz;
         spec3d_trace(buf, stride, horizon, row->val, shift, offset, k, min, max);
     }
 }

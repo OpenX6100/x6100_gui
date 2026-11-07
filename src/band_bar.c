@@ -76,19 +76,34 @@ static void text(lv_draw_ctx_t *ctx, lv_coord_t cx, lv_coord_t cy, const char *s
     lv_draw_label(ctx, &d, &a, s, NULL);
 }
 
-/* A round label step: 1, 2, 2.5 or 5 x 10^n Hz, four or five across. */
+/* A round label step: 1, 2, 2.5 or 5 x 10^n Hz, the smallest with at most
+ * five across (the two at the very edges are left out). */
 static int32_t label_step(int32_t span) {
     static const int32_t m[] = {1, 2, 25, 5};
     static const int32_t div[] = {1, 1, 10, 1};
     for (int32_t p = 1000; p <= 10000000; p *= 10) {
         for (int i = 0; i < 4; i++) {
             int32_t s = m[i] * p / div[i];
-            if (span / s <= 4) {
+            if (span / s <= 5) {
                 return s;
             }
         }
     }
     return 10000000;
+}
+
+/* hatched shading, only between x1 and x2 (out of band) */
+static void hatch(lv_draw_ctx_t *ctx, lv_coord_t x1, lv_coord_t x2, lv_coord_t y0, lv_coord_t y1) {
+    lv_area_t clip = {x1, y0, x2, y1}, *old = (lv_area_t *)ctx->clip_area, cut;
+
+    if (x2 <= x1 || !_lv_area_intersect(&cut, &clip, old)) {
+        return;
+    }
+    ctx->clip_area = &cut;
+    for (lv_coord_t x = x1 - (y1 - y0) - ((x1 - (y1 - y0)) % 7 + 7) % 7; x < x2; x += 7) {
+        line(ctx, x, y1, x + (y1 - y0), y0, col(62, 30, 30), 1);
+    }
+    ctx->clip_area = old;
 }
 
 static void draw_cb(lv_event_t *e) {
@@ -107,14 +122,18 @@ static void draw_cb(lv_event_t *e) {
     }
 #define X(f) ((lv_coord_t)(c.x1 + ((int64_t)(f) - lo_hz) * w / (hi_hz - lo_hz)))
 
-    /* out of band underneath: dark, a red-brown hatch */
+    /* out of band underneath: dark, a red-brown hatch where no band is */
     rect(ctx, c.x1, y0, c.x2, y1, col(30, 26, 28));
-    for (lv_coord_t x = c.x1 - (y1 - y0); x < c.x2; x += 7) {
-        line(ctx, x, y1, x + (y1 - y0), y0, col(62, 30, 30), 1);
-    }
-
     region = band_plan_region();
     n      = band_plan_segments(region, lo_hz, hi_hz, seg, MAX_SEGS);
+    {
+        lv_coord_t x = c.x1;
+        for (int i = 0; i < n; i++) {
+            hatch(ctx, x, LV_MAX(X(seg[i].lo_hz), c.x1), y0, y1);
+            x = LV_MAX(x, LV_MIN(X(seg[i].hi_hz), c.x2));
+        }
+        hatch(ctx, x, c.x2, y0, y1);
+    }
     for (int i = 0; i < n; i++) {
         lv_coord_t   a = LV_MAX(X(seg[i].lo_hz), c.x1), b = LV_MIN(X(seg[i].hi_hz), c.x2);
         lv_color32_t k = kind_color[seg[i].kind];

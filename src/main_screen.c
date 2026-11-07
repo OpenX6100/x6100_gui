@@ -1346,6 +1346,8 @@ lv_obj_t * main_screen(lv_obj_t *overlay_scr) {
     subject_subscribe_delayed((Subject*)cfg.ui.spectrum_3d(), on_spectrum_height_change, NULL);
     subject_subscribe_delayed((Subject*)cfg.ui.spectrum_3d_size(), on_spectrum_height_change, NULL);
     subject_subscribe_delayed((Subject*)cfg.ui.band_plan_region(), on_band_plan_change, NULL);
+    subject_subscribe_delayed((Subject*)cfg.qth(), on_band_plan_change, NULL);     /* Auto: the locator's region */
+    subject_subscribe_delayed((Subject*)cfg.rit(), update_freq_boundaries, NULL);
 
     return obj;
 }
@@ -1419,6 +1421,8 @@ static void on_fg_freq_change(Subject *subj, void *user_data) {
 
 static void update_freq_boundaries(Subject *subj, void *user_data) {
     int32_t f = subject_i_get(radio_fg_freq_subj) - param_i_get(cfg.band.if_shift());
+    /* the spectrum is centred with the RIT too (spectrum_compute_offset) */
+    int32_t f_spec = f + param_i_get(cfg.rit());
 
     uint16_t mhz, khz, hz;
 
@@ -1430,7 +1434,7 @@ static void update_freq_boundaries(Subject *subj, void *user_data) {
 
     split_freq(f + half_width, &mhz, &khz, &hz);
     lv_label_set_text_fmt(freq_bounds[1], "%i.%03i", mhz, khz);
-    band_bar_set_range(f - (int32_t)half_width, f + (int32_t)half_width);
+    band_bar_set_range(f_spec - (int32_t)half_width, f_spec + (int32_t)half_width);
 }
 
 static void update_zoom_on_if_shift_change(Subject *subj, void *user_data) {
