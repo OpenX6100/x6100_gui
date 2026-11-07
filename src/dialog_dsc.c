@@ -1592,8 +1592,21 @@ static void message_cb(const dsc_message_t *m, void *user)
     pthread_mutex_unlock(&fifo_mutex);
 }
 
+/* the display index of the live call numbered num, -1 when not shown */
+static int live_index_of(int num)
+{
+    int n = live_count();
+    for (int i = 0; i < n; ++i)
+        if (live_at(i)->num == num) return i;
+    return -1;
+}
+
 static void add_call(const dsc_message_t *m)
 {
+    /* the call open in Details, by its number: the list moves under it */
+    const dsc_call_t *open = view == V_DETAIL && detail_src == SRC_LIVE ? detail_call() : NULL;
+    int open_num = open ? open->num : 0;
+
     if (ncalls == DSC_MAX_CALLS) {
         memmove(&calls[0], &calls[1], sizeof(dsc_call_t) * (DSC_MAX_CALLS - 1));
         ncalls--;
@@ -1609,10 +1622,21 @@ static void add_call(const dsc_message_t *m)
 
     /* keep the selected call where it is unless the newest one is selected
      * (a call hidden by the filter does not move anything) */
-    if (call_shown(c)) {
+    if (open_num) {
+        /* Details open: the open call and the list selection go where it
+         * now is; dropped as the oldest of a full list: back to the list
+         * (Randal on #353, 4) */
+        int k = live_index_of(open_num);
+        if (k >= 0) {
+            detail_idx = k;
+            list_sel = k;
+        } else {
+            list_sel = 0;
+            show_view(V_LIST);
+        }
+    } else if (call_shown(c)) {
         if (list_sel > 0) list_sel++;
         if (list_top > 0 || list_sel > 0) list_top += (list_sel > 0) ? 1 : 0;
-        if (view == V_DETAIL && detail_src == SRC_LIVE) detail_idx++;
     }
     list_fix_top();
 
