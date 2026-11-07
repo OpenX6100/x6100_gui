@@ -16,7 +16,6 @@ extern "C" {
 #endif
 
 extern dialog_t *dialog_dsc;
-bool dialog_dsc_is_active(void);
 
 /* Microphone UP (dir < 0) / DOWN (dir > 0) while DSC is open: previous /
  * next channel of the frequency list.  false: not handled (DSC closed). */

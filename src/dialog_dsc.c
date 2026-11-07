@@ -108,7 +108,6 @@ static void show_view(view_t v);
 static dialog_t dialog;
 dialog_t *dialog_dsc = &dialog;
 
-static lv_obj_t *parent_obj = NULL;
 static lv_obj_t *small_panel = NULL;
 static lv_obj_t *list_obj = NULL;
 static lv_obj_t *detail_obj = NULL;
@@ -218,11 +217,6 @@ static dialog_t dialog = {
     .key_cb = key_cb,
     .btn_page = &page_list_1
 };
-
-bool dialog_dsc_is_active(void)
-{
-    return dialog.run;
-}
 
 /* ---- frequencies ---------------------------------------------------- */
 
@@ -1854,7 +1848,6 @@ static void construct_cb(lv_obj_t *parent)
 {
     app_radio_begin();      /* 1KO125: USB-D locked, zoom 4x, DSP off while open */
     spectrum_set_markers(915, 1085);   /* tuning markers: 1000 Hz -/+ 85 Hz */
-    parent_obj = parent;
     names_load();
     dsc_ships_open();
     dsc_flags_open();
@@ -1953,6 +1946,5 @@ static void destruct_cb(void)
     dsc_ships_close();
     dsc_flags_close();
 
-    parent_obj = NULL;
     fprintf(stderr, "DSC: closed\n");
 }

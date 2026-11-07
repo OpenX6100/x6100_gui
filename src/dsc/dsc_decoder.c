@@ -76,7 +76,6 @@ typedef enum { ST_SEARCH = 0, ST_COLLECT } ch_state_t;
 typedef struct {
     float center;
     tone_t lo, hi;
-    float prev_d;
     float phase;                /* bit clock, 0..1, boundary at 0 */
     int   level;                /* confirmed discriminator sign, +1 / -1 */
     bool  cross;                /* zero crossing seen, not yet confirmed */
@@ -387,7 +386,7 @@ static bool assemble(const channel_t *c, dsc_message_t *m)
      * collector keeps until it gives up is not counted. */
     int last = m->n - 1;
     for (int e = 12; e < m->n; ++e)
-        if (m->sym[e] == 117 || m->sym[e] == 122 || m->sym[e] == 127) { last = e + 1; break; }
+        if (is_eos(m->sym[e])) { last = e + 1; break; }
     int end = start + 2 * (last + shift + best_l) + 1;
     if (end > n - 1) end = n - 1;
     m->raw_total = end + 1;
@@ -399,8 +398,7 @@ static bool assemble(const channel_t *c, dsc_message_t *m)
      * including the end of sequence, which follows the fixed fields */
     m->ecc_ok = false;
     for (int e = 12; e + 1 < m->n; ++e) {
-        int v = m->sym[e];
-        if (v != 117 && v != 122 && v != 127) continue;
+        if (!is_eos(m->sym[e])) continue;
         /* the format specifier counts once.  Candidates: message after
          * the second copy (index 2) or, when only one copy was collected,
          * at index 1; when the two copies are different valid formats,
@@ -505,8 +503,7 @@ static bool worth_emitting(const dsc_message_t *m)
 {
     if (m->ecc_ok) return true;
     int f = m->sym[0] >= 0 ? m->sym[0] : (m->n > 1 ? m->sym[1] : -1);
-    bool fmt_ok = f == 102 || f == 112 || f == 114 || f == 116 || f == 120 || f == 123;
-    return fmt_ok && m->n >= 12 && known_count(m) * 100 >= m->n * 60;
+    return is_format(f) && m->n >= 12 && known_count(m) * 100 >= m->n * 60;
 }
 
 /*
@@ -773,7 +770,6 @@ void dsc_decoder_process(dsc_decoder_t *d, const float *x, int n)
                 c->level = sg;
                 c->cross = false;
             }
-            c->prev_d = dv;
 
             float before = c->phase;
             c->phase += step;

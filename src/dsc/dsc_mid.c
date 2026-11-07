@@ -321,11 +321,6 @@ const char *dsc_mid_iso(int mid)
 
 const char *dsc_mid_country(int mid)
 {
-    int lo = 0, hi = (int)(sizeof(mids) / sizeof(mids[0])) - 1;
-    while (lo <= hi) {
-        int m = (lo + hi) / 2;
-        if (mids[m].mid == mid) return mids[m].name;
-        if (mids[m].mid < mid) lo = m + 1; else hi = m - 1;
-    }
-    return NULL;
+    const mid_t *m = mid_find(mid);
+    return m ? m->name : NULL;
 }
