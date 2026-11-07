@@ -44,6 +44,8 @@ target_sources(${PROJECT_NAME} PUBLIC
     # JTTY
     dialog_jtty.c jtty/jtty_proto.c jtty/jtty_fec.c jtty/jtty_source.c
     jtty/jtty_demod.c jtty/jtty_rx.c jtty/jtty_mod.c jtty/jtty_pack.c jtty_tx.c jtty_log.c
+    # DSC
+    dialog_dsc.c dsc/dsc_decoder.c dsc/dsc_format.c dsc/dsc_mid.c dsc/dsc_coast.c dsc/dsc_ships.c dsc/dsc_qrcodegen.c dsc/dsc_flags.c
     # The apps on their way in: each one's sources below its name
     # WSPR
     dialog_wspr.c wspr_app.c wspr_worker.c wspr_demod.c wspr_fano.c
