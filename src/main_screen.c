@@ -76,6 +76,8 @@
 #include "freq_info.h"
 #include "lock_manager.h"
 #include "diag_log.h"
+#include "band_bar.h"
+#include "band_plan.h"
 
 #include <unistd.h>
 #include <stdint.h>
@@ -124,10 +126,12 @@ static void keypad_vm(const event_keypad_t *kp);
 
 static void on_fg_freq_change(Subject *subj, void *user_data);
 static void update_freq_boundaries(Subject *subj, void *user_data);
+static void on_band_plan_change(Subject *subj, void *user_data);
 static void update_zoom_on_if_shift_change(Subject *subj, void *user_data);
 
 static void apply_main_layout(void);
 static void on_spectrum_height_change(Subject *subj, void *user_data);
+static lv_coord_t main_spectrum_height(void);
 
 static void lock_freq_cb(void * s, lv_msg_t * msg);
 static void on_dialog_start_cb(void *s, lv_msg_t *m);
@@ -1242,7 +1246,7 @@ void main_screen_set_freq(uint64_t freq) {
 
 lv_obj_t * main_screen(lv_obj_t *overlay_scr) {
     uint16_t y = 0;
-    uint16_t spectrum_height = (uint16_t)param_i_get(cfg.ui.spectrum_height());
+    uint16_t spectrum_height = (uint16_t)main_spectrum_height();
 
     obj = overlay_scr;
 
@@ -1286,6 +1290,9 @@ lv_obj_t * main_screen(lv_obj_t *overlay_scr) {
     lv_obj_add_style(f, &style.text_muted_color, LV_STATE_DISABLED);
     lv_obj_align(f, LV_ALIGN_TOP_RIGHT, -5, TOP_BLOCK_SMALL_HEIGHT + 10);
     freq_bounds[1] = f;
+
+    /* The band bar under the 3D view (shown by apply_main_layout()) */
+    band_bar_create(obj);
 
     /* Waterfall */
     waterfall = waterfall_init(overlay_scr, y, SCREEN_HEIGHT - y);
@@ -1337,15 +1344,37 @@ lv_obj_t * main_screen(lv_obj_t *overlay_scr) {
     subject_subscribe_delayed((Subject*)cfg.mode.zoom(), update_zoom_on_if_shift_change, NULL);
 
     subject_subscribe_delayed_and_notify((Subject*)cfg.ui.spectrum_height(), on_spectrum_height_change, NULL);
+    subject_subscribe_delayed((Subject*)cfg.ui.spectrum_3d(), on_spectrum_height_change, NULL);
+    subject_subscribe_delayed((Subject*)cfg.ui.spectrum_3d_size(), on_spectrum_height_change, NULL);
+    subject_subscribe_delayed((Subject*)cfg.ui.band_plan_region(), on_band_plan_change, NULL);
+    subject_subscribe_delayed((Subject*)cfg.qth(), on_band_plan_change, NULL);     /* Auto: the locator's region */
+    subject_subscribe_delayed((Subject*)cfg.rit(), update_freq_boundaries, NULL);
 
     return obj;
 }
 
-static void apply_main_layout(void) {
-    lv_coord_t h = (lv_coord_t)param_i_get(cfg.ui.spectrum_height());
-    lv_coord_t y = INDICATORS_HEIGHT;
+/* 2D: the Spectrum height setting; 3D: its own size, a percent of the screen
+ * below the indicators. */
+static lv_coord_t main_spectrum_height(void) {
+    if (param_i_get(cfg.ui.spectrum_3d())) {
+        return (SCREEN_HEIGHT - INDICATORS_HEIGHT) * param_i_get(cfg.ui.spectrum_3d_size()) / 100;
+    }
+    return (lv_coord_t)param_i_get(cfg.ui.spectrum_height());
+}
 
-    spectrum_set_geometry(y, h);
+static void apply_main_layout(void) {
+    lv_coord_t h = main_spectrum_height();
+    lv_coord_t y = INDICATORS_HEIGHT;
+    bool       is_3d = param_i_get(cfg.ui.spectrum_3d());
+
+    /* 3D: the band bar takes its height from the 3D view, so the waterfall
+     * stays as big as without it; it replaces the corner frequencies
+     * (transparent rather than hidden: rx_cb/tx_cb hide and show the
+     * left one). */
+    spectrum_set_geometry(y, is_3d ? h - BAND_BAR_HEIGHT : h);
+    band_bar_set_geometry(y + h - BAND_BAR_HEIGHT, is_3d, y);
+    lv_obj_set_style_opa(freq_bounds[0], is_3d ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
+    lv_obj_set_style_opa(freq_bounds[1], is_3d ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
     y += h;
 
     lv_coord_t wf_h = SCREEN_HEIGHT - y;
@@ -1360,7 +1389,19 @@ static void apply_main_layout(void) {
 }
 
 static void on_spectrum_height_change(Subject *subj, void *user_data) {
+    static int was_3d = -1;     /* -1: not set yet (start-up shows no hint) */
+    int        is_3d  = param_i_get(cfg.ui.spectrum_3d()) != 0;
+
     apply_main_layout();
+    if (was_3d == 0 && is_3d) {
+        /* the band bar's colours, once, on the message line: no legend */
+        msg_update_text_fmt("Band plan, Region %i: blue CW, green digital, amber phone", band_plan_region());
+    }
+    was_3d = is_3d;
+}
+
+static void on_band_plan_change(Subject *subj, void *user_data) {
+    band_bar_refresh();
 }
 
 static void on_fg_freq_change(Subject *subj, void *user_data) {
@@ -1381,6 +1422,8 @@ static void on_fg_freq_change(Subject *subj, void *user_data) {
 
 static void update_freq_boundaries(Subject *subj, void *user_data) {
     int32_t f = subject_i_get(radio_fg_freq_subj) - param_i_get(cfg.band.if_shift());
+    /* the spectrum is centred with the RIT too (spectrum_compute_offset) */
+    int32_t f_spec = f + param_i_get(cfg.rit());
 
     uint16_t mhz, khz, hz;
 
@@ -1392,6 +1435,8 @@ static void update_freq_boundaries(Subject *subj, void *user_data) {
 
     split_freq(f + half_width, &mhz, &khz, &hz);
     lv_label_set_text_fmt(freq_bounds[1], "%i.%03i", mhz, khz);
+    band_bar_set_range(f_spec - (int32_t)half_width, f_spec + (int32_t)half_width);
+    band_bar_set_dial(subject_i_get(radio_fg_freq_subj));
 }
 
 static void update_zoom_on_if_shift_change(Subject *subj, void *user_data) {
