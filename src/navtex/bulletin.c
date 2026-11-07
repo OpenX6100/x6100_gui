@@ -688,8 +688,13 @@ void nb_mark_positions(const nb_bulletin_t *b, char *fixed, uint8_t *mark)
 
 #include <stdio.h>
 
-bool nb_save(const nb_bulletin_t *b, const char *path)
+/* Written as PATH.tmp and renamed when complete: a copy received again
+ * rewrites the bulletin, and a power-off during the save must not leave it
+ * broken.  dialog_navtex_bul.inc deletes the .tmp left behind. */
+bool nb_save(const nb_bulletin_t *b, const char *final_path)
 {
+    char path[512];
+    if (snprintf(path, sizeof(path), "%s.tmp", final_path) >= (int)sizeof(path)) return false;
     FILE *f = fopen(path, "w");
     if (!f) return false;
     fprintf(f, "NAVTEX-BULLETIN 1\n");
@@ -703,10 +708,10 @@ bool nb_save(const nb_bulletin_t *b, const char *path)
     fprintf(f, "\nLEN %d\n", b->len);
     fwrite(b->text, 1, (size_t)b->len, f);
     fputc('\n', f);
-    bool ok = !ferror(f);
-    fflush(f);
-    fsync(fileno(f));
-    return fclose(f) == 0 && ok;
+    bool ok = !ferror(f) && fflush(f) == 0 && fsync(fileno(f)) == 0;
+    ok = fclose(f) == 0 && ok && rename(path, final_path) == 0;
+    if (!ok) remove(path);
+    return ok;
 }
 
 bool nb_load(nb_bulletin_t *b, const char *path)

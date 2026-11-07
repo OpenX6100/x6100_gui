@@ -228,6 +228,13 @@ static void nav_load_dir(void)
     struct dirent *de;
     while ((de = readdir(d))) {
         size_t L = strlen(de->d_name);
+        if (!strncmp(de->d_name, NB_PREFIX, strlen(NB_PREFIX)) && L > 4 &&
+            !strcmp(de->d_name + L - 4, ".tmp")) {
+            char tmp[160];                  /* a save cut by a power-off: see nb_save() */
+            snprintf(tmp, sizeof(tmp), NAVTEX_SAVE_DIR "/%s", de->d_name);
+            unlink(tmp);
+            continue;
+        }
         if (strncmp(de->d_name, NB_PREFIX, strlen(NB_PREFIX)) || L < 8 ||
             strcmp(de->d_name + L - strlen(NB_EXT), NB_EXT) || L >= sizeof(nav_items[0]->file))
             continue;
