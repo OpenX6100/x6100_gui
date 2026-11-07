@@ -51,6 +51,10 @@ static int   nfft;
 static uint8_t n_tones;  // Number of tones for generate message and check minimal length for rx
 static uint8_t sync_num; // Length of sync
 
+/* The signal report (snr_vs_background): the receive filter in bins */
+static int snr_lo_bin, snr_hi_bin;
+static void wf_power_init(void);
+
 /* Decode score threshold (minimum candidate score). Initialised from
  * FTXLIB_MIN_SCORE_PATH on first ftx_worker_init() so a power user can
  * tweak sensitivity vs false-positive rate without a rebuild. The file is
@@ -128,6 +132,7 @@ void ftx_worker_set_own_call(const char *call) {
  */
 void ftx_worker_init(int sample_rate, ftx_protocol_t protocol) {
     ftx_min_score_load_or_create();
+    wf_power_init();
     float slot_period;
 
     switch ((int)protocol) {
@@ -187,6 +192,8 @@ void ftx_worker_init(int sample_rate, ftx_protocol_t protocol) {
         goto error_cleanup;
     }
     wf.protocol = ftx_lib_protocol(protocol);   /* FT2 decodes as FT4 */
+    snr_lo_bin = 0;                                /* the whole band until ftx_worker_set_filter() */
+    snr_hi_bin = num_bins;
 
     find_candidates_at = n_tones - sync_num;
 
@@ -458,7 +465,8 @@ static void decode_messages(const ftx_waterfall_t *wf, int *num_candidates, ftx_
  * of known SNR (FT2: the FT4 ones played twice as fast).
  *
  * Result (PC, 3 files a level): FT8 equal to jt9 from -18 to 0 dB, FT4 and
- * FT2 within 1 dB.
+ * FT2 within 1 dB. Reports are kept to WSJT-X's range: FT8 -24, FT4/FT2
+ * -21, at most +49 (the most the message format carries).
  *
  * The background: the bins within SNR_NOISE_HZ either side of the signal
  * (its own tones left out), over every symbol of the message. Its lower
@@ -468,21 +476,15 @@ static void decode_messages(const ftx_waterfall_t *wf, int *num_candidates, ftx_
  */
 #define SNR_NOISE_HZ   300.0f
 #define SNR_NOISE_MAX  8192
-#define SNR_CAL_DB     0.0f      /* window and bin shape: checked, none needed for any mode */
-#define SNR_FLOOR_DB   -30
+#define SNR_MAX_DB     49        /* the highest report the message format carries */
 
 static float snr_noise[SNR_NOISE_MAX];
+static float wf_power_lut[256];         /* waterfall value (dB * 2 + 240) to power */
 
-/* waterfall value (dB * 2 + 240) to power, from a table made once */
-static float wf_power_lut[256];
-
-static inline float wf_power(uint8_t v) {
-    if (wf_power_lut[255] == 0.0f) {
-        for (int i = 0; i < 256; i++) {
-            wf_power_lut[i] = powf(10.0f, ((float)i - 240.0f) / 20.0f);
-        }
+static void wf_power_init(void) {
+    for (int i = 0; i < 256; i++) {
+        wf_power_lut[i] = powf(10.0f, ((float)i - 240.0f) / 20.0f);
     }
-    return wf_power_lut[v];
 }
 
 /* The k-th smallest of v[0..n-1], reordering v (quickselect). */
@@ -530,7 +532,7 @@ static double tone_power(const ftx_waterfall_t *wf, int to, int ts, int fo, int 
             break;
         }
         const uint8_t *row = wf->mag + (((size_t)block * wf->time_osr + ts) * wf->freq_osr + fs) * wf->num_bins;
-        sig += wf_power(row[fo + tones[i]]);
+        sig += wf_power_lut[row[fo + tones[i]]];
         ns++;
     }
     return ns ? sig / ns : 0.0;
@@ -538,13 +540,19 @@ static double tone_power(const ftx_waterfall_t *wf, int to, int ts, int fo, int 
 
 static int snr_vs_background(const ftx_waterfall_t *wf, const ftx_candidate_t *c, const uint8_t *tones, int n_tones) {
     const int n_items = (wf->protocol == FTX_PROTOCOL_FT8) ? 8 : 4;
+    /* WSJT-X's lowest reports: FT8 -24, FT4 -21 (FT2 decodes as FT4) */
+    const int floor_db = (wf->protocol == FTX_PROTOCOL_FT8) ? -24 : -21;
     int       w = (int)(SNR_NOISE_HZ * symbol_period + 0.5f);   /* bins are one tone spacing wide */
-    double    sig = 0.0;
-    int       ns = 0, nn = 0;
+    int       lo, hi, nn = 0;
 
     if (w < 8) {
         w = 8;
     }
+    /* The background inside the receive filter only: past its edges the
+     * bins are quieter than the band, which would read stations near an
+     * edge far too strong. */
+    lo = LV_MAX(c->freq_offset - w, snr_lo_bin);
+    hi = LV_MIN(c->freq_offset + n_items + w, snr_hi_bin);
     for (int i = 0; i < n_tones; i++) {
         int block = c->time_offset + i;
         if (block < 0) {
@@ -555,31 +563,32 @@ static int snr_vs_background(const ftx_waterfall_t *wf, const ftx_candidate_t *c
         }
         const uint8_t *row = wf->mag + (((size_t)block * wf->time_osr + c->time_sub) * wf->freq_osr + c->freq_sub) *
                                            wf->num_bins;
-        sig += wf_power(row[c->freq_offset + tones[i]]);
-        ns++;
-        for (int b = c->freq_offset - w; b < c->freq_offset + n_items + w && nn < SNR_NOISE_MAX; b++) {
-            if (b < 0 || b >= wf->num_bins || (b >= c->freq_offset && b < c->freq_offset + n_items)) {
+        for (int b = lo; b < hi && nn < SNR_NOISE_MAX; b++) {
+            if (b >= c->freq_offset && b < c->freq_offset + n_items) {
                 continue;
             }
-            snr_noise[nn++] = wf_power(row[b]);
+            snr_noise[nn++] = wf_power_lut[row[b]];
         }
     }
-    if (ns == 0 || nn < 16) {
-        return SNR_FLOOR_DB;
+    if (nn < 16) {
+        return floor_db;
     }
     float noise = kth_smallest(snr_noise, nn, nn / 4) / logf(4.0f / 3.0f);
 
     /* A station may be decoded at a step half a bin or a time sub-step off
      * its tones, which then fall between two bins or straddle two symbols
-     * and read low (FT8 at 0 dB read -4). Its power is taken at that step
-     * and one step either side in frequency and in time, the strongest. */
-    double s_best = sig / ns;
+     * and read low (FT8 at 0 dB read -4). Its power is taken at the
+     * decode's step and one step either side in frequency and in time, the
+     * strongest. (Floor division: a station that started early has a
+     * negative time offset.) */
+    double s_best = 0.0;
     for (int dt = -1; dt <= 1; dt++) {
         int tq = c->time_offset * wf->time_osr + c->time_sub + dt;
-        int to = tq >= 0 ? tq / wf->time_osr : -1, ts = tq >= 0 ? tq % wf->time_osr : 0;
+        int to = (tq >= 0) ? tq / wf->time_osr : -((-tq + wf->time_osr - 1) / wf->time_osr);
+        int ts = tq - to * wf->time_osr;
         for (int df = -1; df <= 1; df++) {
             int fq = c->freq_offset * wf->freq_osr + c->freq_sub + df;
-            if (to < 0 || fq < 0 || (dt == 0 && df == 0)) {
+            if (fq < 0) {
                 continue;
             }
             double sp = tone_power(wf, to, ts, fq / wf->freq_osr, fq % wf->freq_osr, tones, n_tones, n_items);
@@ -590,11 +599,21 @@ static int snr_vs_background(const ftx_waterfall_t *wf, const ftx_candidate_t *c
     }
     float ratio = (float)s_best / noise - 1.0f;
     if (ratio <= 0.0f) {
-        return SNR_FLOOR_DB;
+        return floor_db;
     }
     /* per bin (one tone spacing) to 2500 Hz */
-    int snr = (int)lroundf(10.0f * log10f(ratio * (1.0f / symbol_period) / 2500.0f) + SNR_CAL_DB);
-    return snr < SNR_FLOOR_DB ? SNR_FLOOR_DB : snr;
+    int snr = (int)lroundf(10.0f * log10f(ratio * (1.0f / symbol_period) / 2500.0f));
+    return snr < floor_db ? floor_db : snr > SNR_MAX_DB ? SNR_MAX_DB : snr;
+}
+
+void ftx_worker_set_filter(int low_hz, int high_hz) {
+    int nb = wf.num_bins;
+    snr_lo_bin = LV_MAX(0, (int)(low_hz * symbol_period));
+    snr_hi_bin = LV_MIN(nb, (int)(high_hz * symbol_period + 0.999f));
+    if (snr_hi_bin <= snr_lo_bin) {
+        snr_lo_bin = 0;
+        snr_hi_bin = nb;
+    }
 }
 
 static int get_message_snr(const ftx_waterfall_t *wf, const ftx_candidate_t *candidate, ftx_message_t *msg) {
