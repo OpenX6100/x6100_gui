@@ -97,6 +97,7 @@
 #define REC_DIR         "/mnt/xara-rec" /* DATA partition */
 #define REC_KEEP        10              /* the newest recordings kept, the rest deleted */
 #define REC_MIN_FREE_MB 500             /* no recording with less free on the card */
+#define REC_STOP_MB     100             /* recording stops at this much free */
 #define MON_LINES       3               /* the monitor's newest lines on screen */
 #define XARA_CAPTURE    "alsa_input.platform-sound.stereo-fallback"
 #define XARA_PLAYBACK   "alsa_output.platform-sound.stereo-fallback"
@@ -116,6 +117,9 @@
 #define TX_FILTER_LOW   100
 #define TX_FILTER_HIGH  3000
 #define PTT_MAX_S       35 /* xara drops PTT after 30 s itself; this is the backstop */
+#define SWR_TRIP        3.0f /* JS8's guard: above this for SWR_TRIP_MS while sending, TX stops */
+#define SWR_TRIP_MS     500
+#define VOL_BACK_US     3000000 /* the play volume goes back this long after the last unkey */
 
 /* Transmit level: the codec's play volume while keyed (audio_set_play_vol),
  * fixed, set by the operator with the MFK knob (also while sending). JS8's
@@ -182,6 +186,12 @@ static void construct_cb(lv_obj_t *parent);
 static void destruct_cb();
 static void key_cb(lv_event_t *e);
 static void band_cb(lv_event_t *e);
+static void band_entered(void);
+static void rec_space_tick(void);
+static void stop_tx(void);
+static bool linked(void);
+static void xara_start(void);
+static void xara_stop(void);
 static void bw_cb(button_data_t *btn);
 static void aprs_cb(button_data_t *btn);
 static void monitor_cb(button_data_t *btn);
@@ -296,9 +306,14 @@ static atomic_bool     stop_threads;
 static atomic_bool     keyed;
 static atomic_long     keyed_since;
 static atomic_bool     level_restore; /* unkeyed: the play volume goes back */
+static atomic_bool     vol_is_level;  /* the play volume is level_db: a key needn't open the mixer */
+static _Atomic float   swr_tripped;   /* level_main: the SWR that stopped TX, for timer_cb */
 static pthread_mutex_t key_lock = PTHREAD_MUTEX_INITIALIZER; /* keying, unkeying and the play volume, one at a time */
 static pthread_mutex_t status_lock = PTHREAD_MUTEX_INITIALIZER;
 static xara_status_t   status;
+static unsigned        status_gen; /* status_clear(): a parse under way doesn't write the old one back */
+static Observer       *dsp_watch[4];
+static bool            rec_full; /* the card filled: Record turned off, the modem restarts once unlinked */
 static char            shown_bw[8];
 
 static int32_t saved_filter_low, saved_filter_high;
@@ -413,6 +428,7 @@ static void level_step(bool up) {
     level_dirty = true;
     pthread_mutex_lock(&key_lock);
     if (atomic_load(&keyed)) audio_set_play_vol(level_db);
+    else atomic_store(&vol_is_level, false); /* the next key sets it */
     pthread_mutex_unlock(&key_lock);
 }
 
@@ -432,7 +448,9 @@ static int64_t now_us(void) {
  * slip in between a key's flag and its MODEM ON and leave the radio keyed
  * with keyed false. The level and the power cap go on before the radio
  * keys: the cap again each time, since an ATU tune or a power change sends
- * the full cfg.pwr to the radio (xara keys without tx_player). */
+ * the full cfg.pwr to the radio (xara keys without tx_player). The play volume
+ * stays at the level between the bursts of a link (level_main puts it
+ * back VOL_BACK_US after the last), so a key seldom opens the mixer. */
 static void set_keyed(bool on) {
     int64_t t0 = now_us();
     pthread_mutex_lock(&key_lock);
@@ -441,7 +459,10 @@ static void set_keyed(bool on) {
     if (change) {
         if (on) {
             if (param_f_get(cfg.pwr()) > TX_PLAYER_MAX_PWR_W) radio_set_pwr(TX_PLAYER_MAX_PWR_W);
-            audio_set_play_vol(level_db);
+            if (!atomic_load(&vol_is_level)) {
+                audio_set_play_vol(level_db);
+                atomic_store(&vol_is_level, true);
+            }
             t2 = now_us();
             atomic_store(&keyed_since, now_s());
             atomic_store(&keyed, true);
@@ -501,9 +522,11 @@ static bool json_bool(const char *line, const char *key) {
 static void parse_status(const char *line) {
     xara_status_t s;
     double        v;
+    unsigned      gen;
 
     pthread_mutex_lock(&status_lock);
-    s = status;
+    s   = status;
+    gen = status_gen;
     pthread_mutex_unlock(&status_lock);
 
     if (strstr(line, "\"t\":\"status\"")) {
@@ -541,7 +564,15 @@ static void parse_status(const char *line) {
     }
 
     pthread_mutex_lock(&status_lock);
-    status = s;
+    if (status_gen == gen) status = s; /* else cleared meanwhile (a new modem): this line was the old one's */
+    pthread_mutex_unlock(&status_lock);
+}
+
+/* No modem: nothing seen, no peer (linked() false). */
+static void status_clear(void) {
+    pthread_mutex_lock(&status_lock);
+    memset(&status, 0, sizeof(status));
+    status_gen++;
     pthread_mutex_unlock(&status_lock);
 }
 
@@ -642,6 +673,8 @@ static void *level_main(void *arg) {
     (void)arg;
     bool    was_keyed = false;
     uint8_t msg_id    = 0;
+    int64_t unkeyed_us = 0, swr_high_us = 0;
+    float   swr_high   = 0.0f;
 
     while (!atomic_load(&stop_threads)) {
         usleep(LEVEL_TICK_US);
@@ -650,21 +683,43 @@ static void *level_main(void *arg) {
             tx_info_refresh(&msg_id, NULL, NULL, NULL); /* readings from before this one don't count */
             atomic_store(&tx_meter, false);
             atomic_store(&tx_max_pwr, 0.0f);
+            swr_high_us = 0;
         }
         if (k) {
-            float alc = 0.0f, pwr = 0.0f;
-            if (tx_info_refresh(&msg_id, &alc, &pwr, NULL)) {
+            float alc = 0.0f, pwr = 0.0f, swr = 0.0f;
+            if (tx_info_refresh(&msg_id, &alc, &pwr, &swr)) {
                 atomic_store(&tx_alc, alc);
                 atomic_store(&tx_pwr, pwr);
                 atomic_store(&tx_meter, true);
                 if (pwr > atomic_load(&tx_max_pwr)) atomic_store(&tx_max_pwr, pwr);
+                /* High SWR as JS8's guard: SWR_TRIP_MS above SWR_TRIP, then
+                 * timer_cb stops TX (an antenna gone, the tuner off). */
+                if (swr <= SWR_TRIP) {
+                    swr_high_us = 0;
+                } else if (!swr_high_us) {
+                    swr_high_us = now_us();
+                    swr_high    = swr;
+                } else {
+                    swr_high = LV_MAX(swr_high, swr);
+                    if (now_us() - swr_high_us >= SWR_TRIP_MS * 1000) {
+                        swr_high_us = 0;
+                        atomic_store(&swr_tripped, swr_high);
+                    }
+                }
             }
         }
-        if (!k && was_keyed && atomic_load(&tx_meter)) atomic_store(&last_max_pwr, atomic_load(&tx_max_pwr));
-        if (atomic_exchange(&level_restore, false)) {
+        if (!k && was_keyed) {
+            unkeyed_us = now_us();
+            if (atomic_load(&tx_meter)) atomic_store(&last_max_pwr, atomic_load(&tx_max_pwr));
+        }
+        if (!k && atomic_load(&level_restore) && now_us() - unkeyed_us >= VOL_BACK_US) {
             /* Under the key lock: a key arriving meanwhile sets its own level after this. */
             pthread_mutex_lock(&key_lock);
-            if (!atomic_load(&keyed)) audio_set_play_vol(param_f_get(cfg.audio.play_gain_db()));
+            if (!atomic_load(&keyed)) {
+                audio_set_play_vol(param_f_get(cfg.audio.play_gain_db()));
+                atomic_store(&vol_is_level, false);
+                atomic_store(&level_restore, false);
+            }
             pthread_mutex_unlock(&key_lock);
         }
         was_keyed = k;
@@ -1040,9 +1095,12 @@ static void *btkiss_main(void *arg) {
             for (int i = 0; i < 10 && !atomic_load(&stop_threads); i++) usleep(200000);
             continue;
         }
-        /* Low security: a socket that demands pairing waits for an agent that
-         * may not be running (bt_spp.c); paired-only is checked below. */
-        struct bt_security sec = {.level = BT_SECURITY_LOW};
+        /* Medium: the link encrypted with the pairing's key, so a phone that
+         * only claims a paired phone's address doesn't get through (KISS
+         * frames go out on the air). A phone that isn't paired waits for
+         * an agent and is never accepted (bt_spp.c's LOW is for pairing
+         * from that window); bt_paired() below is the second check. */
+        struct bt_security sec = {.level = BT_SECURITY_MEDIUM};
         setsockopt(srv, SOL_BLUETOOTH, BT_SECURITY, &sec, sizeof(sec));
         struct sockaddr_rc loc = {.rc_family = AF_BLUETOOTH, .rc_channel = BT_KISS_CHANNEL};
         bdaddr_t           any = {{0, 0, 0, 0, 0, 0}};
@@ -1175,6 +1233,27 @@ static bool rec_prepare(void) {
     snprintf(rec_path, sizeof(rec_path), REC_DIR "/xara-%04d%02d%02d-%02d%02d%02dZ-%d.flac", tm.tm_year + 1900,
              tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec, bw_hz);
     return true;
+}
+
+/* GUI thread, each tick: Record turns itself off when the card fills, and
+ * the modem restarts without it once no link is up (a restart drops one). */
+static void rec_space_tick(void) {
+    static unsigned tick;
+    if (!rec_full) {
+        if (tick++ % 40 != 0 || monitoring || xara_pid <= 0 || !rec_path[0]) return; /* every 10 s */
+        struct statvfs v;
+        if (statvfs(REC_DIR, &v) != 0 || (unsigned long long)v.f_bavail * v.f_frsize >= REC_STOP_MB * 1024ULL * 1024ULL)
+            return;
+        rec_full  = true;
+        record_on = false;
+        msg_update_text_fmt("Record off: less than %d MB free on the SD card", REC_STOP_MB);
+    }
+    if (atomic_load(&keyed) || linked()) return;
+    rec_full = false;
+    if (!monitoring && xara_pid > 0 && rec_path[0]) {
+        xara_stop();
+        xara_start();
+    }
 }
 
 /* ------------------------------------------------------------ the modem */
@@ -1373,9 +1452,7 @@ static void xara_start(void) {
         return;
     }
     pulse_prio(true);
-    pthread_mutex_lock(&status_lock);
-    memset(&status, 0, sizeof(status));
-    pthread_mutex_unlock(&status_lock);
+    status_clear();
     busy_sent = false; /* told once its status shows (its handlers are in by then) */
     gate_open = false; /* --answer-gate starts closed */
     log_off   = 0;     /* the log starts again (O_TRUNC) */
@@ -1401,6 +1478,7 @@ static void xara_stop(void) {
     }
     xara_pid = -1;
     set_keyed(false);
+    status_clear();
     pulse_prio(false);
 }
 
@@ -1631,9 +1709,23 @@ static void timer_cb(lv_timer_t *t) {
     if (xara_pid > 0 && waitpid(xara_pid, NULL, WNOHANG) == xara_pid) {
         xara_pid = -1;
         set_keyed(false);
+        status_clear(); /* its last peer would keep linked() true */
         label_set(state_label, "%s", "The modem stopped");
         label_set(last_label, "See %s - Restart modem to try again", log_path);
     }
+
+    float swr = atomic_exchange(&swr_tripped, 0.0f);
+    if (swr > 0.0f && !monitoring) {
+        auto_answer = false;
+        stop_tx();
+        msg_update_text_fmt("XARA: high SWR %.1f:1 - TX stopped, link dropped, Auto answer off", swr);
+    }
+
+    /* The band changed by a typed frequency or an APRS preset: XARA's mode
+     * and filters on it (band_cb does the band keys). */
+    if (param_i_get(cfg.band_id()) != saved_band) band_entered();
+
+    rec_space_tick();
 
     /* The radio's address every 2 s (it seldom changes). */
     static unsigned ip_tick;
@@ -1745,6 +1837,15 @@ static void timer_cb(lv_timer_t *t) {
     show(tx_label, atomic_load(&keyed));
 }
 
+/* NR, NB, DNF or DNF auto turned on while open (CAT, a front-panel
+ * control): off again at once, the setting kept, as in JS8. On whichever
+ * thread changed it, so radio calls only. */
+static void dsp_held_cb(Subject *subj, void *user_data) {
+    (void)subj;
+    (void)user_data;
+    radio_set_rx_dsp_off(true);
+}
+
 static lv_obj_t *row(lv_coord_t y, const lv_font_t *font) {
     lv_obj_t *l = lv_label_create(dialog.obj);
     lv_obj_set_style_text_font(l, font, 0);
@@ -1807,19 +1908,26 @@ static void construct_cb(lv_obj_t *parent) {
 
     /* The radio as JS8 sets it, but 100-3000 Hz (2750 starts at 125): USB-D, the base's noise
      * reduction and notches off, 5 W at most. All put back on close. */
+    mem_save(MEM_BACKUP_ID); /* where XARA was opened: back there on close, as JS8 */
     saved_band = param_i_get(cfg.band_id());
     saved_mode = cparam_i_get(cfg.cur.mode());
     if (saved_mode != x6100_mode_usb_dig) cparam_i_set(cfg.cur.mode(), x6100_mode_usb_dig);
     /* The mode keys and VFO A/B stay off while open (a VARA signal in LSB or
-     * CW would go out wrong); the band keys and the VFO knob work (band_cb). */
+     * CW would go out wrong). The band keys come to band_cb, which changes
+     * the band itself (not while sending or linked); the VFO knob works. */
     lm_set_mode(true);
     lm_set_ab(true);
+    lm_set_band(true);
     saved_filter_low  = cparam_i_get(cfg.filter.low());
     saved_filter_high = cparam_i_get(cfg.filter.high());
     filter_saved      = true;
     rx_filter_apply();
     radio_set_tx_filter(TX_FILTER_LOW, TX_FILTER_HIGH);
     radio_set_rx_dsp_off(true);
+    dsp_watch[0] = subject_subscribe((Subject *)cfg.dsp.nr(), dsp_held_cb, NULL);
+    dsp_watch[1] = subject_subscribe((Subject *)cfg.dsp.nb(), dsp_held_cb, NULL);
+    dsp_watch[2] = subject_subscribe((Subject *)cfg.dsp.dnf(), dsp_held_cb, NULL);
+    dsp_watch[3] = subject_subscribe((Subject *)cfg.dsp.dnf_auto(), dsp_held_cb, NULL);
     if (param_f_get(cfg.pwr()) > TX_PLAYER_MAX_PWR_W) {
         radio_set_pwr(TX_PLAYER_MAX_PWR_W);
         msg_update_text_fmt("Power limited to %0.0fW", TX_PLAYER_MAX_PWR_W);
@@ -1831,6 +1939,9 @@ static void construct_cb(lv_obj_t *parent) {
     atomic_store(&stop_threads, false);
     atomic_store(&keyed, false);
     atomic_store(&level_restore, false);
+    atomic_store(&vol_is_level, false);
+    atomic_store(&swr_tripped, 0.0f);
+    rec_full = false;
     pthread_t *th[]             = {&ptt_thread, &stream_thread, &level_thread, &txmon_thread, &btkiss_thread};
     void *(*fn[])(void *)       = {ptt_main, stream_main, level_main, txmon_main, btkiss_main};
     unsigned started            = 0;
@@ -1873,6 +1984,11 @@ static void destruct_cb() {
     }
     set_keyed(false);
     audio_set_play_vol(param_f_get(cfg.audio.play_gain_db()));
+    atomic_store(&vol_is_level, false);
+    for (unsigned i = 0; i < sizeof(dsp_watch) / sizeof(dsp_watch[0]); i++) {
+        if (dsp_watch[i]) param_unsubscribe(dsp_watch[i]);
+        dsp_watch[i] = NULL;
+    }
     wf_stop();
     wf_box = NULL;
 
@@ -1883,29 +1999,42 @@ static void destruct_cb() {
         radio_set_rx_dsp_off(false);
         filter_saved = false;
     }
+    /* This band's own mode back in its memory, then where XARA was opened. */
     if (saved_mode != x6100_mode_usb_dig && param_i_get(cfg.band_id()) == saved_band)
         cparam_i_set(cfg.cur.mode(), saved_mode);
+    mem_load(MEM_BACKUP_ID);
     lm_set_mode(false);
     lm_set_ab(false);
+    lm_set_band(false);
 }
 
 /* ------------------------------------------------------------ buttons */
 
-/* A band key: the main screen has loaded the band, with its own mode. Its
- * mode is kept for close, and the radio goes back to XARA's USB-D and
- * filters. */
+/* A band key (the main screen leaves band changes to us, lm_set_band):
+ * never while sending or linked, the radio and an amplifier would change
+ * band mid-burst. The band left gets its own mode back first, so its
+ * memory doesn't keep USB-D. */
 static void band_cb(lv_event_t *e) {
-    (void)e;
-    int32_t band = param_i_get(cfg.band_id());
-    if (band != saved_band) {
-        saved_band = band;
-        saved_mode = cparam_i_get(cfg.cur.mode());
+    if (atomic_load(&keyed) || linked()) {
+        msg_update_text_fmt("Not while sending or linked");
+        return;
     }
-    if (cparam_i_get(cfg.cur.mode()) != x6100_mode_usb_dig) cparam_i_set(cfg.cur.mode(), x6100_mode_usb_dig);
-    radio_set_tx_filter(TX_FILTER_LOW, TX_FILTER_HIGH);
-    rx_filter_apply();
+    if (saved_mode != x6100_mode_usb_dig && param_i_get(cfg.band_id()) == saved_band)
+        cparam_i_set(cfg.cur.mode(), saved_mode);
+    cfg_band_load_next(lv_event_get_code(e) == EVENT_BAND_UP);
+    band_entered();
     aprs_idx = -1;
     buttons_refresh(&btn_aprs);
+}
+
+/* On a new band, with its own mode: that mode kept for when it's left, and
+ * the radio back to XARA's USB-D and filters. */
+static void band_entered(void) {
+    saved_band = param_i_get(cfg.band_id());
+    saved_mode = cparam_i_get(cfg.cur.mode());
+    if (saved_mode != x6100_mode_usb_dig) cparam_i_set(cfg.cur.mode(), x6100_mode_usb_dig);
+    radio_set_tx_filter(TX_FILTER_LOW, TX_FILTER_HIGH);
+    rx_filter_apply();
 }
 
 static const char *bw_label(void) {
@@ -1947,6 +2076,7 @@ static void aprs_cb(button_data_t *btn) {
     }
     aprs_idx = (aprs_idx + 1) % (int)APRS_PRESETS;
     main_screen_set_freq(aprs_presets[aprs_idx].hz);
+    if (param_i_get(cfg.band_id()) != saved_band) band_entered(); /* 40 m to 30 m: that band's mode kept for close */
     if (cparam_i_get(cfg.cur.mode()) != x6100_mode_usb_dig) cparam_i_set(cfg.cur.mode(), x6100_mode_usb_dig);
     radio_set_tx_filter(TX_FILTER_LOW, TX_FILTER_HIGH);
     buttons_refresh(&btn_aprs);
@@ -1974,10 +2104,7 @@ static void monitor_cb(button_data_t *btn) {
             msg_update_text_fmt("Not while sending or linked");
             return;
         }
-        xara_stop();
-        pthread_mutex_lock(&status_lock);
-        memset(&status, 0, sizeof(status));
-        pthread_mutex_unlock(&status_lock);
+        xara_stop(); /* clears status */
         monitoring = true;
         monitor_start();
         msg_update_text_fmt("Monitor: listening to VARA traffic, the modem is off");
@@ -2097,6 +2224,23 @@ static void settings_line_color(lv_obj_t *b, int which) {
     lv_obj_set_style_text_color(b, which == SET_ANSWER && auto_answer ? lv_color_hex(0xffa600) : lv_color_white(), 0);
 }
 
+/* Settings that take a modem restart: not while sending or linked (it
+ * drops the link). True when refused. */
+static bool restart_refused(void) {
+    if (!monitoring && (atomic_load(&keyed) || linked())) {
+        msg_update_text_fmt("Disconnect first (in WoAD)");
+        return true;
+    }
+    return false;
+}
+
+static void modem_restart(void) {
+    if (!monitoring) {
+        xara_stop();
+        xara_start();
+    }
+}
+
 static void settings_item_cb(lv_event_t *e) {
     int which = (int)(intptr_t)lv_event_get_user_data(e);
     switch (which) {
@@ -2108,50 +2252,29 @@ static void settings_item_cb(lv_event_t *e) {
         msg_update_text_fmt(ignore_busy ? "Busy detector ignored: sends over a busy channel" : "Busy detector on");
         break;
     case SET_RECORD:
-        /* Takes a modem restart, so not while a link is up. */
-        if (!monitoring && (atomic_load(&keyed) || linked())) {
-            msg_update_text_fmt("Disconnect first (in WoAD)");
-            return;
-        }
+        if (restart_refused()) return;
         record_on = !record_on;
-        if (!monitoring) {
-            xara_stop();
-            xara_start();
-        }
+        modem_restart();
         if (record_on && rec_path[0]) msg_update_text_fmt("Recording to %s", rec_path);
         else if (record_on) msg_update_text_fmt("Record on: from the next modem start");
         else msg_update_text_fmt("Record off");
         break;
     case SET_LEAD:
-        /* A modem restart too. */
-        if (!monitoring && (atomic_load(&keyed) || linked())) {
-            msg_update_text_fmt("Disconnect first (in WoAD)");
-            return;
-        }
+        if (restart_refused()) return;
         lead_idx    = (lead_idx + 1) % LEADS;
         level_dirty = true;
         level_save();
-        if (!monitoring) {
-            xara_stop();
-            xara_start();
-        }
+        modem_restart();
         msg_update_text_fmt("PTT lead %d ms: keyed that long before each burst's audio", lead_ms[lead_idx]);
         break;
     case SET_BUF:
     case SET_RBUF:
-        /* Takes a modem restart, so not while a link is up. */
-        if (!monitoring && (atomic_load(&keyed) || linked())) {
-            msg_update_text_fmt("Disconnect first (in WoAD)");
-            return;
-        }
+        if (restart_refused()) return;
         if (which == SET_RBUF) rbuf_idx = (rbuf_idx + 1) % BUFS;
         else buf_idx = (buf_idx + 1) % BUFS;
         level_dirty = true;
         level_save();
-        if (!monitoring) {
-            xara_stop();
-            xara_start();
-        }
+        modem_restart();
         msg_update_text_fmt(which == SET_RBUF ? "Receive buffer %d ms (0 = xara's 10): smaller answers sooner"
                                               : "Send buffer %d ms (0 = xara's 20): too small and sending runs dry",
                             buf_ms[which == SET_RBUF ? rbuf_idx : buf_idx]);
@@ -2165,31 +2288,17 @@ static void settings_item_cb(lv_event_t *e) {
                                           : "TX level %.1f dB saved", level_db);
         break;
     case SET_PRIO:
-        /* A modem restart, so not while a link is up. */
-        if (!monitoring && (atomic_load(&keyed) || linked())) {
-            msg_update_text_fmt("Disconnect first (in WoAD)");
-            return;
-        }
+        if (restart_refused()) return;
         prio_idx    = (prio_idx + 1) % PRIOS;
         level_dirty = true;
         level_save();
-        if (!monitoring) {
-            xara_stop();
-            xara_start();
-        }
+        modem_restart();
         msg_update_text_fmt("CPU priority: %s (see ptt.log for PulseAudio's threads)", prio_names[prio_idx]);
         break;
     case SET_FULL:
-        /* A modem restart, so not while a link is up. */
-        if (!monitoring && (atomic_load(&keyed) || linked())) {
-            msg_update_text_fmt("Disconnect first (in WoAD)");
-            return;
-        }
+        if (restart_refused()) return;
         full_speed = !full_speed;
-        if (!monitoring) {
-            xara_stop();
-            xara_start();
-        }
+        modem_restart();
         msg_update_text_fmt(full_speed ? "Full speed ON: VARA's registered speed levels (your licence)"
                                        : "Full speed off: free speed levels only");
         break;
