@@ -418,7 +418,26 @@ static bool assemble(const channel_t *c, dsc_message_t *m)
             for (int i = cand[k].st; i <= e && all; ++i) {
                 if (m->sym[i] < 0) all = false; else x ^= m->sym[i];
             }
-            if (all && m->sym[e + 1] == x) { m->ecc_ok = true; m->n = e + 2; }
+            if (all && m->sym[e + 1] == x) {
+                m->ecc_ok = true;
+                m->n = e + 2;
+                /* one format copy only (phasing one character late): the
+                 * message starts at index 1.  Put the format there too, so
+                 * that the message starts at index 2 as for every other
+                 * call: checked_format(), plausible() and the display read
+                 * it from there (Randal on #353, 1) */
+                if (cand[k].st == 1 && m->n < DSC_MAX_SYMBOLS) {
+                    memmove(m->sym + 2, m->sym + 1, (size_t)(m->n - 1) * sizeof(m->sym[0]));
+                    memmove(svec + 2, svec + 1, (size_t)(m->n - 1) * sizeof(svec[0]));
+                    memmove(conf + 2, conf + 1, (size_t)(m->n - 1) * sizeof(conf[0]));
+                    m->sym[1] = m->sym[0];
+                    conf[1] = conf[0];
+                    memcpy(svec[1], svec[0], sizeof(svec[0]));
+                    m->n++;
+                } else if (cand[k].st == 1) {
+                    m->ecc_ok = false;      /* no room: not verified rather than wrong */
+                }
+            }
         }
         if (m->ecc_ok) break;
     }
