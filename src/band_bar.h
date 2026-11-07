@@ -18,11 +18,16 @@
 
 lv_obj_t *band_bar_create(lv_obj_t *parent);
 
-/* Where it goes (screen y), shown or hidden (the 3D view only). */
-void band_bar_set_geometry(lv_coord_t y, bool shown);
+/* Where it goes (screen y), shown or hidden (the 3D view only), and the
+ * top of the 3D view above it, where the segment tag shows. */
+void band_bar_set_geometry(lv_coord_t y, bool shown, lv_coord_t view_y);
 
 /* The frequencies at its left and right edges (the spectrum's). */
 void band_bar_set_range(int32_t lo_hz, int32_t hi_hz);
 
 /* The band plan changed (region setting, QTH Grid). */
 void band_bar_refresh(void);
+
+/* The dial frequency: tuned into another segment, its band and kind show
+ * at the top left of the 3D view for a moment ("40m  CW"). */
+void band_bar_set_dial(int32_t hz);

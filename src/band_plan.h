@@ -36,6 +36,9 @@ typedef struct {
  * QTH Grid locator's (itu_region()). 1, 2 or 3. */
 int band_plan_region(void);
 
+/* The band hz is in ("40m"), or NULL outside the amateur bands. */
+const char *band_plan_band_name(uint32_t hz);
+
 /* The segments of `region` that overlap lo_hz..hi_hz, low to high, at most
  * `max`; returns how many. What lies between them is outside the bands. */
 int band_plan_segments(int region, uint32_t lo_hz, uint32_t hi_hz, band_plan_seg_t *out, int max);

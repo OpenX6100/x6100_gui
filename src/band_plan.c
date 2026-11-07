@@ -68,6 +68,25 @@ static const seg_t region3[] = {
 
 #define N(a) ((int)(sizeof(a) / sizeof((a)[0])))
 
+/* The bands' names, by their widest edges in any region (kHz x 10). */
+static const struct {
+    uint32_t    lo, hi;
+    const char *name;
+} band_names[] = {
+    {18000, 20000, "160m"}, {35000, 40000, "80m"},  {53515, 53665, "60m"},  {70000, 73000, "40m"},
+    {101000, 101500, "30m"}, {140000, 143500, "20m"}, {180680, 181680, "17m"}, {210000, 214500, "15m"},
+    {248900, 249900, "12m"}, {280000, 297000, "10m"}, {500000, 540000, "6m"},
+};
+
+const char *band_plan_band_name(uint32_t hz) {
+    for (int i = 0; i < N(band_names); i++) {
+        if (hz >= band_names[i].lo * 100 && hz < band_names[i].hi * 100) {
+            return band_names[i].name;
+        }
+    }
+    return NULL;
+}
+
 int band_plan_region(void) {
     int r = param_i_get(cfg.ui.band_plan_region());
     return (r >= 1 && r <= 3) ? r : itu_region();

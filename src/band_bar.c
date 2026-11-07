@@ -12,6 +12,10 @@
  *  frequency scale: ticks and labels at round frequencies, four or five
  *  across. It is drawn by LVGL only when the frequency, the zoom or the
  *  band plan change, not with the spectrum's frames.
+ *
+ *  Tuning into another segment shows its band and kind ("40m  CW") in its
+ *  colour at the top left of the 3D view, fading after TAG_MS: what the
+ *  colours mean, without a legend.
  */
 
 #include "band_bar.h"
@@ -23,9 +27,17 @@
 
 #define STRIPE_H  5
 #define MAX_SEGS  24
+#define TAG_MS    2000  /* the segment tag shows this long, then fades */
+#define TAG_FADE  500
 
 static lv_obj_t *bar;
 static int32_t   lo_hz, hi_hz;
+
+static lv_obj_t   *tag;
+static lv_timer_t *tag_timer;
+static int32_t     dial_hz;
+static const char *tag_band; /* the segment last shown: its band, and its kind (-1 out of band) */
+static int         tag_kind = -2;
 
 static const lv_color32_t kind_color[] = {
     [BAND_PLAN_CW]      = {.ch = {.red = 40, .green = 110, .blue = 200, .alpha = 255}},
@@ -177,6 +189,64 @@ static void draw_cb(lv_event_t *e) {
 #undef X
 }
 
+static const char *const kind_name[] = {
+    [BAND_PLAN_CW]      = "CW",
+    [BAND_PLAN_DIGITAL] = "Digital",
+    [BAND_PLAN_PHONE]   = "SSB",
+};
+
+static void tag_opa_cb(void *o, int32_t v) {
+    lv_obj_set_style_opa(o, (lv_opa_t)v, 0);
+}
+
+static void tag_timer_cb(lv_timer_t *t) {
+    lv_anim_t a;
+
+    tag_timer = NULL;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, tag);
+    lv_anim_set_values(&a, LV_OPA_COVER, LV_OPA_TRANSP);
+    lv_anim_set_time(&a, TAG_FADE);
+    lv_anim_set_exec_cb(&a, tag_opa_cb);
+    lv_anim_start(&a);
+}
+
+/* The dial's segment, at the top left of the 3D view, then the fade. */
+static void tag_show(void) {
+    if (!dial_hz) {
+        return; /* start-up: no frequency yet */
+    }
+    band_plan_seg_t seg;
+    const char     *band = band_plan_band_name((uint32_t)dial_hz);
+    lv_color32_t    k    = {.ch = {.red = 255, .green = 60, .blue = 60, .alpha = 255}};
+
+    if (band && band_plan_segments(band_plan_region(), (uint32_t)dial_hz, (uint32_t)dial_hz + 1, &seg, 1) == 1) {
+        k = kind_color[seg.kind];
+        lv_label_set_text_fmt(tag, "%s  %s", band, kind_name[seg.kind]);
+    } else {
+        lv_label_set_text(tag, band ? "Out of the band plan" : "Out of band");
+    }
+    lv_obj_set_style_text_color(tag, lv_color_make(k.ch.red, k.ch.green, k.ch.blue), 0);
+    lv_anim_del(tag, tag_opa_cb);
+    lv_obj_set_style_opa(tag, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(tag, LV_OBJ_FLAG_HIDDEN);
+    if (tag_timer) {
+        lv_timer_reset(tag_timer);
+    } else {
+        tag_timer = lv_timer_create(tag_timer_cb, TAG_MS, NULL);
+        lv_timer_set_repeat_count(tag_timer, 1);
+    }
+}
+
+static void tag_hide(void) {
+    if (tag_timer) {
+        lv_timer_del(tag_timer);
+        tag_timer = NULL;
+    }
+    lv_anim_del(tag, tag_opa_cb);
+    lv_obj_add_flag(tag, LV_OBJ_FLAG_HIDDEN);
+}
+
 lv_obj_t *band_bar_create(lv_obj_t *parent) {
     bar = lv_obj_create(parent);
     lv_obj_remove_style_all(bar);
@@ -184,18 +254,34 @@ lv_obj_t *band_bar_create(lv_obj_t *parent) {
     lv_obj_set_size(bar, LV_HOR_RES, BAND_BAR_HEIGHT);
     lv_obj_add_event_cb(bar, draw_cb, LV_EVENT_DRAW_MAIN, NULL);
     lv_obj_add_flag(bar, LV_OBJ_FLAG_HIDDEN);
+
+    tag = lv_label_create(parent);
+    lv_obj_set_style_text_font(tag, &sony_22, 0);
+    lv_obj_set_style_bg_color(tag, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(tag, LV_OPA_60, 0);
+    lv_obj_set_style_radius(tag, 4, 0);
+    lv_obj_set_style_pad_hor(tag, 8, 0);
+    lv_obj_set_style_pad_ver(tag, 2, 0);
+    lv_obj_clear_flag(tag, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(tag, LV_OBJ_FLAG_HIDDEN);
     return bar;
 }
 
-void band_bar_set_geometry(lv_coord_t y, bool shown) {
+void band_bar_set_geometry(lv_coord_t y, bool shown, lv_coord_t view_y) {
     if (!bar) {
         return;
     }
     lv_obj_set_pos(bar, 0, y);
+    lv_obj_set_pos(tag, 8, view_y + 8);
     if (shown) {
+        bool was_hidden = lv_obj_has_flag(bar, LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(bar, LV_OBJ_FLAG_HIDDEN);
+        if (was_hidden) {
+            tag_show(); /* into 3D: where the dial is */
+        }
     } else {
         lv_obj_add_flag(bar, LV_OBJ_FLAG_HIDDEN);
+        tag_hide();
     }
 }
 
@@ -213,5 +299,24 @@ void band_bar_set_range(int32_t lo, int32_t hi) {
 void band_bar_refresh(void) {
     if (bar && !lv_obj_has_flag(bar, LV_OBJ_FLAG_HIDDEN)) {
         lv_obj_invalidate(bar);
+        tag_show(); /* the new plan's segment */
+    }
+}
+
+void band_bar_set_dial(int32_t hz) {
+    band_plan_seg_t seg;
+    const char     *band;
+    int             kind;
+
+    dial_hz = hz;
+    band    = band_plan_band_name((uint32_t)hz);
+    kind    = band_plan_segments(band_plan_region(), (uint32_t)hz, (uint32_t)hz + 1, &seg, 1) == 1 ? (int)seg.kind : -1;
+    if (band == tag_band && kind == tag_kind) {
+        return;
+    }
+    tag_band = band;
+    tag_kind = kind;
+    if (bar && !lv_obj_has_flag(bar, LV_OBJ_FLAG_HIDDEN)) {
+        tag_show();
     }
 }

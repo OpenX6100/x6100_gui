@@ -130,7 +130,6 @@ static int           s3d_head;   /* newest row */
 static int           s3d_count;
 static uint64_t      s3d_last_push_us;
 static bool          s3d_on;
-static lv_obj_t     *s3d_label;
 static float         s3d_min, s3d_max;
 static bool          s3d_lvl_ok;  /* false: take the levels as they are */
 static uint64_t      s3d_lvl_us;
@@ -155,7 +154,6 @@ static void on_peak_speed_changed(Subject *subj, void *user_data);
 static void on_rtty_marker_change(Subject *subj, void *user_data);
 static void shift_peaks(int32_t df);
 static void on_spectrum_3d_changed(Subject *subj, void *user_data);
-static void spec3d_label_cb(lv_event_t *e);
 
 static void spectrum_render_rotated(uint32_t *buf, int stride);
 static void spectrum_render_3d(uint32_t *buf, int stride);
@@ -388,21 +386,6 @@ lv_obj_t *spectrum_init(lv_obj_t *overlay_parent, lv_coord_t y, lv_coord_t h) {
     grad_dsc.stops[1].frac = 128;
     grad_dsc.stops[2].frac = 255;
 
-    /* 2D/3D label: shows the view, a tap switches it */
-    s3d_label = lv_label_create(obj);
-    lv_obj_add_style(s3d_label, &style.freq_bounds, LV_PART_MAIN);
-    lv_obj_set_style_border_width(s3d_label, 2, 0);
-    lv_obj_set_style_border_color(s3d_label, style.colors.mark, 0);
-    lv_obj_set_style_radius(s3d_label, 5, 0);
-    lv_obj_set_style_bg_color(s3d_label, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(s3d_label, LV_OPA_70, 0);
-    lv_obj_set_style_pad_hor(s3d_label, 8, 0);
-    lv_obj_set_style_pad_ver(s3d_label, 2, 0);
-    lv_obj_align(s3d_label, LV_ALIGN_TOP_RIGHT, -5, TOP_BLOCK_SMALL_HEIGHT + 36);
-    lv_obj_add_flag(s3d_label, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_ext_click_area(s3d_label, 8);
-    lv_obj_add_event_cb(s3d_label, spec3d_label_cb, LV_EVENT_CLICKED, NULL);
-
     subject_subscribe_and_notify((Subject *)cfg.ui.spectrum_3d(), on_spectrum_3d_changed, NULL);
 
     subject_subscribe_and_notify((Subject *)cfg.mode.zoom(), on_zoom_changed, NULL);
@@ -593,12 +576,7 @@ static void on_spectrum_3d_changed(Subject *subj, void *user_data) {
     __atomic_store_n(&s3d_on, on, __ATOMIC_RELAXED);
     s3d_count  = 0;
     s3d_lvl_ok = false;
-    lv_label_set_text(s3d_label, s3d_on ? "3D" : "2D");
     __atomic_store_n(&s_cond_dirty, 1, __ATOMIC_RELEASE);
-}
-
-static void spec3d_label_cb(lv_event_t *e) {
-    param_i_set(cfg.ui.spectrum_3d(), !param_i_get(cfg.ui.spectrum_3d()));
 }
 
 static void on_zoom_changed(Subject *subj, void *user_data) {

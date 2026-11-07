@@ -177,6 +177,11 @@ extern "C" lv_obj_t *band_info_init(lv_obj_t *parent) {
 static void band_info_update(int32_t f) {
     freq = f;
 
+    /* 3D: the band bar under it shows the bands, and its tag the segment */
+    if (cfg.ui.spectrum_3d()->get()) {
+        return;
+    }
+
     lv_obj_invalidate(obj);
 
     if (!fade_run) {

@@ -1371,7 +1371,7 @@ static void apply_main_layout(void) {
      * (transparent rather than hidden: rx_cb/tx_cb hide and show the
      * left one). */
     spectrum_set_geometry(y, is_3d ? h - BAND_BAR_HEIGHT : h);
-    band_bar_set_geometry(y + h - BAND_BAR_HEIGHT, is_3d);
+    band_bar_set_geometry(y + h - BAND_BAR_HEIGHT, is_3d, y);
     lv_obj_set_style_opa(freq_bounds[0], is_3d ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
     lv_obj_set_style_opa(freq_bounds[1], is_3d ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
     y += h;
@@ -1435,6 +1435,7 @@ static void update_freq_boundaries(Subject *subj, void *user_data) {
     split_freq(f + half_width, &mhz, &khz, &hz);
     lv_label_set_text_fmt(freq_bounds[1], "%i.%03i", mhz, khz);
     band_bar_set_range(f_spec - (int32_t)half_width, f_spec + (int32_t)half_width);
+    band_bar_set_dial(subject_i_get(radio_fg_freq_subj));
 }
 
 static void update_zoom_on_if_shift_change(Subject *subj, void *user_data) {
