@@ -57,6 +57,10 @@ void ftx_worker_put_rx_samples(float *samples, uint32_t n_samples);
 void ftx_worker_decode(decoded_msg_cb msg_cb, bool last, void *user_data);
 
 /// @brief Return block size
+/* The receive filter (Hz): the signal report's background is taken inside
+ * it only. Until called, the whole band. */
+void ftx_worker_set_filter(int low_hz, int high_hz);
+
 int ftx_worker_get_block_size();
 
 /// @brief Check that wf is full
