@@ -734,9 +734,14 @@ bool nb_load(nb_bulletin_t *b, const char *path)
         if (c == EOF) goto out;
         if (c == 'Q') {                 /* QUALITY: long line, read by hand */
             char tag[8];
-            if (fscanf(f, "%7s ", tag) != 1) goto out;
-            while ((c = fgetc(f)) != EOF && c != '\n')
-                if (qn < NB_MAX_TEXT) qbuf[qn++] = (uint8_t)(c - '0');
+            /* no space after %7s: with no text the line is "QUALITY \n", and
+             * a space there would skip the newline and eat the LEN line */
+            if (fscanf(f, "%7s", tag) != 1) goto out;
+            c = fgetc(f);                   /* the one space after the tag */
+            while (c != EOF && c != '\n') {
+                c = fgetc(f);
+                if (c != EOF && c != '\n' && qn < NB_MAX_TEXT) qbuf[qn++] = (uint8_t)(c - '0');
+            }
             continue;
         }
         ungetc(c, f);
