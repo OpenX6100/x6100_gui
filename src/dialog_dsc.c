@@ -145,7 +145,20 @@ static int detail_idx = 0;
 static dsc_decoder_t *decoder = NULL;
 static pthread_mutex_t decoder_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t fifo_mutex = PTHREAD_MUTEX_INITIALIZER;
-static dsc_message_t fifo[DSC_FIFO_LEN];
+/* a call with the channel and the time it was heard on, stamped when the
+ * decoder gives it, not when the UI takes it (Randal on #353, 2) */
+typedef struct { dsc_message_t m; time_t utc; int32_t hz; } fifo_call_t;
+static fifo_call_t fifo[DSC_FIFO_LEN];
+
+/* The decoder's clock (seconds of audio it processed, the base of
+ * dsc_message_t.start_t) and the channel tuned since each moment of it:
+ * a call is stamped with the channel of its start, even if the operator
+ * tunes away during the seconds the decoder keeps it to remove copies. */
+#define DSC_TUNE_HIST 16
+static double audio_t;                          /* under decoder_mutex */
+static struct { double t; int32_t hz; } tune_hist[DSC_TUNE_HIST];
+static int tune_n, tune_i;                      /* under fifo_mutex */
+static int32_t ui_last_hz;                      /* the channel last noted, 0 = none */
 static int fifo_head = 0, fifo_count = 0;
 static uint32_t dsp_audio_sub_id = AUDIO_SUB_INVALID;
 
@@ -1581,12 +1594,40 @@ static void show_view(view_t v)
 
 /* ---- incoming calls ------------------------------------------------------------- */
 
+/* the UI tuned hz now (the audio clock read under decoder_mutex) */
+static void tune_note(int32_t hz)
+{
+    pthread_mutex_lock(&decoder_mutex);
+    double t = audio_t;
+    pthread_mutex_unlock(&decoder_mutex);
+    pthread_mutex_lock(&fifo_mutex);
+    tune_hist[tune_i].t = t;
+    tune_hist[tune_i].hz = hz;
+    tune_i = (tune_i + 1) % DSC_TUNE_HIST;
+    if (tune_n < DSC_TUNE_HIST) tune_n++;
+    pthread_mutex_unlock(&fifo_mutex);
+}
+
+/* audio thread, inside dsc_decoder_process() (decoder_mutex held) */
 static void message_cb(const dsc_message_t *m, void *user)
 {
     (void)user;
     pthread_mutex_lock(&fifo_mutex);
     if (fifo_count < DSC_FIFO_LEN) {
-        fifo[(fifo_head + fifo_count) % DSC_FIFO_LEN] = *m;
+        fifo_call_t *f = &fifo[(fifo_head + fifo_count) % DSC_FIFO_LEN];
+        f->m = *m;
+        /* the channel tuned when the call started: the newest change before it */
+        f->hz = 0;
+        double best = -1.0;
+        for (int k = 0; k < tune_n; ++k)
+            if (tune_hist[k].t <= m->start_t + 0.5 && tune_hist[k].t > best) {
+                best = tune_hist[k].t;
+                f->hz = tune_hist[k].hz;
+            }
+        if (f->hz == 0 && tune_n > 0) f->hz = tune_hist[(tune_i + DSC_TUNE_HIST - 1) % DSC_TUNE_HIST].hz;
+        /* its time: now less the audio processed since it started */
+        double ago = audio_t - m->start_t;
+        f->utc = time(NULL) - (ago > 0.0 ? (time_t)ago : 0);
         fifo_count++;
     }
     pthread_mutex_unlock(&fifo_mutex);
@@ -1601,7 +1642,7 @@ static int live_index_of(int num)
     return -1;
 }
 
-static void add_call(const dsc_message_t *m)
+static void add_call(const dsc_message_t *m, time_t utc, int32_t hz)
 {
     /* the call open in Details, by its number: the list moves under it */
     const dsc_call_t *open = view == V_DETAIL && detail_src == SRC_LIVE ? detail_call() : NULL;
@@ -1612,7 +1653,7 @@ static void add_call(const dsc_message_t *m)
         ncalls--;
     }
     dsc_call_t *c = &calls[ncalls++];
-    call_from_message(c, m, time(NULL), channel_hz());
+    call_from_message(c, m, utc, hz ? hz : channel_hz());
     c->num = next_num++;
     link_reply(c);
     save_call(c);
@@ -1653,20 +1694,19 @@ static void add_call(const dsc_message_t *m)
 static void ui_timer_cb(lv_timer_t *t)
 {
     (void)t;
-    dsc_message_t m;
+    static fifo_call_t f;
     bool any = false;
+    int32_t hz = channel_hz();
+    if (hz != ui_last_hz) { ui_last_hz = hz; tune_note(hz); update_freq_label(); any = true; }
     for (;;) {
         pthread_mutex_lock(&fifo_mutex);
         bool have = fifo_count > 0;
-        if (have) { m = fifo[fifo_head]; fifo_head = (fifo_head + 1) % DSC_FIFO_LEN; fifo_count--; }
+        if (have) { f = fifo[fifo_head]; fifo_head = (fifo_head + 1) % DSC_FIFO_LEN; fifo_count--; }
         pthread_mutex_unlock(&fifo_mutex);
         if (!have) break;
-        add_call(&m);
+        add_call(&f.m, f.utc, f.hz);
         any = true;
     }
-    static int32_t last_hz = 0;
-    int32_t hz = channel_hz();
-    if (hz != last_hz) { last_hz = hz; update_freq_label(); any = true; }
     if (any) {
         if (list_obj) lv_obj_invalidate(list_obj);
         if (view == V_DETAIL && detail_obj) lv_obj_invalidate(detail_obj);
@@ -1676,7 +1716,10 @@ static void ui_timer_cb(lv_timer_t *t)
 static void audio_cb(size_t n, float *samples)
 {
     pthread_mutex_lock(&decoder_mutex);
-    if (decoder) dsc_decoder_process(decoder, samples, (int)n);
+    if (decoder) {
+        dsc_decoder_process(decoder, samples, (int)n);
+        audio_t += (double)n / DSC_SAMPLE_RATE;     /* as the decoder's clock */
+    }
     pthread_mutex_unlock(&decoder_mutex);
 }
 
@@ -1974,11 +2017,14 @@ static void destruct_cb(void)
 
     pthread_mutex_lock(&decoder_mutex);
     if (decoder) { dsc_decoder_destroy(decoder); decoder = NULL; }
+    audio_t = 0.0;                      /* the next decoder's clock starts again */
     pthread_mutex_unlock(&decoder_mutex);
 
     pthread_mutex_lock(&fifo_mutex);
     fifo_head = fifo_count = 0;
+    tune_n = tune_i = 0;
     pthread_mutex_unlock(&fifo_mutex);
+    ui_last_hz = 0;
 
     /* names are read again at the next opening (the file may have changed) */
     free(names); names = NULL;
