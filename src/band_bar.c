@@ -247,7 +247,7 @@ static void tag_hide(void) {
     lv_obj_add_flag(tag, LV_OBJ_FLAG_HIDDEN);
 }
 
-lv_obj_t *band_bar_create(lv_obj_t *parent) {
+lv_obj_t *band_bar_create(lv_obj_t *parent, lv_obj_t *view) {
     bar = lv_obj_create(parent);
     lv_obj_remove_style_all(bar);
     lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
@@ -255,24 +255,26 @@ lv_obj_t *band_bar_create(lv_obj_t *parent) {
     lv_obj_add_event_cb(bar, draw_cb, LV_EVENT_DRAW_MAIN, NULL);
     lv_obj_add_flag(bar, LV_OBJ_FLAG_HIDDEN);
 
-    tag = lv_label_create(parent);
+    /* on the view itself: the spectrum is on the overlay plane, above the
+     * main screen, and the top block covers the view's top */
+    tag = lv_label_create(view);
     lv_obj_set_style_text_font(tag, &sony_22, 0);
     lv_obj_set_style_bg_color(tag, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(tag, LV_OPA_60, 0);
     lv_obj_set_style_radius(tag, 4, 0);
     lv_obj_set_style_pad_hor(tag, 8, 0);
     lv_obj_set_style_pad_ver(tag, 2, 0);
+    lv_obj_align(tag, LV_ALIGN_TOP_LEFT, 5, TOP_BLOCK_SMALL_HEIGHT + 10); /* where the corner frequency was */
     lv_obj_clear_flag(tag, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(tag, LV_OBJ_FLAG_HIDDEN);
     return bar;
 }
 
-void band_bar_set_geometry(lv_coord_t y, bool shown, lv_coord_t view_y) {
+void band_bar_set_geometry(lv_coord_t y, bool shown) {
     if (!bar) {
         return;
     }
     lv_obj_set_pos(bar, 0, y);
-    lv_obj_set_pos(tag, 8, view_y + 8);
     if (shown) {
         bool was_hidden = lv_obj_has_flag(bar, LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(bar, LV_OBJ_FLAG_HIDDEN);

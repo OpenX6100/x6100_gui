@@ -1291,7 +1291,7 @@ lv_obj_t * main_screen(lv_obj_t *overlay_scr) {
     freq_bounds[1] = f;
 
     /* The band bar under the 3D view (shown by apply_main_layout()) */
-    band_bar_create(obj);
+    band_bar_create(obj, spectrum);
 
     /* Waterfall */
     waterfall = waterfall_init(overlay_scr, y, SCREEN_HEIGHT - y);
@@ -1371,7 +1371,7 @@ static void apply_main_layout(void) {
      * (transparent rather than hidden: rx_cb/tx_cb hide and show the
      * left one). */
     spectrum_set_geometry(y, is_3d ? h - BAND_BAR_HEIGHT : h);
-    band_bar_set_geometry(y + h - BAND_BAR_HEIGHT, is_3d, y);
+    band_bar_set_geometry(y + h - BAND_BAR_HEIGHT, is_3d);
     lv_obj_set_style_opa(freq_bounds[0], is_3d ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
     lv_obj_set_style_opa(freq_bounds[1], is_3d ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
     y += h;

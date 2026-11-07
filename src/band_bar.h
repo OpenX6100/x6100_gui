@@ -16,11 +16,11 @@
 
 #define BAND_BAR_HEIGHT 26
 
-lv_obj_t *band_bar_create(lv_obj_t *parent);
+/* The bar on parent; the segment tag on view (the spectrum). */
+lv_obj_t *band_bar_create(lv_obj_t *parent, lv_obj_t *view);
 
-/* Where it goes (screen y), shown or hidden (the 3D view only), and the
- * top of the 3D view above it, where the segment tag shows. */
-void band_bar_set_geometry(lv_coord_t y, bool shown, lv_coord_t view_y);
+/* Where it goes (screen y), shown or hidden (the 3D view only). */
+void band_bar_set_geometry(lv_coord_t y, bool shown);
 
 /* The frequencies at its left and right edges (the spectrum's). */
 void band_bar_set_range(int32_t lo_hz, int32_t hi_hz);

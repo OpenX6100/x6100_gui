@@ -43,10 +43,12 @@ static std::vector<BandInfo> bands;
 static Subscription  zoom_sub;
 static Subscription  freq_sub;
 static Subscription  if_shift_sub;
+static Subscription  view_3d_sub;
 
 static void on_zoom_changed(Subject *subj, void *user_data);
 static void on_freq_changed(Subject *subj, void *user_data);
 static void on_if_shift_changed(Subject *subj, void *user_data);
+static void on_view_3d_changed(Subject *subj, void *user_data);
 
 static void band_info_timer(lv_timer_t *t) {
     lv_anim_set_values(&fade, lv_obj_get_style_opa(obj, 0), LV_OPA_TRANSP);
@@ -170,6 +172,7 @@ extern "C" lv_obj_t *band_info_init(lv_obj_t *parent) {
     zoom_sub = Subscription(cfg.mode.zoom()->subscribe_and_notify(on_zoom_changed));
     freq_sub = Subscription(cfg.cur.fg_freq()->subscribe_delayed_and_notify(on_freq_changed));
     if_shift_sub = Subscription(cfg.band.if_shift()->subscribe_delayed_and_notify(on_if_shift_changed));
+    view_3d_sub = Subscription(cfg.ui.spectrum_3d()->subscribe_delayed(on_view_3d_changed));
 
     return obj;
 }
@@ -177,8 +180,16 @@ extern "C" lv_obj_t *band_info_init(lv_obj_t *parent) {
 static void band_info_update(int32_t f) {
     freq = f;
 
-    /* 3D: the band bar under it shows the bands, and its tag the segment */
+    /* 3D: the band bar under it shows the bands, and its tag the segment,
+     * so the banner goes at once (it starts shown) */
     if (cfg.ui.spectrum_3d()->get()) {
+        if (timer) {
+            lv_timer_del(timer);
+            timer = NULL;
+        }
+        lv_anim_del(obj, fade_anim);
+        fade_run = false;
+        lv_obj_set_style_opa_layered(obj, LV_OPA_TRANSP, 0);
         return;
     }
 
@@ -210,4 +221,8 @@ static void on_freq_changed(Subject *subj, void *user_data) {
 static void on_if_shift_changed(Subject *subj, void *user_data) {
     if_shift = static_cast<ParamInt *>(subj)->get();
     lv_obj_invalidate(obj);
+}
+
+static void on_view_3d_changed(Subject *subj, void *user_data) {
+    band_info_update(freq);
 }
