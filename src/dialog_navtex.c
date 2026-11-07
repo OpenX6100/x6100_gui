@@ -698,6 +698,11 @@ static void key_cb(lv_event_t *e)
             break;
     }
 
+    /* a saved message open: the MFK is its own (view_key_cb), it must not
+     * scroll the live text hidden behind it */
+    if (view_scroll)
+        return;
+
     /* NAVTEX mode: the MFK moves through the bulletins / scrolls one */
     if (nav_key(key))
         return;
