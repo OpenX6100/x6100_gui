@@ -271,7 +271,6 @@ static void nf_open(void)
     };
     nf_list = ui_list_create(nf_frame, &cfg);
     lv_obj_center(nf_list);
-    lv_obj_add_event_cb(nf_list, key_cb, LV_EVENT_KEY, NULL);
     ui_list_set_count(nf_list, NF_N);
     int cur = nf_current_row();
     ui_list_select(nf_list, cur >= 0 ? cur : 1);

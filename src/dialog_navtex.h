@@ -13,7 +13,6 @@ extern "C" {
 #endif
 
 extern dialog_t *dialog_navtex;
-bool dialog_navtex_is_active(void);
 
 /* Microphone while NAVTEX is open: V/M opens / closes the frequency list,
  * UP (dir < 0) / DOWN (dir > 0) step through it.  false when not open. */

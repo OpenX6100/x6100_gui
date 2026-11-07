@@ -246,11 +246,6 @@ dialog_t *dialog_navtex = &dialog;
 
 static void info_cb(button_data_t *data) { (void)data; app_info_open(dialog.obj, APP_INFO_NAVTEX); }
 
-bool dialog_navtex_is_active(void)
-{
-    return dialog.run;
-}
-
 static const lv_font_t *navtex_font(void);
 
 /* Height in pixels of text[0..n) (no newline in it) shown with font in a
@@ -453,19 +448,6 @@ static void char_cb(int c, void *userdata)
     }
 
     pthread_mutex_unlock(&text_mutex);
-}
-
-static uint16_t read_le16(const unsigned char *p)
-{
-    return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
-}
-
-static uint32_t read_le32(const unsigned char *p)
-{
-    return (uint32_t)p[0] |
-           ((uint32_t)p[1] << 8) |
-           ((uint32_t)p[2] << 16) |
-           ((uint32_t)p[3] << 24);
 }
 
 static bool reset_decoder(void)
