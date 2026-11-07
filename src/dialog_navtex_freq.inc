@@ -192,8 +192,10 @@ static void nf_draw_cb(void *user, int index, lv_draw_ctx_t *ctx, const lv_area_
 static void nf_tune_row(int index)
 {
     if (index < 0 || index >= NF_N || nf_is_head(index)) return;
-    cparam_i_set(cfg.cur.mode(), x6100_mode_usb_dig);
+    /* frequency first, then mode, as JTTY and cfg_digital_load() do: a
+     * frequency in another band loads that band's own mode */
     cparam_i_set(cfg.cur.fg_freq(), nf_freqs[index].hz - NF_AUDIO_HZ);
+    cparam_i_set(cfg.cur.mode(), x6100_mode_usb_dig);
     nf_recalled = index;
     nf_update_label();
     char k[16];
