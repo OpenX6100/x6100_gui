@@ -558,8 +558,13 @@ static void save_call(dsc_call_t *c)
         snprintf(c->file, sizeof(c->file), "%s-%d" DSC_SAVE_EXT, base, k);
         snprintf(path, sizeof(path), DSC_SAVE_DIR "/%s", c->file);
     }
-    FILE *f = fopen(path, "w");
-    if (!f) { fprintf(stderr, "DSC: cannot write %s\n", path); c->file[0] = '\0'; return; }
+    /* written as PATH.tmp and renamed when complete: a power-off during the
+     * save leaves no broken call in the browser (browser_load() deletes the
+     * .tmp left behind) */
+    char tmp[136];
+    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+    FILE *f = fopen(tmp, "w");
+    if (!f) { fprintf(stderr, "DSC: cannot write %s\n", tmp); c->file[0] = '\0'; return; }
     char ts[32];
     strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", &tm);
     fprintf(f, "DSC call\nutc=%s\nfreq_hz=%ld\ncenter_hz=%.0f\nvalid=%d/%d\nrepaired=%d\nunsure=%d\nverified=%d\nsymbols=",
@@ -574,7 +579,12 @@ static void save_call(dsc_call_t *c)
     char ex[512];
     explain_call(c, ex, sizeof(ex));
     fprintf(f, "\nMeaning: %s\n", ex);
-    fclose(f);
+    bool ok = !ferror(f) && fflush(f) == 0 && fsync(fileno(f)) == 0;
+    if (fclose(f) != 0 || !ok || rename(tmp, path) != 0) {
+        fprintf(stderr, "DSC: cannot write %s\n", path);
+        remove(tmp);
+        c->file[0] = '\0';
+    }
 }
 
 static bool load_call(const char *name, dsc_call_t *c)
@@ -678,6 +688,12 @@ static void browser_load(void)
     size_t pl = strlen(DSC_SAVE_PREFIX), el = strlen(DSC_SAVE_EXT);
     while ((de = readdir(d))) {
         size_t l = strlen(de->d_name);
+        if (l > pl + 4 && !strncmp(de->d_name, DSC_SAVE_PREFIX, pl) && !strcmp(de->d_name + l - 4, ".tmp")) {
+            char tmp[160];                  /* a save cut by a power-off: see save_call() */
+            snprintf(tmp, sizeof(tmp), DSC_SAVE_DIR "/%s", de->d_name);
+            unlink(tmp);
+            continue;
+        }
         if (l <= pl + el || strncmp(de->d_name, DSC_SAVE_PREFIX, pl) || strcmp(de->d_name + l - el, DSC_SAVE_EXT))
             continue;
         if (n == cap) {
