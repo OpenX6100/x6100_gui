@@ -267,6 +267,11 @@ static void scan_set_button(void)
     if (btn_scan.disp_btn) buttons_refresh(&btn_scan);
 }
 
+static bool scan_running(void)
+{
+    return scan_state != SCAN_OFF;
+}
+
 static void scan_stop(const char *why)
 {
     if (scan_state == SCAN_OFF) return;

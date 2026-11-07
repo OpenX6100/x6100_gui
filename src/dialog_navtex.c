@@ -101,6 +101,7 @@ static void nf_destroy(void);
 static button_data_t btn_scan, btn_scan_wait;
 static void scan_poll(void);
 static void scan_stop(const char *why);
+static bool scan_running(void);
 static void scan_audio(const float *samples, size_t n);
 static void scan_q_cb(int c, int quality, void *user);
 static void scan_wait_load(void);
@@ -1262,7 +1263,10 @@ static void browser_build(void)
     if (browser_open || !parent_obj || !scroll)
         return;
 
-    scan_stop("Scan stopped");               /* it could be neither seen nor stopped */
+    if (scan_running()) {                    /* it could be neither seen nor stopped */
+        scan_stop("Scan stopped");
+        scan_resume = true;                  /* Scan goes on from here, as the other stops */
+    }
     browser_refresh();
 
     /* Exactly the panel used by the live NAVTEX text (same geometry and
