@@ -16,6 +16,8 @@
  */
 
 #include "dialog_dsc.h"
+#include "lock_manager.h"
+#include "voice.h"
 #include "dsc/dsc_decoder.h"
 #include "dsc/dsc_format.h"
 #include "dsc/dsc_ships.h"
@@ -1383,8 +1385,17 @@ static void freq_draw_cb(void *user, int index, lv_draw_ctx_t *ctx, const lv_are
 static void freq_tune_row(int index)
 {
     if (index < 0 || index >= DSC_NFREQS || freq_is_head(index)) return;
-    cparam_i_set(cfg.cur.mode(), x6100_mode_usb_dig);
+    /* not while the frequency is locked (Randal on #353, 3); the mode is
+     * USB-D, locked by DSC itself while open */
+    if (lm_get_freq()) {
+        msg_update_text_fmt("Frequency locked");
+        voice_say_text_fmt("Frequency locked");
+        return;
+    }
+    /* frequency first, then mode, as JTTY: a channel in another band loads
+     * that band's own mode with the frequency */
     cparam_i_set(cfg.cur.fg_freq(), dsc_freqs[index].hz - 1000);
+    cparam_i_set(cfg.cur.mode(), x6100_mode_usb_dig);
     freq_recalled = index;
     update_freq_label();
     char k[16];
