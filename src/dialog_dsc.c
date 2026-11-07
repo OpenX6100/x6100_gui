@@ -334,14 +334,21 @@ static void names_load(void)
     fseek(f, 0, SEEK_SET);
     if (sz <= 0 || sz > 32L * 1024 * 1024) { fclose(f); return; }
     names_buf = malloc((size_t)sz + 1);
-    names = malloc(sizeof(name_t) * DSC_NAMES_MAX);
-    if (!names_buf || !names) { fclose(f); free(names_buf); free(names); names_buf = NULL; names = NULL; return; }
+    if (!names_buf) { fclose(f); return; }
     size_t got = fread(names_buf, 1, (size_t)sz, f);
     fclose(f);
     names_buf[got] = '\0';
 
+    /* as many entries as lines, not DSC_NAMES_MAX (~1.6 MB) for a few
+     * names (Randal on #353, 8) */
+    size_t lines = 1;
+    for (size_t i = 0; i < got; ++i) if (names_buf[i] == '\n') lines++;
+    if (lines > DSC_NAMES_MAX) lines = DSC_NAMES_MAX;
+    names = malloc(sizeof(name_t) * lines);
+    if (!names) { free(names_buf); names_buf = NULL; return; }
+
     char *p = names_buf;
-    while (*p && nnames < DSC_NAMES_MAX) {
+    while (*p && nnames < (int)lines) {
         char *eol = strchr(p, '\n');
         if (eol) *eol = '\0';
         char *q = p;
