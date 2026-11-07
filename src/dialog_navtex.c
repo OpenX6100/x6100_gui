@@ -338,14 +338,95 @@ static lv_coord_t label_width(lv_obj_t *obj)
     return w > 0 ? w : 1;
 }
 
-/* The live label: the newest part of the history that fits */
+/* The live label shows text_buf[live_from..]: the newest lines that fit in
+ * NAVTEX_LABEL_MAX_H.  Measured once (live_reset), then only the lines that
+ * arrive and the ones that leave the top: the whole history (up to 16 KB) is
+ * not measured again on every update.  Randal on #350, 8.
+ *   live_from  first character shown
+ *   live_tail  start of the last line, still growing (after the last '\n')
+ *   live_hc    height of the complete lines live_from..live_tail */
+static bool    live_valid;
+static size_t  live_from, live_tail;
+static int32_t live_hc;
+static lv_coord_t live_w;
+static const lv_font_t *live_font;
+
+static void live_reset(void)
+{
+    live_valid = false;
+}
+
+/* text_buf lost its first n bytes (history rollover) */
+static void live_shift(size_t n)
+{
+    if (!live_valid) return;
+    if (n > live_from) { live_valid = false; return; }
+    live_from -= n;
+    live_tail -= n;
+}
+
+/* height of the lines of text_buf[from..to), to after a '\n' or == from */
+static int32_t live_lines_px(size_t from, size_t to, const lv_font_t *font, lv_coord_t w)
+{
+    int32_t h = 0;
+    while (from < to) {
+        const char *nl = memchr(text_buf + from, '\n', to - from);
+        size_t e = nl ? (size_t)(nl - text_buf) : to;
+        h += text_px(text_buf + from, e - from, font, w);
+        from = nl ? e + 1 : to;
+    }
+    return h;
+}
+
 static void live_label_update(void)
 {
     if (!label || !scroll)
         return;
-    size_t from = fit_tail(text_buf, text_len, navtex_font(), label_width(scroll),
-                           NAVTEX_LABEL_MAX_H, NULL);
-    lv_label_set_text_static(label, text_buf + from);
+    const lv_font_t *font = navtex_font();
+    lv_coord_t w = label_width(scroll);
+    if (font != live_font || w != live_w)
+        live_valid = false;
+    /* showing part of one very long line: measured again from the whole
+     * history (rare; the steps below assume whole lines) */
+    if (live_valid && live_from > 0 && text_buf[live_from - 1] != '\n')
+        live_valid = false;
+
+    if (!live_valid) {
+        /* once: as before, from the whole history */
+        live_from = fit_tail(text_buf, text_len, font, w, NAVTEX_LABEL_MAX_H, NULL);
+        live_tail = text_len;
+        while (live_tail > 0 && text_buf[live_tail - 1] != '\n')
+            live_tail--;
+        if (live_tail < live_from) live_tail = live_from;      /* one very long line */
+        live_hc = live_lines_px(live_from, live_tail, font, w);
+        live_font = font;
+        live_w = w;
+        live_valid = true;
+    } else {
+        /* the lines completed since the last update */
+        while (live_tail < text_len) {
+            const char *nl = memchr(text_buf + live_tail, '\n', text_len - live_tail);
+            if (!nl) break;
+            size_t e = (size_t)(nl - text_buf);
+            live_hc += text_px(text_buf + live_tail, e - live_tail, font, w);
+            live_tail = e + 1;
+        }
+        int32_t tail_px = live_tail < text_len ?
+                          text_px(text_buf + live_tail, text_len - live_tail, font, w) : 0;
+        /* the oldest lines shown leave the top */
+        while (live_hc + tail_px > NAVTEX_LABEL_MAX_H && live_from < live_tail) {
+            const char *nl = memchr(text_buf + live_from, '\n', live_tail - live_from);
+            size_t e = nl ? (size_t)(nl - text_buf) : live_tail;
+            live_hc -= text_px(text_buf + live_from, e - live_from, font, w);
+            live_from = nl ? e + 1 : live_tail;
+        }
+        /* one line taller than all: its part that fits, as fit_tail() */
+        if (live_from >= live_tail && tail_px > NAVTEX_LABEL_MAX_H) {
+            live_hc = 0;
+            live_from = text_len - (size_t)((int64_t)(text_len - live_tail) * NAVTEX_LABEL_MAX_H / tail_px);
+        }
+    }
+    lv_label_set_text_static(label, text_buf + live_from);
 }
 
 static size_t drop_oldest_complete_line(void)
@@ -361,6 +442,7 @@ static size_t drop_oldest_complete_line(void)
     memmove(text_buf, text_buf + drop, text_len - drop);
     text_len -= drop;
     text_buf[text_len] = '\0';
+    live_shift(drop);
     return drop;
 }
 
@@ -405,6 +487,7 @@ static void append_text(const char *src, size_t n)
 
             memmove(text_buf, text_buf + need, text_len - need);
             text_len -= need;
+            live_shift(need);
             text_buf[text_len] = '\0';
 
             fprintf(stderr,
@@ -559,6 +642,7 @@ static void construct_cb(lv_obj_t *parent)
     pthread_mutex_unlock(&text_mutex);
     text_len = 0;
     text_buf[0] = '\0';
+    live_reset();
     follow_tail = true;
 
     parent_obj = parent;
@@ -761,6 +845,7 @@ static void clear_cb(button_data_t *data)
 
     text_len = 0;
     text_buf[0] = '\0';
+    live_reset();
     follow_tail = true;
 
     if (label)
@@ -856,6 +941,7 @@ static void save_clear_cb(button_data_t *data)
      * pending FIFO were not displayed yet: they stay and appear next. */
     text_len = 0;
     text_buf[0] = '\0';
+    live_reset();
     follow_tail = true;
 
     if (label)
@@ -1047,8 +1133,7 @@ static void view_close(void)
     if (browser_list) {
         lv_obj_clear_flag(browser_list, LV_OBJ_FLAG_HIDDEN);
 
-        /* Files may have been saved meanwhile: rescan, keep the row. */
-        browser_refresh();
+        /* no rescan: in browser mode nothing else saves (Randal on #350, 8) */
         ui_list_set_count(browser_list, (int)browser_file_count);
         focus_obj(browser_list);
     }
@@ -1415,12 +1500,15 @@ static void br_delete_cb(button_data_t *data)
     }
     fprintf(stderr, "NAVTEX BROWSER: deleted %s\n", path);
 
+    /* out of the list, without reading the folder again */
+    free(browser_files[index].name);
+    memmove(&browser_files[index], &browser_files[index + 1],
+            (browser_file_count - (size_t)index - 1) * sizeof(browser_files[0]));
+    browser_file_count--;
     if (open)
-        view_close();                       /* rescans the folder */
-    else {
-        browser_refresh();
+        view_close();
+    else
         ui_list_set_count(browser_list, (int)browser_file_count);
-    }
     if (browser_file_count == 0) {
         browser_buttons();
         return;
