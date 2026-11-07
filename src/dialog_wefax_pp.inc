@@ -82,12 +82,13 @@ static void pp_aligned(const pp_job_t *j, uint8_t *dst)
     }
 }
 
-/* Written as NAME_pp.png.tmp and renamed when complete: a power-off during
- * the save leaves no broken NAME_pp.png for the browser to show. */
+/* Written as NAME_pp.png.pp.tmp and renamed when complete: a power-off
+ * during the save leaves no broken NAME_pp.png for the browser to show.
+ * (.pp.tmp, not .tmp: the browser's own save of the same file uses that.) */
 static bool pp_write_png(const char *final_path, const uint8_t *img, unsigned int rows)
 {
     char path[PATH_MAX];
-    if (snprintf(path, sizeof(path), "%s.tmp", final_path) >= (int)sizeof(path)) return false;
+    if (snprintf(path, sizeof(path), "%s.pp.tmp", final_path) >= (int)sizeof(path)) return false;
     FILE *fp = fopen(path, "wb");
     if (!fp) return false;
     png_structp png = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
@@ -112,11 +113,8 @@ static bool pp_write_png(const char *final_path, const uint8_t *img, unsigned in
         png_write_row(png, (png_bytep)(img + (size_t)r * WEFAX_WIDTH));
     png_write_end(png, NULL);
     png_destroy_write_struct(&png, &info);
-    if (fflush(fp) != 0 || fsync(fileno(fp)) != 0) {
-        fclose(fp);
-        remove(path);
-        return false;
-    }
+    fflush(fp);
+    fsync(fileno(fp));      /* as the slant file: a failure here is not fatal */
     if (fclose(fp) != 0 || rename(path, final_path) != 0) {
         remove(path);
         return false;
