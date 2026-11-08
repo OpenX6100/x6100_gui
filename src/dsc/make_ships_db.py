@@ -22,9 +22,7 @@ the same name.  Three formats, recognised by their content:
 
   ship      201100124,RAFAELO,ZADN3,Cargo
   special   211204590Jade Hochschule DH6000       (training / test sites)
-  coast     002040100,AZR,Delgada,37.73,25.67     (only its ship-MMSI rows are
-                                                   used here; coast MMSIs go in
-                                                   dsc_coast.c)
+  coast     002040100,AZR,Delgada,37.73,25.67     (ship type "Coast station")
 
 The result lives in rootfs/ like broadcast.csv and goes into every build.
 """
@@ -34,7 +32,7 @@ import struct
 import sys
 import unicodedata
 
-MAX_NAME, MAX_CALL, MAX_TYPE = 31, 11, 23
+MAX_NAME, MAX_CALL, MAX_TYPE = 56, 11, 23
 
 
 def ascii_text(s, n):
@@ -62,7 +60,8 @@ def first(row, *keys):
 
 
 def ship_mmsi(m):
-    return len(m) == 9 and m.isdigit() and m[0] in "234567"
+    """a ship (MID first) or a coast station (00 + MID)"""
+    return len(m) == 9 and m.isdigit() and (m[0] in "234567" or m[:2] == "00")
 
 
 def add_extra(ships, path):
@@ -78,7 +77,8 @@ def add_extra(ships, path):
         if len(parts) >= 4 and ship_mmsi(parts[0]) and len(parts) == 4:
             m, name, call, typ = parts                          # ship list
         elif len(parts) >= 5 and ship_mmsi(parts[0]):
-            m, name, call, typ = parts[0], parts[2], "", "Training/test site"   # coast list
+            m, name, call = parts[0], parts[2], ""                  # coast list
+            typ = "Coast station" if m[:2] == "00" else "Training/test site"
         elif len(parts) == 1 and ship_mmsi(line[:9]):
             m, name, call, typ = line[:9], line[9:], "", "Training/test site"   # special list
         else:
@@ -117,12 +117,14 @@ def main():
             m = first(row, "mmsi").replace(" ", "")
             if m.endswith(".0"):            # "235095435.0" from spreadsheet exports
                 m = m[:-2]
-            # ship stations only: 9 digits, first digit 2..7
-            if len(m) != 9 or not m.isdigit() or m[0] not in "234567":
+            # ship and coast stations: 9 digits, MID first or 00 + MID
+            if not ship_mmsi(m):
                 bad += 1
                 no_mmsi += 1
                 continue
-            name = ascii_text(first(row, "ship_name"), MAX_NAME).upper()
+            name = ascii_text(first(row, "ship_name"), MAX_NAME)
+            if m[:2] != "00":               # coast names keep "+2 sites"
+                name = name.upper()
             if not name:
                 bad += 1
                 no_name += 1

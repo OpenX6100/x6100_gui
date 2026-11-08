@@ -392,11 +392,9 @@ static void names_load(void)
     fprintf(stderr, "DSC: %d station names loaded from %s\n", nnames, DSC_NAMES_FILE);
 }
 
-/* built-in lists: coast stations, then the ships database */
+/* the ships database: ships and coast stations */
 static const char *builtin_name(const char *id)
 {
-    const char *c = dsc_coast_name(id);
-    if (c) return c;
     dsc_ship_t sh;
     return dsc_ship_lookup(id, &sh) ? sh.name : NULL;
 }

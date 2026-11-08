@@ -96,9 +96,6 @@ const char *dsc_mid_country(int mid);
 /* ISO 3166 alpha-2 code ("it", "gr") of a MID, for its flag; NULL if unknown. */
 const char *dsc_mid_iso(int mid);
 
-/* Name of a coast station from the built-in ITU table, NULL if unknown. */
-const char *dsc_coast_name(const char *mmsi);
-
 /* Kind and MID of a 9-digit MMSI string ('?' allowed). */
 dsc_kind_t dsc_mmsi_kind(const char *mmsi, int *mid);
 
