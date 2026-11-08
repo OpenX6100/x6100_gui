@@ -160,6 +160,9 @@ static float base_gain_offset;
 
 static uint32_t dsp_audio_sub_id = AUDIO_SUB_INVALID;
 
+/* NR, NB and the notches: off on the radio while the app is open, as in JS8 */
+static Observer *dsp_watch[4];
+
 static void construct_cb(lv_obj_t *parent);
 static void key_cb(lv_event_t * e);
 static void destruct_cb();
@@ -469,6 +472,12 @@ static void destruct_cb() {
     waterfall_set_enabled(true);
     spectrum_set_enabled(true);
 
+    for (unsigned i = 0; i < sizeof(dsp_watch) / sizeof(dsp_watch[0]); i++) {
+        if (dsp_watch[i]) param_unsubscribe(dsp_watch[i]);
+        dsp_watch[i] = NULL;
+    }
+    radio_set_rx_dsp_off(false);
+
     mem_load(MEM_BACKUP_ID);
 
     lm_set_mode(false);
@@ -593,6 +602,14 @@ static void rotary_cb(int32_t diff, uint16_t dt) {
 
 }
 
+/* NR, NB, DNF or DNF auto changed while the app is open: on whichever thread
+ * changed it (CAT's own), so radio calls only, nothing on the screen. */
+static void dsp_held_cb(Subject *subj, void *user_data) {
+    (void)subj;
+    (void)user_data;
+    radio_set_rx_dsp_off(true);
+}
+
 static void construct_cb(lv_obj_t *parent) {
     dialog.obj = dialog_init(parent);
 
@@ -710,6 +727,16 @@ static void construct_cb(lv_obj_t *parent) {
     lm_set_mode(true);
     lm_set_freq(true);
     lm_set_band(true);
+
+    /* The base applies noise reduction, the noise blanker and the notches in
+     * DIGI modes too, and they damage steady tones (the auto-notch goes for
+     * exactly those). Off while the app is open, radio only, the settings
+     * kept; turned on meanwhile (CAT, a front-panel control): off again. */
+    radio_set_rx_dsp_off(true);
+    dsp_watch[0] = subject_subscribe((Subject *)cfg.dsp.nr(), dsp_held_cb, NULL);
+    dsp_watch[1] = subject_subscribe((Subject *)cfg.dsp.nb(), dsp_held_cb, NULL);
+    dsp_watch[2] = subject_subscribe((Subject *)cfg.dsp.dnf(), dsp_held_cb, NULL);
+    dsp_watch[3] = subject_subscribe((Subject *)cfg.dsp.dnf_auto(), dsp_held_cb, NULL);
 
     worker_init();
 
