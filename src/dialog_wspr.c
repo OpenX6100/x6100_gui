@@ -148,6 +148,7 @@ static lv_timer_t *heard_timer = NULL;
 static Observer *dsp_watch[4];
 static int      saved_filter_low, saved_filter_high;
 static bool     filter_saved;
+static void     rx_filter_set(int low, int high);
 static lv_timer_t *fade_timer = NULL;
 
 static lv_anim_t   fade;
