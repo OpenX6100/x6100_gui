@@ -300,6 +300,10 @@ typedef struct {
 } cfg_jtty_refs_t;
 
 typedef struct {
+    ParamInt *(*net)(void); /* p_wspr_net */
+} cfg_wspr_refs_t;
+
+typedef struct {
     ParamText *(*bind)(void); /* p_encoder_bind */
 } cfg_encoder_refs_t;
 
@@ -464,6 +468,7 @@ typedef struct {
     cfg_radio_refs_t radio;
     cfg_js8_refs_t js8;
     cfg_jtty_refs_t jtty;
+    cfg_wspr_refs_t wspr;
 } cfg_refs_t;
 
 extern const cfg_refs_t cfg;

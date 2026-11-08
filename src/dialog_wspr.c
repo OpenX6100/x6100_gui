@@ -43,7 +43,10 @@
 
 #include "wspr_app.h"
 #include "wspr_demod.h"
+#include "wspr_map.h"
+#include "wspr_net.h"
 
+#include <ctype.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -119,6 +122,14 @@ static void txf_hold_cb(button_data_t *b);
 static void clear_press_cb(button_data_t *b);
 static void band_up_cb(button_data_t *b);
 static void band_down_cb(button_data_t *b);
+static const char *map_label_getter(void);
+static void show_map_cb(button_data_t *b);
+static void map_mode_cb(button_data_t *b);
+static const char *net_label_getter(void);
+static void net_press_cb(button_data_t *b);
+static void fetch_heard(void);
+static void on_table_close(void);
+static void on_table_vol_change(int32_t delta);
 
 #define table (table_view_obj())
 
@@ -127,6 +138,7 @@ static lv_obj_t   *finder;            /* our transmit frequency */
 static lv_obj_t   *window_box;        /* 1400-1600 Hz, decoded */
 
 static lv_timer_t *status_timer = NULL;
+static lv_timer_t *heard_timer = NULL;
 static lv_timer_t *fade_timer = NULL;
 
 static lv_anim_t   fade;
@@ -139,9 +151,10 @@ static double      cur_lat, cur_lon;
 
 static buttons_page_t btn_page_1;
 static buttons_page_t btn_page_2;
+static buttons_page_t btn_page_3;
 
 static button_data_t button_page_1 = {
-    .type = BTN_TEXT, .label = "(WSPR 1:2)",
+    .type = BTN_TEXT, .label = "(WSPR 1:3)",
     .press = button_next_page_cb, .next = &btn_page_2,
 };
 static button_data_t button_tx = {
@@ -160,8 +173,8 @@ static button_data_t button_clear = {
 };
 
 static button_data_t button_page_2 = {
-    .type = BTN_TEXT, .label = "(WSPR 2:2)",
-    .press = button_next_page_cb, .next = &btn_page_1,
+    .type = BTN_TEXT, .label = "(WSPR 2:3)",
+    .press = button_next_page_cb, .next = &btn_page_3,
 };
 static button_data_t button_band_down = {
     .type = BTN_TEXT, .label = "Band\ndown", .press = band_down_cb,
@@ -173,13 +186,30 @@ static button_data_t button_center = {
     .type = BTN_TEXT_FN, .label_fn = txf_label_getter,
     .press = txf_press_cb, .hold = txf_hold_cb,
 };
+static button_data_t button_show_map = {
+    .type = BTN_TEXT_FN, .label_fn = map_label_getter,
+    .press = show_map_cb, .hold = map_mode_cb,
+};
+
+static button_data_t button_page_3 = {
+    .type = BTN_TEXT, .label = "(WSPR 3:3)",
+    .press = button_next_page_cb, .next = &btn_page_1,
+};
+static button_data_t button_net = {
+    .type = BTN_TEXT_FN, .label_fn = net_label_getter,
+    .press = net_press_cb,
+};
 
 static buttons_page_t btn_page_1 = {
     {&button_page_1, &button_tx, &button_pwr, &button_status, &button_clear}
 };
 
 static buttons_page_t btn_page_2 = {
-    {&button_page_2, &button_band_down, &button_band_up, &button_center}
+    {&button_page_2, &button_band_down, &button_band_up, &button_center, &button_show_map}
+};
+
+static buttons_page_t btn_page_3 = {
+    {&button_page_3, &button_net, NULL, NULL, NULL}
 };
 
 static dialog_t dialog = {
@@ -244,19 +274,27 @@ static void load_band(int8_t dir)
 
 static void clean_screen(void)
 {
+    char title[24];
+
     table_view_reset();
     lv_waterfall_clear_data(waterfall);
+
+    snprintf(title, sizeof(title), "WSPR %s", cur_band >= 0 ? wspr_bands[cur_band].label : "");
+    wspr_map_set_title(title);
+    wspr_map_clear();
+    fetch_heard();
 }
 
 static void change_band(int8_t dir)
 {
-    /* The receive chain is rebuilt: the collected baseband belongs to the
-     * old band. It goes down before the radio retunes, because that ends
-     * a transmission in progress: the radio mustn't change frequency, nor
-     * an amplifier its band, while keyed. */
+    /* The old chain down first: set_active(false) ends a transmission
+     * (the radio mustn't retune, nor the amplifier switch bands, while
+     * keyed) and waits for a decode in progress, whose spots are still
+     * the old band's. Then the new band and its dial for WSPRnet. */
     wspr_app_set_active(false);
     load_band(dir);
-    wspr_app_set_active(true);
+    wspr_app_set_dial(wspr_bands[cur_band].dial_hz);
+    wspr_app_set_active(true);  /* a new chain: the baseband was the old band's */
     clean_screen();
     buttons_refresh(&button_status);
 }
@@ -324,12 +362,10 @@ static void on_psd(const float *mag_db, int nbins, void *ctx)
  */
 static void slot_time_str(char *out, size_t out_sz)
 {
-    time_t     t = time(NULL) - 60;
-    struct tm  tm_utc;
+    char date[16], hhmm[16];
 
-    t -= t % 120;
-    gmtime_r(&t, &tm_utc);
-    snprintf(out, out_sz, "%02d%02d", tm_utc.tm_hour, tm_utc.tm_min);
+    wspr_net_slot_time(date, hhmm);   /* the time WSPRnet gets too */
+    snprintf(out, out_sz, "%s", hhmm);
 }
 
 /* Settings > Interface > Decoder text, read when the window opens. */
@@ -371,6 +407,7 @@ static void on_spot(const wspr_spot_t *spot, void *ctx)
     }
 
     scheduler_put(table_view_add_msg_cb, &cd, sizeof(cd));
+    scheduler_put(wspr_map_spot_cb, (void *)spot, sizeof(*spot));
 }
 
 static void on_slot_end(void *ctx)
@@ -462,6 +499,8 @@ static void status_timer_cb(lv_timer_t *t)
     /* BTN_TEXT_FN without a subject never repaints by itself. */
     if (button_status.disp_btn)
         buttons_refresh(&button_status);
+    if (button_net.disp_btn)
+        buttons_refresh(&button_net);
 }
 
 /* ---- Button actions --------------------------------------------------- */
@@ -549,6 +588,82 @@ static void clear_press_cb(button_data_t *b)
 {
     (void)b;
     clean_screen();
+}
+
+/* ---- Show: Map (wspr_map.c) ------------------------------------------ */
+
+static const char *map_label_getter(void)
+{
+    return wspr_map_shown() ? "Show:\nList" : "Show:\nMap";
+}
+
+static void show_map_cb(button_data_t *b)
+{
+    char title[24];
+
+    snprintf(title, sizeof(title), "WSPR %s", cur_band >= 0 ? wspr_bands[cur_band].label : "");
+    wspr_map_set_title(title);
+    if (wspr_map_show(dialog.obj, table, waterfall, !wspr_map_shown(), on_table_close, on_table_vol_change) &&
+        wspr_map_shown())
+        msg_update_text_fmt("Map: turn MFK to pick a station. Hold: Auto/Close-in/World");
+    buttons_refresh(b);
+}
+
+/* ---- WSPRnet (wspr_net.c) -------------------------------------------- */
+
+/* wspr.live copies WSPRnet's spots every few minutes; asking more often
+ * than that gains nothing. */
+#define HEARD_PERIOD_MS (5 * 60 * 1000)
+
+/* Who heard us on this band in the last hour: blue on the map. */
+static void fetch_heard(void)
+{
+    char   call[PARAM_TEXT_MAX];
+    size_t i;
+
+    wspr_net_forget();
+    if (cur_band < 0)
+        return;
+    param_t_get_into(cfg.callsign(), call, sizeof(call));
+    for (i = 0; call[i]; i++)
+        call[i] = (char)toupper((unsigned char)call[i]);
+    wspr_net_fetch_heard(call, wspr_bands[cur_band].dial_hz);
+}
+
+static void heard_timer_cb(lv_timer_t *t)
+{
+    (void)t;
+    fetch_heard();
+}
+
+static const char *net_label_getter(void)
+{
+    static char buf[32];
+
+    snprintf(buf, sizeof(buf), "WSPRnet:\n%s", wspr_net_state());
+    return buf;
+}
+
+static void net_press_cb(button_data_t *b)
+{
+    bool on = !wspr_net_enabled();
+
+    wspr_net_set_enabled(on);
+    if (on) {
+        msg_update_text_fmt("WSPRnet on: spots go to wsprnet.org, who heard you comes from wspr.live");
+        fetch_heard();
+    } else {
+        msg_update_text_fmt("WSPRnet off: spots are only saved to wspr_spots.txt");
+    }
+    buttons_refresh(b);
+}
+
+/* Held: the map's view, Auto -> Close-in -> World. */
+static void map_mode_cb(button_data_t *b)
+{
+    (void)b;
+    if (wspr_map_shown())
+        msg_update_text_fmt("Map: %s", wspr_map_next_mode());
 }
 
 /* ---- Transmit frequency ---------------------------------------------- */
@@ -778,12 +893,20 @@ static void construct_cb(lv_obj_t *parent)
 
     wspr_app_init();
     wspr_app_set_ui_cb(&ui_cb);
+    wspr_app_set_dial(wspr_bands[cur_band].dial_hz);
     wspr_app_set_active(true);
+
+    /* Spots of the last session that were still on their way when it
+     * closed may have reached the map since. */
+    wspr_map_clear();
 
     tx_hz = wspr_app_get_tx_freq();
     update_finder();
 
     status_timer = lv_timer_create(status_timer_cb, 1000, NULL);
+
+    fetch_heard();
+    heard_timer = lv_timer_create(heard_timer_cb, HEARD_PERIOD_MS, NULL);
 }
 
 static void destruct_cb(void)
@@ -792,6 +915,11 @@ static void destruct_cb(void)
         lv_timer_del(status_timer);
         status_timer = NULL;
     }
+    if (heard_timer) {
+        lv_timer_del(heard_timer);
+        heard_timer = NULL;
+    }
+    wspr_net_forget();
     if (fade_timer) {
         lv_timer_del(fade_timer);
         fade_timer = NULL;
@@ -813,6 +941,7 @@ static void destruct_cb(void)
     wspr_app_set_active(false);
     wspr_app_set_ui_cb(NULL);
 
+    wspr_map_destroy();     /* its objects go with the window */
     table_view_destroy();
     waterfall = NULL;       /* deleted with the window; see waterfall_add_data */
 

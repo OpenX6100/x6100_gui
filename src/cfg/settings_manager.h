@@ -388,6 +388,10 @@ class SettingsManager {
     Parameter<int32_t> p_jtty_tx_freq{"jtty_tx_freq", 1500, 200, 2800,
         StorageType::GLOBAL, pending_writes_, &global_params_}; // our audio offset (tone 0), Hz
 
+    // WSPR
+    Parameter<int32_t> p_wspr_net{"wspr_net", false, 0, 1,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // spots to WSPRnet, heard-you from wspr.live
+
     // Station identity
     Parameter<std::string> p_qth{"qth", "", {},
         StorageType::GLOBAL, pending_writes_, {}, &global_params_};
