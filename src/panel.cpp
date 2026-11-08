@@ -110,7 +110,12 @@ static void panel_update_text_cb(const char *text) {
             }
         }
     }
-    truncate();
+    /* truncate() cuts one line per call: a multi-line echo adds several */
+    size_t len;
+    do {
+        len = strlen(buf);
+        truncate();
+    } while (strlen(buf) != len);
     lv_label_set_text_static(obj, buf);
 }
 
@@ -201,39 +206,71 @@ void panel_add_text(const char * text) {
     scheduler_put((void(*)(void*))panel_update_text_cb, (void*)esc, n + 1);
 }
 
+/* One finished echo line, in its colour; false when out[] is full (the
+ * rest of the echo is left out rather than cut inside a colour tag). */
+static bool echo_line(char *out, size_t size, const char *line) {
+    size_t o = strlen(out);
+    int    n = line[0] ? snprintf(out + o, size - o, "#F5C400 %s#\n", line) : snprintf(out + o, size - o, "\n");
+
+    if (n < 0 || (size_t)n >= size - o) {
+        out[o] = '\0';
+        return false;
+    }
+    return true;
+}
+
 /* LVGL thread: the sent text on lines of its own, each in its own colour
  * (LVGL starts every line uncoloured, so a long line wrapped by the label
- * lost its colour), broken between words where the panel ends. */
+ * lost its colour), broken between words where the panel ends and where
+ * the text itself has a line break (a multi-line macro). As RTTY sends it:
+ * '\n' is a line break (a blank line kept), '\r' is not sent at all. */
 static void panel_tx_text_cb(const char *esc) {
     const lv_font_t *font = lv_obj_get_style_text_font(obj, LV_PART_MAIN);
     lv_coord_t       width = lv_obj_get_width(obj) - 20;
-    char             out[640] = "\n";
+    char             out[1000] = "\n";     /* under panel_update_text_cb()'s 1 KB */
     char             line[256] = "";
-    const char      *p = esc;
+    char             text[256];
+    const char      *p = text;
+    bool             room = true;
+    size_t           t = 0;
 
-    while (*p) {
-        const char *end = strchr(p, ' ');
+    /* '\r' out first: RTTY doesn't send it, so "CQ\rDE" goes out "CQDE" */
+    for (const char *q = esc; *q && t + 1 < sizeof(text); q++) {
+        if (*q != '\r') {
+            text[t++] = *q;
+        }
+    }
+    text[t] = '\0';
+
+    while (*p && room) {
+        if (*p == '\n') {
+            room = echo_line(out, sizeof(out), line);
+            line[0] = '\0';
+            p++;
+            continue;
+        }
+        const char *end = strpbrk(p, " \n");
         size_t      wl = end ? (size_t)(end - p) : strlen(p);
         char        trial[256];
         lv_point_t  sz;
 
-        snprintf(trial, sizeof(trial), "%s%s%.*s", line, line[0] ? " " : "", (int)wl, p);
-        lv_txt_get_size(&sz, trial, font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_RECOLOR);
-        if (sz.x > width && line[0]) {
-            size_t o = strlen(out);
-            snprintf(out + o, sizeof(out) - o, "#F5C400 %s#\n", line);
-            snprintf(line, sizeof(line), "%.*s", (int)wl, p);
-        } else {
-            snprintf(line, sizeof(line), "%s", trial);
+        if (wl > 0) {
+            snprintf(trial, sizeof(trial), "%s%s%.*s", line, line[0] ? " " : "", (int)wl, p);
+            lv_txt_get_size(&sz, trial, font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_RECOLOR);
+            if (sz.x > width && line[0]) {
+                room = echo_line(out, sizeof(out), line);
+                snprintf(line, sizeof(line), "%.*s", (int)wl, p);
+            } else {
+                snprintf(line, sizeof(line), "%s", trial);
+            }
         }
         p += wl;
         while (*p == ' ') {
             p++;
         }
     }
-    if (line[0]) {
-        size_t o = strlen(out);
-        snprintf(out + o, sizeof(out) - o, "#F5C400 %s#\n", line);
+    if (room && line[0]) {
+        echo_line(out, sizeof(out), line);
     }
     panel_update_text_cb(out);
 }
