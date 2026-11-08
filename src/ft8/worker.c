@@ -12,6 +12,7 @@
 #include "ft2.h"
 #include "msg_encode.h"
 #include "contest_msg.h"
+#include "subtract.h"
 
 #include "lvgl/lvgl.h"
 #include <ft8lib/constants.h>
@@ -27,6 +28,7 @@
 #include <stdint.h>
 #include <errno.h>
 #include <ctype.h>
+#include <time.h>
 
 #define MAX_CANDIDATES 200
 #define MAX_DECODED_MESSAGES 50
@@ -90,6 +92,30 @@ static ftx_message_t  *decoded_hashtable[MAX_DECODED_MESSAGES];
 static ftx_waterfall_t wf;
 static int             find_candidates_at;
 static char            own_call[12]; /* kept in the hash table, see remember_own_call() */
+
+/* More passes, as WSJT-X: each signal decoded in a slot is taken out of
+ * its audio (subtract.c), the spectrum made again and searched again, so
+ * stations sitting next to stronger ones come through. FT8 and FT4; FT2
+ * stays single-pass. They run after the next slot's TX decision
+ * (ftx_worker_decode_more), so a transmission starts as it always did, and
+ * stop by EXTRA_DEADLINE_S into the new slot (audio_worker keeps 3 s of
+ * audio meanwhile). */
+#define EXTRA_PASSES     2      /* WSJT-X: 3 passes in all */
+#define EXTRA_DEADLINE_S 2.5f
+static bool    extra_on;
+static bool    extra_pending;   /* the last slot is kept for ftx_worker_decode_more() */
+static bool    extra_realtime = true;
+static int     rx_rate;
+static float   slot_secs;
+static float  *slot_audio;
+static int     slot_len, slot_cap;
+typedef struct {
+    uint8_t tones[FT4_NN];
+    float   freq_hz, time_sec;
+    bool    subtracted;
+} heard_sig_t;
+static heard_sig_t heard[MAX_DECODED_MESSAGES];
+static int         heard_count;
 
 static void decode_messages(const ftx_waterfall_t *wf, int *num_candidates, ftx_candidate_t *candidate_list,
                             ftx_message_t *decoded, ftx_message_t **decoded_hashtable, int ldpc_iterations,
@@ -156,6 +182,8 @@ void ftx_worker_init(int sample_rate, ftx_protocol_t protocol) {
         return;
     }
     int num_samples = slot_period * sample_rate;
+    rx_rate   = sample_rate;
+    slot_secs = slot_period;
 
     hashtable_init(256);
     remember_own_call();
@@ -214,6 +242,17 @@ void ftx_worker_init(int sample_rate, ftx_protocol_t protocol) {
         rx_window[i] = liquid_hann(i, nfft) * window_norm;
     }
 
+    /* More passes: FT8/FT4 only */
+    extra_on = false;
+    if ((int)protocol != (int)FTX_PROTOCOL_FT2) {
+        slot_cap   = (int)(slot_period * sample_rate);
+        slot_audio = malloc(sizeof(float) * slot_cap);
+        extra_on   = slot_audio &&
+                   ftx_subtract_init(block_size, n_tones,
+                                     protocol == FTX_PROTOCOL_FT8 ? FT8_SYMBOL_BT : FT4_SYMBOL_BT);
+        if (!extra_on) LV_LOG_WARN("FT8 worker: no memory for more passes, one pass only");
+    }
+
     ftx_worker_reset();
     return;
 
@@ -226,6 +265,10 @@ error_cleanup:
  * worker (partial allocations are skipped via NULL checks).
  */
 void ftx_worker_free() {
+    ftx_subtract_free();
+    free(slot_audio);
+    slot_audio = NULL;
+    extra_on   = false;
     if (wf.mag) {
         free(wf.mag);
         wf.mag = NULL;
@@ -256,15 +299,25 @@ void ftx_worker_free() {
 /**
  * Reset worker
  */
+static void forget_slot(void) {
+    extra_pending = false;
+    slot_len      = 0;
+    heard_count   = 0;
+    // Initialize hash table pointers
+    for (int i = 0; i < MAX_DECODED_MESSAGES; ++i) {
+        decoded_hashtable[i] = NULL;
+    }
+}
+
 void ftx_worker_reset() {
     hashtable_cleanup(10);
     remember_own_call();
     wf.num_blocks = 0;
     num_candidates = 0;
-    // Initialize hash table pointers
-    for (int i = 0; i < MAX_DECODED_MESSAGES; ++i) {
-        decoded_hashtable[i] = NULL;
-    }
+    /* A whole slot with decodes: its audio, decodes and their table stay
+     * for ftx_worker_decode_more(), until the new slot's first audio. */
+    if (extra_on && slot_len >= wf.max_blocks * block_size && heard_count > 0) extra_pending = true;
+    else forget_slot();
 }
 
 bool ftx_worker_generate_tx_samples(const char *text, const uint16_t signal_freq, const uint32_t sample_rate,
@@ -301,6 +354,8 @@ bool ftx_worker_generate_tx_samples(const char *text, const uint16_t signal_freq
     return true;
 }
 
+static void spectrum_block(const float *samples);
+
 void ftx_worker_put_rx_samples(float *samples, uint32_t n_samples) {
     if (wf.num_blocks >= wf.max_blocks) {
         LV_LOG_ERROR("FT8 wf is full");
@@ -312,12 +367,23 @@ void ftx_worker_put_rx_samples(float *samples, uint32_t n_samples) {
         return;
     }
 
+    /* While the last slot waits for ftx_worker_decode_more() its audio stays
+     * (a block coming in before the slot boundary is dropped there anyway) */
+    if (extra_on && !extra_pending && slot_len + (int)n_samples <= slot_cap) {
+        memcpy(slot_audio + slot_len, samples, n_samples * sizeof(float));
+        slot_len += n_samples;
+    }
+    spectrum_block(samples);
+}
+
+/* One block (a symbol) of audio into the spectrum the decoder searches. */
+static void spectrum_block(const float *samples) {
     float *frame_ptr;
     int    offset    = wf.num_blocks * wf.block_stride;
     int    frame_pos = 0;
 
     for (int time_sub = 0; time_sub < wf.time_osr; time_sub++) {
-        windowf_write(frame_window, &samples[frame_pos], subblock_size);
+        windowf_write(frame_window, (float *)&samples[frame_pos], subblock_size);
         frame_pos += subblock_size;
 
         windowf_read(frame_window, &frame_ptr);
@@ -446,6 +512,14 @@ static void decode_messages(const ftx_waterfall_t *wf, int *num_candidates, ftx_
                 int snr = get_message_snr(wf, cand, &message);
                 msg_cb(text, snr, freq_hz, time_sec, user_data);
             }
+            if (extra_on && heard_count < MAX_DECODED_MESSAGES) { /* to take out for the next pass */
+                heard_sig_t *h = &heard[heard_count++];
+                if (wf->protocol == FTX_PROTOCOL_FT8) ft8_encode(message.payload, h->tones);
+                else ft4_encode(message.payload, h->tones);
+                h->freq_hz    = freq_hz;
+                h->time_sec   = time_sec;
+                h->subtracted = false;
+            }
         }
     }
     // Remove decoded candidate;
@@ -462,4 +536,69 @@ static int get_message_snr(const ftx_waterfall_t *wf, const ftx_candidate_t *can
         ft8_encode(msg->payload, tones);
     }
     return ftx_get_snr(wf, candidate, tones, n_tones);
+}
+
+void ftx_worker_set_realtime(bool on) {
+    extra_realtime = on;
+}
+
+/* Too far into the new slot (or a transmission came first)? */
+static bool past_deadline(void) {
+    if (!extra_realtime) return false;
+    struct timespec now;
+    clock_gettime(CLOCK_REALTIME, &now);
+    float sec = fmodf((float)(now.tv_sec % 60) + now.tv_nsec / 1e9f, slot_secs);
+    return sec >= EXTRA_DEADLINE_S;
+}
+
+static void extra_passes_run(decoded_msg_cb msg_cb, void *user_data);
+
+/* Each slot, in the app log: what the extra passes found and how long they took. */
+void ftx_worker_decode_more(decoded_msg_cb msg_cb, void *user_data) {
+    if (!extra_pending) return;
+    if (past_deadline()) { /* a transmission came first: too late to matter */
+        forget_slot();
+        return;
+    }
+    struct timespec t0, t1;
+    int             before = heard_count;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    extra_passes_run(msg_cb, user_data);
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    LV_LOG_USER("FT8/FT4 extra passes: %d more decoded (of %d), %ld ms%s", heard_count - before, heard_count,
+                (long)((t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_nsec - t0.tv_nsec) / 1000000),
+                past_deadline() ? ", stopped at the deadline" : "");
+    /* Done with it: the new slot starts from nothing, as before */
+    forget_slot();
+    wf.num_blocks  = 0;
+    num_candidates = 0;
+}
+
+static void extra_passes_run(decoded_msg_cb msg_cb, void *user_data) {
+    for (int pass = 0; pass < EXTRA_PASSES; pass++) {
+        int done = 0;
+        for (int i = 0; i < heard_count; i++) {
+            if (heard[i].subtracted) continue;
+            if (past_deadline()) return;
+            /* ft8_lib's time is that of the spectrum frame, two symbols long: the
+             * signal starts a symbol before it (fitted within a symbol by ftx_subtract) */
+            ftx_subtract(slot_audio, slot_len, rx_rate, heard[i].tones, heard[i].freq_hz,
+                         (int)lroundf(heard[i].time_sec * rx_rate) - block_size);
+            heard[i].subtracted = true;
+            done++;
+        }
+        if (!done || past_deadline()) return;
+
+        /* The spectrum again, from what's left, and a fresh search */
+        int before = heard_count;
+        windowf_reset(frame_window);
+        wf.num_blocks = 0;
+        for (int b = 0; b + block_size <= slot_len && wf.num_blocks < wf.max_blocks; b += block_size)
+            spectrum_block(slot_audio + b);
+        num_candidates = ftx_find_candidates(&wf, MAX_CANDIDATES, candidate_list, ft8lib_min_score);
+        if (past_deadline()) return;
+        decode_messages(&wf, &num_candidates, candidate_list, decoded, decoded_hashtable, LDPC_ITERATIONS, msg_cb,
+                        user_data);
+        if (heard_count == before) return; /* nothing new: no more passes */
+    }
 }

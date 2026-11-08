@@ -211,6 +211,8 @@ static void *worker_main(void *arg) {
 
         rx_consume_frames(w, &info, sec_since_slot_start);
 
+        slot_info_t ended = info; /* the slot the extra passes are about */
+
         if (new_slot) {
             /* Slot boundary: flush a final decode, drain stale audio that
              * accumulated during TX, and fire the slot_end handler. */
@@ -227,6 +229,13 @@ static void *worker_main(void *arg) {
 
         if (w->cb.on_tick && !tick_done) {
             w->cb.on_tick(&info, new_slot, sec_since_slot_start, w->cb.ctx);
+        }
+
+        /* After the TX decision: more passes over the slot just ended
+         * (FT8/FT4, ft8/worker.c), its decodes reported as that slot's */
+        if (new_slot) {
+            decode_ctx_t dc_ended = {.w = w, .info = &ended};
+            ftx_worker_decode_more(decode_cb, (void *)&dc_ended);
         }
 
         if (!new_slot && !atomic_load(&w->stop_req)) {

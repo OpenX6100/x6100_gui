@@ -2,7 +2,7 @@
 # no application services; depends on liquid-dsp/ft8lib from the sysroot, QTH
 # (linked by consumers) and LVGL for logging only.
 add_library(ft8_core STATIC
-    qso.cpp worker.c contest_msg.c utils.c gfsk.c
+    qso.cpp worker.c contest_msg.c subtract.c utils.c gfsk.c
     cq_scheduler.c msg_encode.c
     audio_worker.c
 )

@@ -35,6 +35,15 @@ void ftx_worker_reset();
  */
 void ftx_worker_set_own_call(const char *call);
 
+/// @brief More decoding passes over the slot just ended (FT8/FT4), as WSJT-X:
+/// what was decoded is taken out of its audio and the rest searched again.
+/// Call after the new slot's TX decision, before its audio comes in; nothing
+/// to do for FT2, after a transmission or once the new slot's audio started.
+void ftx_worker_decode_more(decoded_msg_cb msg_cb, void *user_data);
+
+/// @brief Off: the extra decoding passes ignore the clock (PC tests on recordings)
+void ftx_worker_set_realtime(bool on);
+
 /// @brief Generate audio samples for TX
 /// @param[in] text message to send
 /// @param[in] signal_freq base signal frequency
