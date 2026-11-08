@@ -89,6 +89,10 @@ bool rtty_tx_send(const char *text);
  * dropped, the current character finishes, then the tail. */
 void rtty_tx_stop(void);
 
+/* Stop and wait (up to 1.5 s) until the transmitter is off, for closing
+ * RTTY: the next app may retune the radio, which must not happen keyed. */
+void rtty_tx_stop_wait(void);
+
 /* True while the worker thread is transmitting. */
 bool rtty_tx_is_on(void);
 

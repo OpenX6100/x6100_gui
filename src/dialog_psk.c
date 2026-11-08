@@ -1381,6 +1381,7 @@ static const digi_qso_menu_t qso_menu = {
     .mode        = DIGI_LOG_PSK31,
     .submode     = NULL,
     .freq        = qso_freq,
+    .tx_on       = psk_tx_is_on,
 };
 
 /* ---- Transmit --------------------------------------------------------- */
@@ -1440,6 +1441,7 @@ static void stop_press_cb(button_data_t *b)
 {
     (void)b;
     psk_tx_stop();
+    digi_qso_menu_tx_stopped();
 }
 
 static void status_press_cb(button_data_t *b)

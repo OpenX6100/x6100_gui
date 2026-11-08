@@ -63,6 +63,10 @@ void   digi_log_from_qso(digi_log_qso_t *q, digi_log_mode_t mode, const char *su
 /* Saves the QSO everywhere; false when the call is empty. */
 bool   digi_log_save(const digi_log_qso_t *q);
 
+/* Saves `q` and says so on the message line; marks the QSO logged in
+ * digi_qso when its call is still the DX call. UI thread. */
+bool   digi_log_qso(const digi_log_qso_t *q);
+
 /* Logs the current QSO and says so on the message line; marks it logged
  * in digi_qso. False (and a message) when there is no DX call. */
 bool   digi_log_current(digi_log_mode_t mode, const char *submode, uint64_t freq_hz);

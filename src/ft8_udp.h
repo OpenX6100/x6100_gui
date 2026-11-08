@@ -39,6 +39,10 @@ void ft8_udp_init(void);
 /* Close the socket and release resources. */
 void ft8_udp_deinit(void);
 
+/* Close the socket only, leaving the Bluetooth bridge up: for windows
+ * that log QSOs over UDP but don't own the bridge (PSK31, Olivia, RTTY). */
+void ft8_udp_close(void);
+
 bool ft8_udp_is_enabled(void);
 
 /* Toggle at runtime (persists to the config file). Both work with the

@@ -33,8 +33,11 @@ extern "C" {
 #endif
 
 const char *digi_qso_dx(void);
-/* A different call starts a new QSO: name, QTH, reports (599) and the
- * start time are reset. Setting the same call again changes nothing. */
+/* Typed by the operator. A different call starts a new QSO: name, QTH,
+ * reports (599) and the start time are reset. So does the same call
+ * again once its QSO is logged; before that it changes nothing. (Taken
+ * from the text, the same call starts a new QSO only 10 minutes after
+ * the log, not on the station's own "73 DE CALL".) */
 void        digi_qso_set_dx(const char *call);
 
 /* Forget the callsign, name and QTH and put both reports back to 599. */

@@ -64,6 +64,18 @@ bool digi_menu_is_open(void)
     return box != NULL;
 }
 
+static void changed_cb(lv_event_t *e);
+
+void digi_menu_select(int row)
+{
+    if (list == NULL || row < 0 || row >= nitems) {
+        return;
+    }
+    ((lv_table_t *)list)->row_act = (uint16_t)row;
+    changed_cb(NULL);                   /* scroll it into view */
+    lv_obj_invalidate(list);
+}
+
 static void key_cb(lv_event_t *e)
 {
     uint32_t       key = *((uint32_t *)lv_event_get_param(e));

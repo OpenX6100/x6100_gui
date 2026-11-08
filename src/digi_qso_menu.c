@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
+#include <time.h>
 
 #include "cfg/cfg_api.h"
 #include "digi_menu.h"
@@ -29,6 +30,13 @@ enum {
 
 static const digi_qso_menu_t *cur;
 static int                    field = -1;   /* the item a text window edits */
+
+/* A QSO whose 73 is queued: logged when the transmission ends. */
+#define PENDING_POLL_MS 200
+
+static digi_log_qso_t pending;
+static bool         (*pending_tx_on)(void);
+static lv_timer_t    *pending_timer;
 
 static void changed(void)
 {
@@ -177,6 +185,49 @@ static void pick_or_type(int item)
                    items, words_n + 1, word_pick, NULL, NULL);
 }
 
+/* ---- log when the 73 has gone out ---------------------------------------- */
+
+static bool pending_for(const char *call)
+{
+    return pending_timer != NULL && strcmp(pending.call, call) == 0;
+}
+
+static void pending_drop(bool say)
+{
+    if (pending_timer == NULL) {
+        return;
+    }
+    lv_timer_del(pending_timer);
+    pending_timer = NULL;
+    if (say) {
+        msg_update_text_fmt("#FF0000 TX stopped: %s not logged (Menu > QSO > Log QSO)",
+                            pending.call);
+    }
+}
+
+static void pending_log(void)
+{
+    if (pending_timer != NULL) {
+        lv_timer_del(pending_timer);
+        pending_timer = NULL;
+    }
+    if (digi_qso_logged() && strcmp(digi_qso_dx(), pending.call) == 0) {
+        return;                         /* logged by hand meanwhile */
+    }
+    pending.end = time(NULL);
+    digi_log_qso(&pending);
+    changed();
+}
+
+static void pending_timer_cb(lv_timer_t *t)
+{
+    (void)t;
+    if (pending_tx_on && pending_tx_on()) {
+        return;
+    }
+    pending_log();
+}
+
 /* ---- the list --------------------------------------------------------- */
 
 static void menu_pick(int item, void *ctx)
@@ -202,7 +253,8 @@ static void menu_pick(int item, void *ctx)
         case ITEM_RSTR:
             digi_qso_change_rst_rcvd(1);
             changed();
-            digi_qso_menu_open(m);      /* stays open for the next press */
+            digi_qso_menu_open(m);      /* stays open for the next press, */
+            digi_menu_select(ITEM_RSTR);   /* on this row, not on Log QSO */
             break;
 
         case ITEM_PICKUP:
@@ -242,9 +294,9 @@ void digi_qso_menu_open(const digi_qso_menu_t *m)
     if (dx[0] == '\0') {
         snprintf(text[ITEM_LOG], ITEM_LEN, "Log QSO  (no DX call yet)");
     } else {
-        snprintf(text[ITEM_LOG], ITEM_LEN, "Log QSO%s  (%s %s/%s)",
+        snprintf(text[ITEM_LOG], ITEM_LEN, "Log QSO%s  (%s %s/%s%s)",
                  digi_qso_logged() ? " again" : " now", dx, digi_qso_rst_sent(),
-                 digi_qso_rst_rcvd());
+                 digi_qso_rst_rcvd(), pending_for(dx) ? ", after this TX" : "");
     }
     snprintf(text[ITEM_NAME], ITEM_LEN, "DX name...  (%s)",
              digi_qso_name()[0] ? digi_qso_name() : "none");
@@ -273,6 +325,9 @@ void digi_qso_menu_log(const digi_qso_menu_t *m)
     if (m == NULL) {
         return;
     }
+    if (pending_for(digi_qso_dx())) {
+        pending_drop(false);            /* logged now, not again after TX */
+    }
     digi_log_current(m->mode, submode_now(m), freq_now(m));
     if (cur == m) {
         changed();
@@ -284,14 +339,31 @@ void digi_qso_menu_sent(const digi_qso_menu_t *m, const char *macro_name)
     if (m == NULL || macro_name == NULL || strcasecmp(macro_name, "73") != 0) {
         return;
     }
-    if (digi_qso_dx()[0] == '\0' || digi_qso_logged() || !param_i_get(cfg.digi_auto_log())) {
+    if (digi_qso_dx()[0] == '\0' || digi_qso_logged() || !param_i_get(cfg.digi_auto_log()) ||
+        pending_for(digi_qso_dx())) {
         return;
     }
-    digi_log_current(m->mode, submode_now(m), freq_now(m));
+    if (pending_timer != NULL) {
+        pending_log();                  /* an earlier 73, to another call, queued ahead */
+    }
+    digi_log_from_qso(&pending, m->mode, submode_now(m), freq_now(m));
+    pending_tx_on = m->tx_on;
+    if (pending_tx_on == NULL || !pending_tx_on()) {
+        pending_log();                  /* nothing to wait for */
+        return;
+    }
+    pending_timer = lv_timer_create(pending_timer_cb, PENDING_POLL_MS, NULL);
+    msg_update_text_fmt("#FFFFFF %s: logging when the 73 has gone out", pending.call);
+}
+
+void digi_qso_menu_tx_stopped(void)
+{
+    pending_drop(true);
 }
 
 void digi_qso_menu_close(void)
 {
+    pending_drop(true);
     digi_menu_close();
     cur = NULL;
     field = -1;

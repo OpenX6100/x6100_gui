@@ -222,8 +222,6 @@ static bool transmit(void) {
     int  tail = 0;
     bool done = false;
 
-    tx_quick_stop = false;
-
     while (!done) {
         uint8_t chars[OLIVIA_MAX_BITS];
         bool    flush = false;
@@ -346,6 +344,8 @@ bool olivia_tx_send(const char *text) {
             break;
 
         case DIGI_TXQ_STARTED:
+            tx_quick_stop = false;      /* a new transmission; not in transmit(),
+                                           where a stop made meanwhile would be lost */
             if (pthread_create(&tx_thread, NULL, tx_thread_fn, NULL) != 0) {
                 digi_txq_abort(&txq);
                 digi_txq_finish(&txq);

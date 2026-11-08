@@ -19,9 +19,9 @@
  *  window opens, so the card never fills up with it.
  *
  *  On by default; Menu > QSO switches it (p_digi_text_save, all modes).
- *  Text is buffered and written every two seconds from the UI thread;
- *  the rx/tx calls only copy into the buffer and are safe from any
- *  thread, the decoder's included.
+ *  Text is buffered and written every two seconds by a thread of its
+ *  own, so the card's fsync() never holds up the screen; the rx/tx calls
+ *  only copy into the buffer and are safe from any thread.
  */
 
 #pragma once

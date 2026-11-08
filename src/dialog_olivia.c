@@ -1099,6 +1099,7 @@ static const digi_qso_menu_t qso_menu = {
     .mode        = DIGI_LOG_OLIVIA,
     .submode     = qso_submode,
     .freq        = qso_freq,
+    .tx_on       = olivia_tx_is_on,
 };
 
 /* ---- Transmit --------------------------------------------------------- */
@@ -1165,6 +1166,7 @@ static void stop_press_cb(button_data_t *b)
     if (olivia_tx_is_on()) {
         olivia_tx_stop();
         msg_update_text_fmt("#FFFFFF Olivia: stopping after this block");
+        digi_qso_menu_tx_stopped();     /* says so if a 73 was waiting */
     }
 }
 

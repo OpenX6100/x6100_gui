@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include <ctype.h>
 
 #include "lvgl/lvgl.h"
@@ -432,6 +433,18 @@ bool rtty_tx_send(const char *text) {
 
 void rtty_tx_stop(void) {
     digi_txq_abort(&txq);
+}
+
+void rtty_tx_stop_wait(void) {
+    rtty_tx_stop();
+    /* the character on the air, the tail and the sound buffer: well under
+     * a second */
+    for (int i = 0; i < 150 && digi_txq_running(&txq); i++) {
+        usleep(10000);
+    }
+    if (digi_txq_running(&txq)) {
+        radio_set_modem(false);         /* the sound server stalled: unkey anyway */
+    }
 }
 
 bool rtty_tx_is_on(void) {

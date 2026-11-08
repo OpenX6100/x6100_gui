@@ -24,6 +24,8 @@ static char    qso_name[TEXT_LEN];
 static char    qso_qth[TEXT_LEN];
 static time_t  qso_start;
 static bool    qso_logged;
+static time_t  qso_logged_at;
+static bool    name_from_op;    /* taken after "OP": a NAME later replaces it */
 static char    my_call[16];     /* ours, never taken as the DX call */
 static uint8_t rst_s = 9;          /* the strength digit, 1..9 */
 static uint8_t rst_r = 9;
@@ -36,6 +38,7 @@ const char *digi_qso_dx(void) { return qso_dx; }
 /* A new correspondent: nothing of the last QSO carries over. */
 static void new_qso(void) {
     qso_name[0] = '\0';
+    name_from_op = false;
     qso_qth[0] = '\0';
     qso_logged = false;
     qso_start = time(NULL);
@@ -44,7 +47,15 @@ static void new_qso(void) {
     snprintf(rst_r_str, sizeof(rst_r_str), "5%u9", rst_r);
 }
 
-void digi_qso_set_dx(const char *call) {
+/* The same call heard again this long after its QSO was logged is a new
+ * QSO: a second contact later in the day. Sooner, it is the station's own
+ * "73 DE CALL" at the end of the one just logged. */
+#define SAME_CALL_NEW_QSO_S (10 * 60)
+
+/* `typed`: the operator set it (a text window), so the same call again
+ * after logging means a new QSO at once; from the text it does only
+ * after SAME_CALL_NEW_QSO_S. */
+static void set_dx(const char *call, bool typed) {
     char   up[sizeof(qso_dx)];
     size_t o = 0;
 
@@ -57,8 +68,13 @@ void digi_qso_set_dx(const char *call) {
     if (strcmp(up, qso_dx) != 0) {
         memcpy(qso_dx, up, sizeof(qso_dx));
         new_qso();
+    } else if (qso_logged && up[0] &&
+               (typed || time(NULL) - qso_logged_at >= SAME_CALL_NEW_QSO_S)) {
+        new_qso();      /* logged already: the name, QTH and reports were that QSO's */
     }
 }
+
+void digi_qso_set_dx(const char *call) { set_dx(call, true); }
 
 /* Copy, without line breaks, which would end up in the middle of a
  * macro and in the log. */
@@ -77,6 +93,7 @@ static void copy_line(char *dst, size_t size, const char *src) {
 const char *digi_qso_name(void) { return qso_name; }
 void digi_qso_set_name(const char *name) {
     copy_line(qso_name, sizeof(qso_name), name);
+    name_from_op = false;
 }
 const char *digi_qso_qth(void) { return qso_qth; }
 void digi_qso_set_qth(const char *qth) {
@@ -85,7 +102,10 @@ void digi_qso_set_qth(const char *qth) {
 
 time_t digi_qso_start(void) { return qso_start ? qso_start : time(NULL); }
 bool digi_qso_logged(void) { return qso_logged; }
-void digi_qso_set_logged(bool logged) { qso_logged = logged; }
+void digi_qso_set_logged(bool logged) {
+    qso_logged = logged;
+    qso_logged_at = logged ? time(NULL) : 0;
+}
 
 int digi_qso_rst_num(const char *rst) {
     int v = rst ? atoi(rst) : 0;
@@ -184,7 +204,10 @@ static const char *const filler[] = {
     "IS", "HR", "HERE", "MY", "THE", "OP", "NAME", "QTH", "NR", "IN", "AT", "OF", "ES",
     "AND", "UR", "YR", "YOUR", "DE", "K", "KN", "BK", "SK", "TU", "TNX", "FB", "HI",
     "RST", "LOC", "LOCATOR", "GRID", "RIG", "ANT", "PWR", "WX", "HW", "BTU", "OM", "YL",
-    "QSL", "CQ", "PSE", "DR", "OK", "R", "SO", "NEAR", "CITY", "TOWN", "OPERATOR", NULL
+    "QSL", "CQ", "PSE", "DR", "OK", "R", "SO", "NEAR", "CITY", "TOWN", "OPERATOR",
+    /* talk around "OP": "TNX FER QSO GUD OP", "OP HR" */
+    "FER", "FOR", "GUD", "GD", "GOOD", "GM", "GA", "GE", "GN", "VY", "NICE", "AGN", "CPY",
+    "CU", "CUL", "SRI", "NW", "ALL", "HPE", "WID", "WITH", "FROM", "TO", "BE", "QSO", NULL
 };
 
 static bool is_filler(const char *w) {
@@ -256,7 +279,7 @@ int digi_qso_recent_words(char (*out)[16], int max) {
 
 /* ---- the decoder's text ------------------------------------------------- */
 
-typedef enum { WANT_NONE, WANT_NAME, WANT_QTH } want_t;
+typedef enum { WANT_NONE, WANT_NAME, WANT_NAME_OP, WANT_QTH } want_t;
 
 #define QTH_WORDS 3
 
@@ -317,8 +340,12 @@ void digi_qso_feed_rx(char c) {
         after_de = false;
         if (autograb && (qso_dx[0] == '\0' || qso_logged) && looks_like_call(word) &&
             !is_my_call(word)) {
-            digi_qso_set_dx(word);
-            msg_update_text_fmt("#FFFFFF DX: %s", qso_dx);
+            bool was_logged = qso_logged;
+
+            set_dx(word, false);
+            if (!qso_logged || !was_logged) {
+                msg_update_text_fmt("#FFFFFF DX: %s", qso_dx);
+            }
         }
     }
     if (!autograb) {
@@ -328,11 +355,13 @@ void digi_qso_feed_rx(char c) {
 
     /* a keyword starts a capture; a question mark right after it does not */
     if (strcmp(word, "NAME") == 0 || strcmp(word, "OP") == 0 || strcmp(word, "OPERATOR") == 0) {
+        want_t next = (c == '?') ? WANT_NONE : (word[0] == 'N' ? WANT_NAME : WANT_NAME_OP);
+
         if (want == WANT_QTH && qth_words > 0) {
-            want = (c == '?') ? WANT_NONE : WANT_NAME;
+            want = next;
             goto qth_done;
         }
-        want = (c == '?') ? WANT_NONE : WANT_NAME;
+        want = next;
         return;
     }
     if (strcmp(word, "QTH") == 0) {
@@ -344,14 +373,28 @@ void digi_qso_feed_rx(char c) {
 
     switch (want) {
         case WANT_NAME:
-            if (is_filler(word)) return;      /* "NAME IS", "NAME HR" */
+        case WANT_NAME_OP: {
+            /* "OP" is often just talk ("GUD OP"): what follows it is taken
+             * only into an empty field, and a NAME later replaces it */
+            bool by_op = (want == WANT_NAME_OP);
+
+            if (is_filler(word)) {
+                if (by_op && strcmp(word, "IS") != 0 && strcmp(word, "HR") != 0 &&
+                    strcmp(word, "HERE") != 0) {
+                    want = WANT_NONE;         /* "OP FER...": no name */
+                }
+                return;                       /* "NAME IS", "OP HR" */
+            }
             want = WANT_NONE;
-            if (looks_like_word(word) && qso_name[0] == '\0' && c != '?') {
+            if (looks_like_word(word) && c != '?' &&
+                (qso_name[0] == '\0' || (name_from_op && !by_op))) {
                 snprintf(qso_name, sizeof(qso_name), "%s", word);
                 title_case(qso_name);
+                name_from_op = by_op;
                 msg_update_text_fmt("#FFFFFF DX name: %s", qso_name);
             }
             return;
+        }
 
         case WANT_QTH:
             if (qth_words == 0 && is_filler(word)) return;  /* "QTH IS" */

@@ -63,6 +63,7 @@ static const digi_qso_menu_t qso_menu = {
     .mode        = DIGI_LOG_RTTY,
     .submode     = NULL,
     .freq        = qso_freq,
+    .tx_on       = rtty_tx_is_on,
 };
 
 /* ---- helpers -------------------------------------------------------- */
@@ -134,6 +135,7 @@ static void next_press_cb(button_data_t *b)
     digi_menu_close();
     if (rtty_tx_is_on()) {
         rtty_tx_stop();
+        digi_qso_menu_tx_stopped();
         buttons_refresh(b);
         return;
     }

@@ -16,31 +16,27 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "lvgl/lvgl.h"
-
 #include "cfg/cfg_api.h"
 
 #define BUF_SIZE      4096
-#define FLUSH_MS      2000
+#define FLUSH_S       2
 #define ROTATE_BYTES  (4L * 1024 * 1024)
 
-/* Marks the place of a header in the buffer; the header itself is made
- * when the buffer is written out, on the UI thread, where the frequency
- * can be read. Never sent or received: the decoders drop control
- * characters other than line breaks, and so does digi_text_rx(). */
-#define HEADER_MARK   '\x01'
-
 static pthread_mutex_t   lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t    wake = PTHREAD_COND_INITIALIZER;
 static char              buf[BUF_SIZE];
 static size_t            len;
 static bool              opened;        /* a window has it open */
 static bool              active;        /* opened and switched on */
 static bool              need_header;
+static uint64_t          header_hz;     /* the frequency when it was asked for */
 static bool              at_line_start = true;
 static char              mode_name[16];
 static char              file_path[64];
 static digi_text_freq_fn freq_fn;
-static lv_timer_t       *timer;
+static pthread_t         writer;
+static bool              writer_on;
+static bool              writer_quit;
 
 /* lock held */
 static void put(char c)
@@ -50,35 +46,41 @@ static void put(char c)
     }
 }
 
-/* lock held */
+/* lock held: the header goes in with the first text after it was asked
+ * for, with that moment's time and the frequency of when it was asked
+ * for (a band change), not of when the buffer is written out. */
 static void put_header_if_needed(void)
 {
-    if (need_header) {
-        need_header = false;
-        if (!at_line_start) {
-            put('\n');
-        }
-        put(HEADER_MARK);
-        at_line_start = true;
-    }
-}
-
-static void write_header(FILE *f)
-{
+    char      h[96];
     struct tm tm;
-    time_t    now = time(NULL);
-    uint64_t  hz = freq_fn ? freq_fn() : 0;
+    time_t    now;
+    int       n;
 
-    gmtime_r(&now, &tm);
-    fprintf(f, "\n--- %04d-%02d-%02d %02d:%02d:%02d UTC  %s", tm.tm_year + 1900, tm.tm_mon + 1,
-            tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec, mode_name);
-    if (hz > 0) {
-        fprintf(f, "  %.3f MHz", (double)hz / 1e6);
+    if (!need_header) {
+        return;
     }
-    fputs(" ---\n", f);
+    need_header = false;
+    if (!at_line_start) {
+        put('\n');
+    }
+    now = time(NULL);
+    gmtime_r(&now, &tm);
+    n = snprintf(h, sizeof(h), "\n--- %04d-%02d-%02d %02d:%02d:%02d UTC  %s", tm.tm_year + 1900,
+                 tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec, mode_name);
+    if (header_hz > 0 && n > 0 && (size_t)n < sizeof(h)) {
+        n += snprintf(h + n, sizeof(h) - (size_t)n, "  %.3f MHz", (double)header_hz / 1e6);
+    }
+    if (n > 0 && (size_t)n < sizeof(h)) {
+        snprintf(h + n, sizeof(h) - (size_t)n, " ---\n");
+    }
+    for (const char *p = h; *p; p++) {
+        put(*p);
+    }
+    at_line_start = true;
 }
 
-/* UI thread: append the buffer to the file. */
+/* Writer thread: append the buffer to the file. The SD card can take a
+ * while over fsync(), which is why this isn't on the UI thread. */
 static void flush_out(void)
 {
     static char out[BUF_SIZE];
@@ -98,21 +100,7 @@ static void flush_out(void)
     if (f == NULL) {
         return;
     }
-    for (size_t i = 0; i < n;) {
-        size_t j = i;
-
-        while (j < n && out[j] != HEADER_MARK) {
-            j++;
-        }
-        if (j > i) {
-            fwrite(out + i, 1, j - i, f);
-        }
-        if (j < n) {
-            write_header(f);
-            j++;
-        }
-        i = j;
-    }
+    fwrite(out, 1, n, f);
     /* /mnt is FAT on an SD card that loses power when the battery is
      * pulled: do not leave the text in a page cache. */
     fflush(f);
@@ -120,10 +108,28 @@ static void flush_out(void)
     fclose(f);
 }
 
-static void timer_cb(lv_timer_t *t)
+static void *writer_fn(void *arg)
 {
-    (void)t;
-    flush_out();
+    (void)arg;
+    pthread_mutex_lock(&lock);
+    while (!writer_quit) {
+        struct timespec until;
+
+        clock_gettime(CLOCK_REALTIME, &until);
+        until.tv_sec += FLUSH_S;
+        pthread_cond_timedwait(&wake, &lock, &until);
+        pthread_mutex_unlock(&lock);
+        flush_out();
+        pthread_mutex_lock(&lock);
+    }
+    pthread_mutex_unlock(&lock);
+    flush_out();                        /* what came in last */
+    return NULL;
+}
+
+static uint64_t freq_now(void)
+{
+    return freq_fn ? freq_fn() : 0;
 }
 
 static void start(void)
@@ -139,11 +145,13 @@ static void start(void)
     pthread_mutex_lock(&lock);
     len = 0;
     need_header = true;
+    header_hz = freq_now();
     at_line_start = true;
     active = true;
+    writer_quit = false;
     pthread_mutex_unlock(&lock);
-    if (timer == NULL) {
-        timer = lv_timer_create(timer_cb, FLUSH_MS, NULL);
+    if (!writer_on) {
+        writer_on = pthread_create(&writer, NULL, writer_fn, NULL) == 0;
     }
 }
 
@@ -151,12 +159,13 @@ static void stop(void)
 {
     pthread_mutex_lock(&lock);
     active = false;
+    writer_quit = true;
+    pthread_cond_signal(&wake);
     pthread_mutex_unlock(&lock);
-    if (timer) {
-        lv_timer_del(timer);
-        timer = NULL;
+    if (writer_on) {
+        pthread_join(writer, NULL);     /* it writes out the rest first */
+        writer_on = false;
     }
-    flush_out();
 }
 
 void digi_text_open(const char *mode, const char *path, digi_text_freq_fn freq)
@@ -257,8 +266,11 @@ void digi_text_tx(const char *text)
 
 void digi_text_new_header(void)
 {
+    uint64_t hz = freq_now();           /* UI thread: read it now */
+
     pthread_mutex_lock(&lock);
     need_header = true;
+    header_hz = hz;
     pthread_mutex_unlock(&lock);
 }
 

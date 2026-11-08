@@ -39,7 +39,7 @@ void digi_log_open(void)
 void digi_log_close(void)
 {
     if (udp_open) {
-        ft8_udp_deinit();
+        ft8_udp_close();        /* not the Bluetooth bridge: that isn't ours */
         udp_open = false;
     }
 }
@@ -216,6 +216,20 @@ bool digi_log_save(const digi_log_qso_t *q)
     return true;
 }
 
+bool digi_log_qso(const digi_log_qso_t *q)
+{
+    if (!digi_log_save(q)) {
+        msg_update_text_fmt("#FF0000 Could not log %s", q->call);
+        return false;
+    }
+    if (strcmp(digi_qso_dx(), q->call) == 0) {
+        digi_qso_set_logged(true);      /* still the QSO on screen */
+    }
+    msg_update_text_fmt("#FFFFFF Logged %s  %s / %s%s%s", q->call, q->rst_sent, q->rst_rcvd,
+                        q->name[0] ? "  " : "", q->name);
+    return true;
+}
+
 bool digi_log_current(digi_log_mode_t mode, const char *submode, uint64_t freq_hz)
 {
     digi_log_qso_t q;
@@ -225,12 +239,5 @@ bool digi_log_current(digi_log_mode_t mode, const char *submode, uint64_t freq_h
         msg_update_text_fmt("#FF0000 No DX call to log - Menu > DX call");
         return false;
     }
-    if (!digi_log_save(&q)) {
-        msg_update_text_fmt("#FF0000 Could not log %s", q.call);
-        return false;
-    }
-    digi_qso_set_logged(true);
-    msg_update_text_fmt("#FFFFFF Logged %s  %s / %s%s%s", q.call, q.rst_sent, q.rst_rcvd,
-                        q.name[0] ? "  " : "", q.name);
-    return true;
+    return digi_log_qso(&q);
 }

@@ -44,19 +44,28 @@ typedef struct {
     digi_log_mode_t  mode;
     const char    *(*submode)(void);    /* Olivia's "OLIVIA 32/1000", may be NULL */
     uint64_t       (*freq)(void);       /* the signal's radio frequency, Hz */
+    bool           (*tx_on)(void);      /* transmitting; NULL: log a 73 at once */
 } digi_qso_menu_t;
 
 /* `m` must stay valid while the window is open (a static). */
 void digi_qso_menu_open(const digi_qso_menu_t *m);
 
-/* After a macro went out, from Next or from the list: a 73 to a DX call
- * logs the QSO, once, when "Log when 73 goes out" is on. */
+/* After a macro was queued, from Next or from the list: a 73 to a DX
+ * call logs the QSO, once, when "Log when 73 goes out" is on - when the
+ * transmission ends, not when the 73 is queued, so a 73 that never went
+ * out is not logged. The QSO is taken as it is now: a CQ queued after the
+ * 73 (which clears the DX call) does not change what is logged. */
 void digi_qso_menu_sent(const digi_qso_menu_t *m, const char *macro_name);
+
+/* The operator stopped the transmission: a QSO waiting for its 73 to go
+ * out is not logged (a message says so). */
+void digi_qso_menu_tx_stopped(void);
 
 /* Log QSO now, for a window that wants it on a button of its own. */
 void digi_qso_menu_log(const digi_qso_menu_t *m);
 
-/* The window is closing: a text window this menu opened is dropped. */
+/* The window is closing: a text window this menu opened is dropped, and
+ * a QSO waiting for its 73 is not logged, as on a stop. */
 void digi_qso_menu_close(void);
 
 #ifdef __cplusplus
