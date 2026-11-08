@@ -712,7 +712,7 @@ void dsc_explain(const dsc_info_t *in, const char *from_name, const char *to_nam
     dst[0] = '\0';
     if (sz == 0) return;
 
-    char from[96], to[96], dis[96], nat[48] = "", fq[96];
+    char from[160], to[160], dis[160], nat[48] = "", fq[128];   /* names up to 56 */
     station(from, sizeof(from), in->from_kind, in->from_id, in->from_where, from_name);
     station(to, sizeof(to), in->to_kind, in->to_id, in->to_where, to_name);
     if (!strcmp(in->dis_id, "unknown")) snprintf(dis, sizeof(dis), "an unidentified ship");
@@ -724,7 +724,7 @@ void dsc_explain(const dsc_info_t *in, const char *from_name, const char *to_nam
     bool ack = in->eos == 122, rq = in->eos == 117;
 
     /* recipient as an object of "calls" */
-    char whom[110];
+    char whom[200];
     if (in->fmt == 116) snprintf(whom, sizeof(whom), "all ships");
     else if (in->fmt == 102) snprintf(whom, sizeof(whom), "all ships in the area of %s south-east of %s", in->to_where, in->to_id + 5);
     else snprintf(whom, sizeof(whom), "%s", to);
