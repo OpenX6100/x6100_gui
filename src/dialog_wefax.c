@@ -2687,6 +2687,8 @@ static bool fax_browser_save_edited_png(void)
     free(out_row);
     png_destroy_write_struct(&png_ptr, &info_ptr);
 
+    fflush(fp);
+    fsync(fileno(fp));      /* as the slant file: a failure here is not fatal */
     if (fclose(fp) != 0) {
         remove(temp_path);
         printf("WEFAX BROWSER SAVE: fclose failed\n");
