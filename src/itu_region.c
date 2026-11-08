@@ -227,6 +227,19 @@ int itu_region_from_pos(double lat, double lon)
     return 1;
 }
 
+uint32_t itu_region_pick(const uint32_t v[3], int region)
+{
+    if (region >= 2 && region <= 3 && v[region - 1] != 0) {
+        return v[region - 1];
+    }
+    return v[0];
+}
+
+bool itu_region_differs(const uint32_t v[3])
+{
+    return (v[1] != 0 && v[1] != v[0]) || (v[2] != 0 && v[2] != v[0]);
+}
+
 int itu_region_from_locator(const char *loc)
 {
     char   grid[9];

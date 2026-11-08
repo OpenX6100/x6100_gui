@@ -34,6 +34,7 @@
 #include "styles.h"
 #include "cfg/cfg_api.h"
 #include "radio.h"
+#include "band_plan.h"
 #include "itu_region.h"
 #include "common/time.h"
 #include "audio.h"
@@ -116,40 +117,39 @@
  * is where opening the window and every band change put the finder.
  * Where it gives one channel for Region 1 and another for Region 2 (160 m
  * 1837.5 and 1825.5; 40 m 7038.5 in Region 2, otherwise the secondary
- * 7071.0), the region of the locator in the QTH Grid app is used
- * (itu_region.c); it names none for Region 3, which takes Region 1's.
+ * 7071.0), the station's region is used: Settings > Band plan, or with
+ * Auto the region of the locator in the QTH Grid app (band_plan_region(),
+ * itu_region.c). It names none for Region 3, which takes Region 1's.
  * 20 m has a second, 32/1000 channel. No 6 m channel is listed.
  */
 typedef struct {
     const char *label;
-    uint32_t    dial_hz;        /* Region 1 (and 3) */
-    uint32_t    dial_r2;        /* Region 2, 0: the same */
+    uint32_t    dial[3];        /* Regions 1, 2, 3; 0: Region 1's */
 } olivia_band_t;
 
 static const olivia_band_t olivia_bands[] = {
-    {"160m",       1837500, 1825500},
-    {"80m",        3581500},
-    {"40m",        7071000, 7038500},
-    {"30m",       10141500},
-    {"20m",       14071000},
-    {"20m wide",  14107000},
-    {"17m",       18097500},
-    {"15m",       21071000},
-    {"12m",       24921000},
-    {"10m",       28121000},
+    {"160m",     { 1837500, 1825500}},
+    {"80m",      { 3581500}},
+    {"40m",      { 7071000, 7038500}},
+    {"30m",      {10141500}},
+    {"20m",      {14071000}},
+    {"20m wide", {14107000}},
+    {"17m",      {18097500}},
+    {"15m",      {21071000}},
+    {"12m",      {24921000}},
+    {"10m",      {28121000}},
 };
 
 #define OLIVIA_BAND_CNT ((int)(sizeof(olivia_bands) / sizeof(olivia_bands[0])))
 #define BAND_CENTER_HZ  1500
 
 static int cur_band = -1;
+static int region = 1;          /* the station's, read by load_band() */
 
-/* The band's dial for the station's region (QTH Grid locator). */
+/* The band's dial for the station's region. */
 static uint32_t band_dial(int idx)
 {
-    const olivia_band_t *b = &olivia_bands[idx];
-
-    return (itu_region() == 2 && b->dial_r2) ? b->dial_r2 : b->dial_hz;
+    return itu_region_pick(olivia_bands[idx].dial, region);
 }
 
 /* ------------------------------------------------------------------ */
@@ -769,15 +769,15 @@ static int band_nearest(uint32_t freq)
 
 static void band_msg(uint32_t f)
 {
-    char region[16] = "";
+    char region_s[16] = "";
 
     /* where the channel depends on the region, say which one it is */
-    if (olivia_bands[cur_band].dial_r2)
-        snprintf(region, sizeof(region), " (Region %d)", itu_region());
+    if (itu_region_differs(olivia_bands[cur_band].dial))
+        snprintf(region_s, sizeof(region_s), " (Region %d)", region);
 
     if (dial_offset_hz == 0)
         msg_update_text_fmt("Olivia %s  %u.%04u MHz%s", olivia_bands[cur_band].label,
-                            (unsigned)(f / 1000000u), (unsigned)((f / 100u) % 10000u), region);
+                            (unsigned)(f / 1000000u), (unsigned)((f / 100u) % 10000u), region_s);
     else
         msg_update_text_fmt("Olivia %s  %u.%04u MHz (%+d kHz)", olivia_bands[cur_band].label,
                             (unsigned)(f / 1000000u), (unsigned)((f / 100u) % 10000u),
@@ -790,6 +790,7 @@ static void load_band(int8_t dir)
 {
     int idx;
 
+    region = band_plan_region();    /* once here, not on every band_dial() */
     if (dir == 0 || cur_band < 0) {
         idx = band_nearest((uint32_t)cparam_i_get(cfg.cur.fg_freq()));
     } else {

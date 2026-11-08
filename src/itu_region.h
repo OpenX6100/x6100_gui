@@ -35,6 +35,9 @@
 
 #pragma once
 
+#include <stdbool.h>
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -46,6 +49,14 @@ int itu_region_from_pos(double lat, double lon);
  * "fn31pr"), taken at the centre of what it names; 0 when it is empty or
  * not a locator. */
 int itu_region_from_locator(const char *loc);
+
+/* A value that depends on the region, such as a calling frequency, as
+ * {Region 1, Region 2, Region 3}; 0 for Region 2 or 3 means Region 1's.
+ * The one for `region` (1..3; anything else gives Region 1's). */
+uint32_t itu_region_pick(const uint32_t v[3], int region);
+
+/* Whether such a value differs between the regions. */
+bool     itu_region_differs(const uint32_t v[3]);
 
 #ifdef __cplusplus
 }

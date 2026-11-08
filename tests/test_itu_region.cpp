@@ -109,3 +109,19 @@ TEST_CASE("ITU region of what is not a locator", "[itu_region]") {
     CHECK(itu_region_from_locator("jo94ab") == 1);  /* case and spaces do not matter */
     CHECK(itu_region_from_locator(" JO94 ") == 1);
 }
+
+TEST_CASE("A value per region", "[itu_region]") {
+    const uint32_t psk40[3] = {7040000, 7070000, 7035000};
+    const uint32_t olivia160[3] = {1837500, 1825500, 0};
+    const uint32_t same[3] = {14070000, 0, 0};
+
+    CHECK(itu_region_pick(psk40, 1) == 7040000);
+    CHECK(itu_region_pick(psk40, 2) == 7070000);
+    CHECK(itu_region_pick(psk40, 3) == 7035000);
+    CHECK(itu_region_pick(psk40, 0) == 7040000);
+    CHECK(itu_region_pick(olivia160, 3) == 1837500);   /* 0: Region 1's */
+    CHECK(itu_region_pick(same, 2) == 14070000);
+    CHECK(itu_region_differs(psk40));
+    CHECK(itu_region_differs(olivia160));
+    CHECK_FALSE(itu_region_differs(same));
+}
