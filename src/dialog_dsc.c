@@ -1490,10 +1490,11 @@ static void browser_draw_cb(void *user, int index, lv_draw_ctx_t *ctx, const lv_
     d_rect(ctx, a->x1 + 2, a->y1 + 3, a->x1 + 6, a->y2 - 3, cat_color(c->info.cat), 2, 0, 0);
     for (int i = 0; i < 2; ++i) {
         dsc_kind_t k = i == 0 ? c->info.from_kind : c->info.to_kind;
-        lv_coord_t x = a->x1 + (i == 0 ? BR_FROM_X : BR_TO_X) - 70;    /* flag 36 + 6 + icon 21 + 7 */
+        lv_coord_t ix = a->x1 + (i == 0 ? BR_FROM_X : BR_TO_X) - 28;   /* icon 21 + 7 */
         const lv_img_dsc_t *flag = station_flag(k, i == 0 ? c->info.from_id : c->info.to_id);
-        if (flag) d_flag(ctx, flag, x, cy - (lv_coord_t)flag->header.h / 2);
-        icon_kind(ctx, k, x + 42, cy - 9, 7, C_TEXT);
+        if (flag)                                                       /* flag + 6, before it */
+            d_flag(ctx, flag, ix - 6 - (lv_coord_t)flag->header.w, cy - (lv_coord_t)flag->header.h / 2);
+        icon_kind(ctx, k, ix, cy - 9, 7, C_TEXT);
     }
 }
 

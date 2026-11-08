@@ -15,8 +15,13 @@ src/dsc/dsc_flags.c:
   index    count x 8 bytes, sorted by code: char code[2], u16 0, u32 offset
   pixels   count x W x H x 4 bytes
 
-All integers little endian.  Usage (from the x6100_gui folder):
+All integers little endian.  Usage (from the x6100_gui folder), with the
+4:3 drawings of flag-icons (https://github.com/lipis/flag-icons, MIT):
 
+  mkdir flags
+  for f in flag-icons/flags/4x3/*.svg; do
+      rsvg-convert -w 128 -h 96 "$f" -o flags/$(basename "$f" .svg).png
+  done
   python3 src/dsc/make_flags_db.py flags/ rootfs/usr/share/x6100/dsc_flags.bin
 
 Needs Pillow (pip install pillow).
@@ -29,7 +34,7 @@ import sys
 
 from PIL import Image
 
-W, H = 36, 24
+W, H = 32, 24                     # 4:3, as flag-icons draws them
 
 # not countries: Earth, Asia-Pacific, European Union
 SKIP = {"zz", "ap", "eu"}

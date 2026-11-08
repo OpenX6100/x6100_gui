@@ -22,10 +22,11 @@ and flags.
 
 ## dsc_flags.bin
 
-- **What:** 244 national flags, 36 x 24 pixels, shown next to the
-  country of a call. Already in the screen's pixel format.
-- **Origin:** flag-icons (https://github.com/lipis/flag-icons), some of
-  them modified, scaled to 36 x 24.
+- **What:** 256 flags (the ISO 3166 codes of flag-icons), 32 x 24
+  pixels (4:3), shown next to the country of a call. Already in the
+  screen's pixel format.
+- **Origin:** flag-icons 7.2.3 (https://github.com/lipis/flag-icons), the
+  4:3 drawings (`flags/4x3/*.svg`) rendered and scaled to 32 x 24.
 - **Licence:** MIT, as flag-icons:
 
 > The MIT License (MIT)
