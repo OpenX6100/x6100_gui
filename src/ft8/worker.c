@@ -18,12 +18,12 @@
 #include "contest_msg.h"
 #include "subtract.h"
 #include "decode_retry.h"
+#include "call_table.h"
 
 #include "lvgl/lvgl.h"
 #include <ft8lib/constants.h>
 #include <ft8lib/decode.h>
 #include <ft8lib/encode.h>
-#include <ft8lib/hashtable.h>
 #include <ft8lib/message.h>
 #include <liquid/liquid.h>
 #include <math.h>
@@ -165,7 +165,7 @@ static pthread_cond_t   extra_cv  = PTHREAD_COND_INITIALIZER;
 static bool             extra_quit, extra_job, extra_busy, extra_cancel;
 static extra_found_t    extra_found[MAX_DECODED_MESSAGES];
 static int              extra_found_n;
-/* ft8_lib's callsign hash table: both threads use it */
+/* The callsign table: both threads use it */
 static pthread_mutex_t  hash_mux = PTHREAD_MUTEX_INITIALIZER;
 
 static void decode_messages(const ftx_waterfall_t *wf, int *num_candidates, ftx_candidate_t *candidate_list,
@@ -191,7 +191,7 @@ static void remember_own_call(void) {
     snprintf(text, sizeof(text), "CQ %s", own_call);
     ftx_message_init(&msg);
     pthread_mutex_lock(&hash_mux);
-    ftx_message_encode(&msg, &hash_if, text);
+    ftx_message_encode(&msg, &ftx_call_table_if, text);
     pthread_mutex_unlock(&hash_mux);
 }
 
@@ -260,7 +260,7 @@ void ftx_worker_init(int sample_rate, ftx_protocol_t protocol) {
     rx_rate   = sample_rate;
     slot_secs = slot_period;
 
-    hashtable_init(256);
+    ftx_call_table_reset();
     remember_own_call();
 
     /* FT8 decoder */
@@ -375,7 +375,6 @@ void ftx_worker_free() {
         free(rx_window);
         rx_window = NULL;
     }
-    hashtable_delete();
 }
 
 /**
@@ -416,7 +415,7 @@ static void extra_submit(void) {
 
 void ftx_worker_reset() {
     pthread_mutex_lock(&hash_mux);
-    hashtable_cleanup(10);
+    ftx_call_table_age(10);
     pthread_mutex_unlock(&hash_mux);
     remember_own_call();
     wf.num_blocks = 0;
@@ -430,7 +429,7 @@ bool ftx_worker_generate_tx_samples(const char *text, const uint16_t signal_freq
     ftx_message_t msg;
     ftx_message_init(&msg);
     pthread_mutex_lock(&hash_mux);
-    ftx_message_rc_t rc = ftx_encode_text(&msg, &hash_if, text);
+    ftx_message_rc_t rc = ftx_encode_text(&msg, &ftx_call_table_if, text);
     pthread_mutex_unlock(&hash_mux);
 
     if (rc != FTX_MESSAGE_RC_OK) {
@@ -611,9 +610,9 @@ static void decode_messages(const ftx_waterfall_t *wf, int *num_candidates, ftx_
 
             char             text[FTX_CONTEST_TEXT_LEN];
             pthread_mutex_lock(&hash_mux);
-            ftx_message_rc_t unpack_status = ftx_message_decode(&message, &hash_if, text);
+            ftx_message_rc_t unpack_status = ftx_message_decode(&message, &ftx_call_table_if, text);
             /* Contest and DXpedition messages ft8_lib can't unpack */
-            if (unpack_status != FTX_MESSAGE_RC_OK && ftx_contest_decode(&message, &hash_if, text, sizeof(text)))
+            if (unpack_status != FTX_MESSAGE_RC_OK && ftx_contest_decode(&message, &ftx_call_table_if, text, sizeof(text)))
                 unpack_status = FTX_MESSAGE_RC_OK;
             pthread_mutex_unlock(&hash_mux);
             if (unpack_status != FTX_MESSAGE_RC_OK) {
