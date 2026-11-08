@@ -17,6 +17,7 @@
 #include "msg_encode.h"
 #include "contest_msg.h"
 #include "subtract.h"
+#include "decode_retry.h"
 
 #include "lvgl/lvgl.h"
 #include <ft8lib/constants.h>
@@ -121,6 +122,7 @@ static char            own_call[12]; /* kept in the hash table, see remember_own
 #define EXTRA_PASSES      2     /* WSJT-X: 3 passes in all */
 #define EXTRA_BUDGET      0.8f  /* of a slot: done before the next one's */
 #define EXTRA_NICE        5
+#define RETRY_CANDIDATES  60    /* a pass's candidates that get JS8's extra tries */
 typedef struct {
     uint8_t tones[FT4_NN];
     float   freq_hz, time_sec;
@@ -168,7 +170,7 @@ static pthread_mutex_t  hash_mux = PTHREAD_MUTEX_INITIALIZER;
 
 static void decode_messages(const ftx_waterfall_t *wf, int *num_candidates, ftx_candidate_t *candidate_list,
                             ftx_message_t *decoded, ftx_message_t **decoded_hashtable, int ldpc_iterations,
-                            heard_list_t *heard_list, decoded_msg_cb msg_cb, void *user_data);
+                            heard_list_t *heard_list, bool retry, decoded_msg_cb msg_cb, void *user_data);
 
 static int get_message_snr(const ftx_waterfall_t *wf, const ftx_candidate_t *candidate, ftx_message_t *msg);
 
@@ -220,6 +222,7 @@ static void spectrum_free(spectrum_t *sp) {
 }
 
 static void *extra_main(void *arg);
+static bool extra_stop(void);
 static void forget_slot(void);
 
 /**
@@ -418,7 +421,7 @@ void ftx_worker_reset() {
     remember_own_call();
     wf.num_blocks = 0;
     num_candidates = 0;
-    if (extra_on && slot_len >= wf.max_blocks * block_size && heard.n > 0) extra_submit();
+    if (extra_on && slot_len >= wf.max_blocks * block_size) extra_submit();
     forget_slot();
 }
 
@@ -525,11 +528,11 @@ void ftx_worker_decode(decoded_msg_cb msg_cb, bool last, void *user_data) {
         } else if (last) {
             // Last decoding
             decode_messages(&wf, &num_candidates, candidate_list, decoded, decoded_hashtable, LDPC_ITERATIONS,
-                            extra_on ? &heard : NULL, msg_cb, user_data);
+                            extra_on ? &heard : NULL, false, msg_cb, user_data);
         } else if (wf.num_blocks % DECODE_BLOCK_STRIDE == 0) {
             // incremental decoding
             decode_messages(&wf, &num_candidates, candidate_list, decoded, decoded_hashtable, EARLY_LDPC_ITERATIONS,
-                            extra_on ? &heard : NULL, msg_cb, user_data);
+                            extra_on ? &heard : NULL, false, msg_cb, user_data);
         }
     }
 }
@@ -544,7 +547,7 @@ bool ftx_worker_is_full() {
 
 static void decode_messages(const ftx_waterfall_t *wf, int *num_candidates, ftx_candidate_t *candidate_list,
                             ftx_message_t *decoded, ftx_message_t **decoded_hashtable, int ldpc_iterations,
-                            heard_list_t *heard_list, decoded_msg_cb msg_cb, void *user_data) {
+                            heard_list_t *heard_list, bool retry, decoded_msg_cb msg_cb, void *user_data) {
     // Go over candidates and attempt to decode messages
 
     if (!num_candidates || *num_candidates <= 0) return;
@@ -567,7 +570,9 @@ static void decode_messages(const ftx_waterfall_t *wf, int *num_candidates, ftx_
 
         ftx_message_t       message;
         ftx_decode_status_t status;
-        if (!ftx_decode_candidate(wf, cand, ldpc_iterations, &message, &status)) {
+        /* The strongest candidates first: the extra passes' retries go as far as the time allows */
+        if (!ftx_decode_candidate(wf, cand, ldpc_iterations, &message, &status) &&
+            !(retry && idx < RETRY_CANDIDATES && !extra_stop() && ftx_decode_retry(wf, cand, ldpc_iterations, &message))) {
             if (status.ldpc_errors > 0) {
                 LV_LOG_INFO("LDPC decode: %d errors", status.ldpc_errors);
             } else if (status.crc_calculated != status.crc_extracted) {
@@ -688,7 +693,7 @@ static void extra_passes_run(void) {
             h->subtracted = true;
             done++;
         }
-        if (!done || extra_stop()) return;
+        if ((!done && pass > 0) || extra_stop()) return;
 
         /* The spectrum again, from what's left, and a fresh search */
         int before = extra_heard.n;
@@ -699,7 +704,7 @@ static void extra_passes_run(void) {
         extra_num_candidates = ftx_find_candidates(&extra_wf, MAX_CANDIDATES, extra_candidates, ft8lib_min_score);
         if (extra_stop()) return;
         decode_messages(&extra_wf, &extra_num_candidates, extra_candidates, extra_decoded, extra_table, LDPC_ITERATIONS,
-                        &extra_heard, extra_found_cb, NULL);
+                        &extra_heard, true, extra_found_cb, NULL);
         if (extra_heard.n == before) return; /* nothing new: no more passes */
     }
 }
