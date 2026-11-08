@@ -559,3 +559,25 @@ TEST_CASE("Standard own callsign with /P keeps the grid", "[ft8_qso]") {
     REQUIRE_THAT(tx_msg.msg, Equals("W1ABC SP2KMO/P JO94"));
     qso_vec.clear();
 }
+
+TEST_CASE("Messages with a semicolon", "[ft8_qso]") {
+    FTxQsoProcessor q = FTxQsoProcessor("R2RFE", "LO02", save_qso);
+    ftx_msg_meta_t  meta;
+    ftx_tx_msg_t    tx_msg = {.msg = "PREV MSG", .repeats = -100};
+    SECTION("DXpedition with its hash known") {
+        q.add_rx_text("W9XYZ RR73; R2RFE <K1ABC> -11", -12, &meta, &tx_msg);
+        REQUIRE(meta.to_me);
+        REQUIRE_THAT(meta.call_de, Equals("K1ABC"));
+    }
+    SECTION("DXpedition with a hash not heard yet is no station to work") {
+        q.add_rx_text("W9XYZ RR73; R2RFE <...> -11", -12, &meta, &tx_msg);
+        REQUIRE(!meta.to_me);
+        REQUIRE(meta.type == FXT_MSG_TYPE_OTHER);
+        REQUIRE_THAT(tx_msg.msg, Equals("PREV MSG"));
+    }
+    SECTION("RTTY Roundup TU is not a DXpedition: 579 is no callsign") {
+        q.add_rx_text("TU; W9XYZ K1ABC 579 MA", -12, &meta, &tx_msg);
+        REQUIRE(meta.type == FXT_MSG_TYPE_OTHER);
+    }
+    qso_vec.clear();
+}

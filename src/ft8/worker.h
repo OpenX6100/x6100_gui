@@ -41,6 +41,9 @@ void ftx_worker_set_own_call(const char *call);
 /// thread; nothing to do for FT2.
 void ftx_worker_decode_more(decoded_msg_cb msg_cb, void *user_data);
 
+/// @brief The band changed: drop what the extra passes are on and have found
+void ftx_worker_extra_cancel(void);
+
 /// @brief Whether the extra passes are still working (PC tests on recordings)
 bool ftx_worker_extra_busy(void);
 

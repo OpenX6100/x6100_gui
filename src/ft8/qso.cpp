@@ -114,7 +114,7 @@ void FTxQsoProcessor::add_rx_text(std::string text, const int snr, ftx_msg_meta_
         return;
     }
 
-    if ((tokens.size() >= 5) && (text.find(';') != text.npos)) {
+    if ((tokens.size() >= 5) && (text.find("RR73;") != text.npos)) {
         // "A2AA RR73; R2RFE <RP79AA> +05"
         std::vector<std::string> new_tokens;
         if (tokens[0] == _local_callsign) {
@@ -132,6 +132,13 @@ void FTxQsoProcessor::add_rx_text(std::string text, const int snr, ftx_msg_meta_
     for (auto &token : tokens) {
         if (!token.empty() && token[0] == '<') {
             token = token.substr(1, token.length() - 2);
+        }
+    }
+
+    /* A hashed call not heard yet ("<...>") can't be a station to work */
+    for (size_t i = 1; i < tokens.size(); i++) {
+        if (tokens[i] == "...") {
+            return;
         }
     }
 

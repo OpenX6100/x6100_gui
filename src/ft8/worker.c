@@ -160,7 +160,7 @@ static pthread_t        extra_thread;
 static bool             extra_thread_up;
 static pthread_mutex_t  extra_mux = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t   extra_cv  = PTHREAD_COND_INITIALIZER;
-static bool             extra_quit, extra_job, extra_busy;
+static bool             extra_quit, extra_job, extra_busy, extra_cancel;
 static extra_found_t    extra_found[MAX_DECODED_MESSAGES];
 static int              extra_found_n;
 /* ft8_lib's callsign hash table: both threads use it */
@@ -220,6 +220,7 @@ static void spectrum_free(spectrum_t *sp) {
 }
 
 static void *extra_main(void *arg);
+static void forget_slot(void);
 
 /**
  * Init worker
@@ -322,6 +323,7 @@ void ftx_worker_init(int sample_rate, ftx_protocol_t protocol) {
                                      protocol == FTX_PROTOCOL_FT8 ? FT8_SYMBOL_BT : FT4_SYMBOL_BT);
         if (extra_on) {
             extra_quit      = false;
+            extra_cancel    = false;
             extra_job       = false;
             extra_busy      = false;
             extra_found_n   = 0;
@@ -360,6 +362,7 @@ void ftx_worker_free() {
     extra_wf.mag = NULL;
     spectrum_free(&extra_spec);
     extra_on   = false;
+    forget_slot();              /* the next init's reset mustn't submit this one */
     if (wf.mag) {
         free(wf.mag);
         wf.mag = NULL;
@@ -402,6 +405,7 @@ static void extra_submit(void) {
     for (int i = 0; i < MAX_DECODED_MESSAGES; i++)
         extra_table[i] = decoded_hashtable[i] ? &extra_decoded[decoded_hashtable[i] - decoded] : NULL;
     extra_found_n = 0;
+    extra_cancel  = false;
     extra_job     = true;
     pthread_cond_signal(&extra_cv);
     pthread_mutex_unlock(&extra_mux);
@@ -646,7 +650,7 @@ void ftx_worker_set_realtime(bool on) {
 /* Its time is up, or the window is closing. */
 static bool extra_stop(void) {
     pthread_mutex_lock(&extra_mux);
-    bool quit = extra_quit;
+    bool quit = extra_quit || extra_cancel;
     pthread_mutex_unlock(&extra_mux);
     if (quit) return true;
     if (!extra_realtime) return false;
@@ -660,7 +664,7 @@ static bool extra_stop(void) {
 static void extra_found_cb(const char *text, int snr, float freq_hz, float time_sec, void *user_data) {
     (void)user_data;
     pthread_mutex_lock(&extra_mux);
-    if (extra_found_n < MAX_DECODED_MESSAGES) {
+    if (!extra_cancel && extra_found_n < MAX_DECODED_MESSAGES) {
         extra_found_t *f = &extra_found[extra_found_n++];
         snprintf(f->text, sizeof(f->text), "%s", text);
         f->snr      = snr;
@@ -752,6 +756,13 @@ void ftx_worker_decode_more(decoded_msg_cb msg_cb, void *user_data) {
     extra_found_n = 0;
     pthread_mutex_unlock(&extra_mux);
     for (int i = 0; i < n; i++) msg_cb(found[i].text, found[i].snr, found[i].freq_hz, found[i].time_sec, user_data);
+}
+
+void ftx_worker_extra_cancel(void) {
+    pthread_mutex_lock(&extra_mux);
+    extra_cancel  = true;
+    extra_found_n = 0;
+    pthread_mutex_unlock(&extra_mux);
 }
 
 bool ftx_worker_extra_busy(void) {
