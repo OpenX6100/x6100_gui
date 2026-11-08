@@ -155,8 +155,10 @@ static void rx_consume_frames(audio_worker_t *w, const slot_info_t *info,
             break;
         }
 
-        spgramf_write(w->sg, block, w->block_size);
-        maybe_emit_psd(w, info, sec_since_slot_start);
+        if (w->cb.on_psd) { /* the waterfall may listen for itself (app_wf.c) */
+            spgramf_write(w->sg, block, w->block_size);
+            maybe_emit_psd(w, info, sec_since_slot_start);
+        }
 
         ftx_worker_put_rx_samples(block, w->block_size);
 
