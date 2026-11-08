@@ -319,6 +319,8 @@ typedef struct {
     ParamInt *(*protocol)(void); /* p_ft8_protocol */
     ParamInt *(*auto_mode)(void); /* p_ft8_auto */
     ParamInt *(*hold_freq)(void); /* p_ft8_hold_freq */
+    ParamInt *(*psk)(void); /* p_ft8_psk */
+    ParamInt *(*psk_min)(void); /* p_ft8_psk_min */
     ParamInt *(*max_repeats)(void); /* p_ft8_max_repeats */
     ParamInt *(*tx_freq)(void); /* p_ft8_tx_freq */
     ParamFloat *(*output_gain_offset)(void); /* p_ft8_output_gain_offset */

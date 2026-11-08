@@ -18,11 +18,16 @@
 #include <strings.h>
 #include <time.h>
 
+#ifndef MAX
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+#endif
+
 #define ST_MAX     100
 #define HEARD_MS   (15 * 60 * 1000) /* stations heard in the last 15 min */
 #define CALLING_MS (2 * 60 * 1000)  /* yellow for 2 min after their last message to you */
 #define QSO_MS     (2 * 60 * 1000)  /* your QSO's red path, 2 min after its last message */
 #define LINK_MS    (2 * 60 * 1000)  /* others' QSOs: grey lines for 2 min */
+#define YOU_OPA_MIN 110              /* the weakest report's line still shows on this screen */
 
 typedef struct {
     char        call[13];
@@ -32,6 +37,8 @@ typedef struct {
     int64_t     heard_ms;     /* monotonic */
     int64_t     to_me_ms;     /* their last message to you, 0 never */
     int64_t     to_ms;
+    int64_t     you_ms;       /* the last report of them hearing you (PSK Reporter), 0 never */
+    int         you_snr;
     bool        cq;           /* their last message was a CQ */
     bool        worked;       /* worked before (the list's check, on a CQ) */
     bool        has_cell;
@@ -45,6 +52,7 @@ static char       qso_call[13]; /* your QSO */
 static int64_t    qso_ms;
 static char       title[32] = "FT8";
 static map_view_actions_t act;
+static int        you_min;      /* minutes PSK Reporter's lines stay, 0: off */
 
 static int64_t now_ms(void) {
     struct timespec t;
@@ -76,7 +84,7 @@ static station_t *station(const char *call, int64_t now) {
     } else {
         s = &st[0];
         for (int i = 1; i < st_n; i++)
-            if (st[i].heard_ms < s->heard_ms) s = &st[i];
+            if (MAX(st[i].heard_ms, st[i].you_ms) < MAX(s->heard_ms, s->you_ms)) s = &st[i];
     }
     memset(s, 0, sizeof(*s));
     snprintf(s->call, sizeof(s->call), "%s", call);
@@ -135,6 +143,27 @@ void map_view_add(const cell_data_t *cell) {
     }
 }
 
+void map_view_heard_you(const char *call, const char *grid, int snr, int64_t when) {
+    int64_t now   = now_ms();
+    int64_t age_s = MAX((int64_t)time(NULL) - when, 0);
+    bool    known = find(call) != NULL;
+    station_t *s  = station(call, now);
+    if (!known) s->heard_ms = 0; /* not heard here */
+    s->you_ms  = MAX(now - age_s * 1000, 1);
+    s->you_snr = snr;
+    snprintf(s->grid, sizeof(s->grid), "%s", grid);
+}
+
+void map_view_set_you_minutes(int minutes) {
+    you_min = minutes;
+    if (map_scene_shown()) redraw(false);
+}
+
+void map_view_forget_you(void) {
+    for (int i = 0; i < st_n; i++) st[i].you_ms = 0;
+    if (map_scene_shown()) redraw(true);
+}
+
 void map_view_clear(void) {
     st_n        = 0;
     sel_call[0] = '\0';
@@ -153,7 +182,7 @@ static map_scene_station_t sc_st[ST_MAX];
 static station_t          *sc_src[ST_MAX]; /* the station behind each one drawn */
 static map_scene_link_t    sc_links[ST_MAX];
 static map_scene_t         scene;
-static char                my_call[16], my_grid[9], status[96], status2[48], hint[80];
+static char                my_call[16], my_grid[9], status[96], status2[48], status3[32], hint[80];
 
 static const map_legend_item_t legend[] = {
     {MAP_SCENE_GREEN, MAP_LEGEND_SQUARE, "CQ"},
@@ -162,6 +191,7 @@ static const map_legend_item_t legend[] = {
     {MAP_SCENE_DIM, MAP_LEGEND_SQUARE, "other"},
     {MAP_SCENE_RED, MAP_LEGEND_LINE, "QSO"},
     {MAP_WIDGET_HOME, MAP_LEGEND_SQUARE, "you"},
+    {MAP_SCENE_BLUE, MAP_LEGEND_LINE, "heard you"}, /* with PSK Reporter on */
 };
 
 /* The scene from the stations heard in the last 15 min. */
@@ -169,18 +199,26 @@ static void build(int64_t now) {
     snprintf(my_call, sizeof(my_call), "%s", PARAM_T_GET(cfg.callsign()));
     snprintf(my_grid, sizeof(my_grid), "%s", PARAM_T_GET(cfg.qth()));
     bool qso_on = qso_call[0] && now - qso_ms < QSO_MS;
-    int  n = 0, ncq = 0, ncall = 0, sel = -1;
+    int  n = 0, nhere = 0, ncq = 0, ncall = 0, nyou = 0, sel = -1;
     for (int i = 0; i < st_n; i++) {
         station_t *s = &st[i];
-        if (now - s->heard_ms >= HEARD_MS) continue;
+        bool here = s->heard_ms && now - s->heard_ms < HEARD_MS;
+        bool you  = you_min && s->you_ms && now - s->you_ms < you_min * 60000LL;
+        if (!here && !you) continue;
         map_scene_station_t *d = &sc_st[n];
         memset(d, 0, sizeof(*d));
         snprintf(d->call, sizeof(d->call), "%s", s->call);
         snprintf(d->grid, sizeof(d->grid), "%s", s->grid);
         d->snr       = s->snr;
-        d->has_snr   = true;
-        bool calling = s->to_me_ms && now - s->to_me_ms < CALLING_MS;
-        if (calling) {
+        d->has_snr   = here;
+        nhere += here;
+        bool calling = here && s->to_me_ms && now - s->to_me_ms < CALLING_MS;
+        /* Brightness by how well they hear you, as GridTracker's */
+        lv_opa_t you_opa = (lv_opa_t)LV_CLAMP(YOU_OPA_MIN, (s->you_snr + 25) * 9, 255);
+        if (!here) {
+            d->color = MAP_SCENE_BLUE;
+            d->opa   = you_opa;
+        } else if (calling) {
             d->color = MAP_SCENE_YELLOW;
             d->label = true;
             ncall++;
@@ -194,8 +232,17 @@ static void build(int64_t now) {
             d->color = MAP_SCENE_DIM;
         }
         /* Fading over the 15 min, as the JS8 map's squares do. */
-        int age = (int)((now - s->heard_ms) * 8 / HEARD_MS);
-        d->opa  = (lv_opa_t)(MAP_WIDGET_SQUARE_OPA * (100 - age * 70 / 8) / 100);
+        if (here) {
+            int age = (int)((now - s->heard_ms) * 8 / HEARD_MS);
+            d->opa  = (lv_opa_t)(MAP_WIDGET_SQUARE_OPA * (100 - age * 70 / 8) / 100);
+        }
+        if (you) {
+            d->path     = MAP_SCENE_BLUE;
+            d->path_w   = 2;
+            d->path_opa = you_opa;
+            snprintf(d->extra, sizeof(d->extra), "hears you %+d", s->you_snr);
+            nyou++;
+        }
         if (qso_on && strcasecmp(s->call, qso_call) == 0) d->path = MAP_SCENE_RED;
         if (sel_call[0] && strcasecmp(s->call, sel_call) == 0) sel = n;
         sc_src[n++] = s;
@@ -214,11 +261,13 @@ static void build(int64_t now) {
     if (sel < 0) sel_call[0] = '\0';
     int    info  = param_i_get(cfg.ui.ft8_info());
     bool   miles = info == TABLE_INFO_MI || info == TABLE_INFO_COUNTRY_MI;
-    snprintf(status, sizeof(status), "%s   %d heard  %d CQ  %d calling you", title, n, ncq, ncall);
+    snprintf(status, sizeof(status), "%s   %d heard  %d CQ  %d calling you", title, nhere, ncq, ncall);
+    status3[0] = '\0';
+    if (you_min) snprintf(status3, sizeof(status3), "%d heard you  (%d min)", nyou, you_min);
     double best  = -1, km;
     int    dx    = -1;
     for (int i = 0; i < n; i++) /* the farthest heard: "DX ZL2AB 11300 km" */
-        if (map_scene_km(my_call, my_grid, sc_st[i].call, sc_st[i].grid, &km) && km > best) {
+        if (sc_st[i].has_snr && map_scene_km(my_call, my_grid, sc_st[i].call, sc_st[i].grid, &km) && km > best) {
             best = km;
             dx   = i;
         }
@@ -228,7 +277,8 @@ static void build(int64_t now) {
                  miles ? "mi" : "km");
     if (!n) snprintf(hint, sizeof(hint), "No stations heard in the last 15 min");
     else if (sel < 0) snprintf(hint, sizeof(hint), "Turn MFK: pick a station");
-    else snprintf(hint, sizeof(hint), "Press MFK: call");
+    else if (sc_st[sel].has_snr) snprintf(hint, sizeof(hint), "Press MFK: call");
+    else hint[0] = '\0'; /* only they heard you: nothing decoded to answer */
     scene     = (map_scene_t){.st      = sc_st,
                               .n       = (unsigned)n,
                               .links   = sc_links,
@@ -239,9 +289,11 @@ static void build(int64_t now) {
                               .mode    = map_scene_mode(),
                               .miles   = miles,
                               .legend  = legend,
-                              .nlegend = sizeof(legend) / sizeof(legend[0]),
+                              .nlegend = sizeof(legend) / sizeof(legend[0]) - (you_min ? 0 : 1),
                               .status  = status,
                               .status2 = status2,
+                              .status3 = status3,
+                              .status3_color = MAP_SCENE_BLUE,
                               .hint    = hint};
 }
 

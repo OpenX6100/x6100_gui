@@ -36,6 +36,12 @@ void map_view_add(const cell_data_t *cell);
 /* A new band or mode: no stations. */
 void map_view_clear(void);
 
+/* PSK Reporter: `call` at `grid` heard you at UTC seconds `when` (a line
+ * from you, brightness by snr, until it's older than the time set here). */
+void map_view_heard_you(const char *call, const char *grid, int snr, int64_t when);
+void map_view_set_you_minutes(int minutes); /* 0: off, no lines or legend */
+void map_view_forget_you(void);
+
 /* The map over `parent` (the FT8 window), focused for the MFK, or the list
  * back (`table` focused again). False if the map couldn't be made. */
 bool map_view_show(lv_obj_t *parent, lv_obj_t *table, bool on, const map_view_actions_t *actions);
