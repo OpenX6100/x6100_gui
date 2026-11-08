@@ -192,7 +192,7 @@ static void draw_cb(lv_event_t *e) {
 static const char *const kind_name[] = {
     [BAND_PLAN_CW]      = "CW",
     [BAND_PLAN_DIGITAL] = "Digital",
-    [BAND_PLAN_PHONE]   = "SSB",
+    [BAND_PLAN_PHONE]   = "All modes",
 };
 
 static void tag_opa_cb(void *o, int32_t v) {
