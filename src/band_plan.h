@@ -33,7 +33,8 @@ typedef struct {
 } band_plan_seg_t;
 
 /* The region the band plan follows: Settings > Band plan, or with Auto the
- * QTH Grid locator's (itu_region()). 1, 2 or 3. */
+ * QTH Grid locator's (itu_region_from_locator()), Region 1 when no
+ * locator is set. 1, 2 or 3. */
 int band_plan_region(void);
 
 /* The band hz is in ("40m"), or NULL outside the amateur bands. */

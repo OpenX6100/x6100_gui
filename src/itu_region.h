@@ -3,19 +3,34 @@
  *  Copyright (c) 2026 Kris SP2KMO
  *  Part of OpenX6100 (github.com/OpenX6100)
  *
- *  Xiegu X6100 LVGL GUI - ITU region from the Maidenhead locator
+ *  Xiegu X6100 LVGL GUI - ITU region from a position or a locator
  *
- *  Some calling frequencies differ between the three ITU regions (PSK31
- *  on 40 m is 7040 kHz in Region 1, 7070 in Region 2, 7035 in Region 3).
- *  The operator's locator (QTH Grid app) says where the station is, so
- *  the apps can pick the right one by themselves.
+ *  Some calling frequencies and band plans differ between the three ITU
+ *  regions (PSK31 on 40 m is 7040 kHz in Region 1, 7070 in Region 2, 7035
+ *  in Region 3). The operator's locator says where the station is, so the
+ *  apps can pick the right one by themselves.
  *
- *  The borders are followed closely enough for a band plan, not to the
- *  kilometre: the Americas and Greenland are Region 2; Europe, Africa,
- *  the Middle East, the former USSR and Mongolia are Region 1; the rest
- *  of Asia and the Pacific are Region 3. A station within a grid square
- *  (about 100 km) of a border may get its neighbour's region, which the
- *  apps' dial offset puts right.
+ *  The regions follow the Radio Regulations, Article 5 (RR 5.3 to 5.9):
+ *
+ *    Line A  the 40 E meridian from the North Pole to 40 N, a great
+ *            circle to 60 E on the Tropic of Cancer, the 60 E meridian
+ *            to the South Pole.
+ *    Line B  the 10 W meridian from the North Pole to 72 N, great circles
+ *            to 50 W 40 N and to 20 W 10 S, the 20 W meridian to the
+ *            South Pole.
+ *    Line C  a great circle from the North Pole to the Bering Strait at
+ *            65 30' N, great circles to 165 E 50 N and to 170 W 10 N,
+ *            the 10 N parallel to 120 W, the 120 W meridian to the South
+ *            Pole.
+ *
+ *  Region 2 lies between Lines C and B, Region 1 between B and A, Region 3
+ *  between A and C - except that the whole territory of Armenia,
+ *  Azerbaijan, Georgia, Kazakhstan, Kyrgyzstan, Mongolia, Russia,
+ *  Tajikistan, Turkey, Turkmenistan, Ukraine and Uzbekistan, and the area
+ *  north of Russia between Lines A and C, is Region 1, and the whole of
+ *  Iran is Region 3. Those borders are outlines a few tens of km close,
+ *  which is what a 6-character locator resolves; the lines themselves are
+ *  exact.
  */
 
 #pragma once
@@ -24,13 +39,13 @@
 extern "C" {
 #endif
 
-/* 1, 2 or 3 for a locator of 2, 4 or more characters ("JO94", "fn31pr"),
- * 0 when it is empty or not a locator. */
-int itu_region_from_locator(const char *loc);
+/* 1, 2 or 3 for a position in degrees (north and east positive). */
+int itu_region_from_pos(double lat, double lon);
 
-/* The region of the locator set in the QTH Grid app; Region 1 when none
- * is set (the apps' long-standing defaults). */
-int itu_region(void);
+/* 1, 2 or 3 for a locator of 2, 4, 6 or 8 characters ("JO94",
+ * "fn31pr"), taken at the centre of what it names; 0 when it is empty or
+ * not a locator. */
+int itu_region_from_locator(const char *loc);
 
 #ifdef __cplusplus
 }
