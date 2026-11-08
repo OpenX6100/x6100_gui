@@ -243,7 +243,11 @@ static void build(int64_t now) {
             snprintf(d->extra, sizeof(d->extra), "hears you %+d", s->you_snr);
             nyou++;
         }
-        if (qso_on && strcasecmp(s->call, qso_call) == 0) d->path = MAP_SCENE_RED;
+        if (qso_on && strcasecmp(s->call, qso_call) == 0) { /* your QSO's line, not the PSK Reporter one */
+            d->path     = MAP_SCENE_RED;
+            d->path_w   = 0;
+            d->path_opa = 0;
+        }
         if (sel_call[0] && strcasecmp(s->call, sel_call) == 0) sel = n;
         sc_src[n++] = s;
     }

@@ -303,13 +303,20 @@ static bool take_packets(session_t *s) {
     }
 }
 
+/* Seconds that a clock change (Time Sync, GPS) doesn't move. */
+static time_t mono_s(void) {
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return t.tv_sec;
+}
+
 /* Connected: follows what's wanted until it's stopped (true) or the
  * connection is lost (false). */
 static bool session(int fd) {
     static session_t s;
     char             topic[TOPIC_LEN] = "";
     uint16_t         id               = 0;
-    time_t           last_rx          = time(NULL), last_ping = last_rx;
+    time_t           last_rx          = mono_s(), last_ping = last_rx;
     bool             started          = false;
 
     s.len = 0;
@@ -338,7 +345,7 @@ static bool session(int fd) {
 
         struct pollfd pfd = {.fd = fd, .events = POLLIN};
         int           r   = poll(&pfd, 1, 1000);
-        time_t        now = time(NULL);
+        time_t        now = mono_s();
         if (r < 0 && errno != EINTR) return false;
         if (r > 0) {
             ssize_t k = recv(fd, s.rx + s.len, RX_MAX - s.len, 0);
