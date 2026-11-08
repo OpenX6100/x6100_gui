@@ -750,7 +750,7 @@ static void key_cb(lv_event_t *e)
 
     switch (key) {
         case LV_KEY_ESC:
-            dialog_destruct();
+            on_table_close();
             break;
 
         case KEY_VOL_LEFT_EDIT:
@@ -765,8 +765,14 @@ static void key_cb(lv_event_t *e)
     }
 }
 
+/* The RFG knob's press (ESC), as JS8: the first stops a transmission, the
+ * next closes the app. */
 static void on_table_close(void)
 {
+    if (wspr_app_is_transmitting()) {
+        tx_hold_cb(&button_tx);
+        return;
+    }
     dialog_destruct();
 }
 

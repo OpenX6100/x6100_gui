@@ -435,7 +435,7 @@ static void key_cb(lv_event_t * e) {
 
     switch (key) {
         case LV_KEY_ESC:
-            dialog_destruct(&dialog);
+            on_table_close();
             break;
 
         case KEY_VOL_LEFT_EDIT:
@@ -1005,7 +1005,16 @@ static void on_table_press(const cell_data_t *cell_data) {
     }
 }
 
+/* The RFG knob's press (ESC), as JS8: the first stops TX, sending or waiting
+ * for its slot; the next closes the app. */
 static void on_table_close(void) {
+    if (state == TX_PROCESS || subject_i_get(cq_enabled) || (tx_msg.msg[0] && subject_i_get(tx_enabled))) {
+        tx_call_off();
+        subject_i_set(cq_enabled, false);
+        tx_msg.msg[0] = '\0';
+        msg_update_text_fmt("TX stopped");
+        return;
+    }
     dialog_destruct(&dialog);
 }
 
