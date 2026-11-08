@@ -67,6 +67,12 @@
 #define UNKNOWN_SNR     99
 
 #define MAX_PWR         5.0f
+/* The radio's filter is wider than the window the app works in, so its
+ * roll-off falls outside what's shown and decoded. */
+#define FTX_FILTER_LOW  100
+#define FTX_FILTER_HIGH 3100
+#define FTX_SHOWN_LOW   200
+#define FTX_SHOWN_HIGH  3000
 
 #define FT8_WIDTH_HZ    50
 #define FT4_WIDTH_HZ    83
@@ -162,6 +168,8 @@ static uint32_t dsp_audio_sub_id = AUDIO_SUB_INVALID;
 
 /* NR, NB and the notches: off on the radio while the app is open, as in JS8 */
 static Observer *dsp_watch[4];
+static int      saved_filter_low, saved_filter_high;
+static bool     filter_saved;
 
 static void construct_cb(lv_obj_t *parent);
 static void key_cb(lv_event_t * e);
@@ -453,6 +461,18 @@ static void key_cb(lv_event_t * e) {
     }
 }
 
+/* The receive filter, either way round: each edge is validated against the
+ * other, so the one that stays clear of the other's old value goes first. */
+static void rx_filter_set(int low, int high) {
+    if (low < cparam_i_get(cfg.filter.high())) {
+        cparam_i_set(cfg.filter.low(), low);
+        cparam_i_set(cfg.filter.high(), high);
+    } else {
+        cparam_i_set(cfg.filter.high(), high);
+        cparam_i_set(cfg.filter.low(), low);
+    }
+}
+
 static void destruct_cb() {
     dsp_audio_set_active(dsp_audio_sub_id, false);
     keyboard_close();
@@ -475,6 +495,10 @@ static void destruct_cb() {
     for (unsigned i = 0; i < sizeof(dsp_watch) / sizeof(dsp_watch[0]); i++) {
         if (dsp_watch[i]) param_unsubscribe(dsp_watch[i]);
         dsp_watch[i] = NULL;
+    }
+    if (filter_saved) {
+        rx_filter_set(saved_filter_low, saved_filter_high);
+        filter_saved = false;
     }
     radio_set_rx_dsp_off(false);
 
@@ -716,8 +740,15 @@ static void construct_cb(lv_obj_t *parent) {
     mem_save(MEM_BACKUP_ID);
     load_band(0);
 
-    filter_low = cparam_i_get(cfg.filter.low());
-    filter_high = cparam_i_get(cfg.filter.high());
+    /* The radio's filter while the app is open (your own comes back on
+     * close): a little wider than the window shown. */
+    saved_filter_low  = cparam_i_get(cfg.filter.low());
+    saved_filter_high = cparam_i_get(cfg.filter.high());
+    filter_saved      = true;
+    rx_filter_set(FTX_FILTER_LOW, FTX_FILTER_HIGH);
+
+    filter_low = FTX_SHOWN_LOW;
+    filter_high = FTX_SHOWN_HIGH;
 
     lv_finder_set_range(finder, filter_low, filter_high);
 

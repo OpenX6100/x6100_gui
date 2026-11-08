@@ -64,6 +64,10 @@
  * 1400-1600 Hz window. */
 #define TX_STEP_HZ      5
 #define TX_MARK_HZ      6               /* four tones, 1.46 Hz apart */
+/* All WSPR lives in 1400-1600 Hz: the radio's filter stays well clear of it,
+ * its roll-off outside, and the rest of the band is kept out of the AGC. */
+#define WSPR_FILTER_LOW  1000
+#define WSPR_FILTER_HIGH 2000
 
 /* ------------------------------------------------------------------ */
 /* Standard WSPR dial frequencies                                      */
@@ -142,6 +146,8 @@ static lv_timer_t *heard_timer = NULL;
 
 /* NR, NB and the notches: off on the radio while the app is open, as in JS8 */
 static Observer *dsp_watch[4];
+static int      saved_filter_low, saved_filter_high;
+static bool     filter_saved;
 static lv_timer_t *fade_timer = NULL;
 
 static lv_anim_t   fade;
@@ -893,6 +899,13 @@ static void construct_cb(lv_obj_t *parent)
     mem_save(MEM_BACKUP_ID);
     load_band(0);
 
+    /* The radio's filter while the app is open (your own comes back on
+     * close): around WSPR's 200 Hz. */
+    saved_filter_low  = cparam_i_get(cfg.filter.low());
+    saved_filter_high = cparam_i_get(cfg.filter.high());
+    filter_saved      = true;
+    rx_filter_set(WSPR_FILTER_LOW, WSPR_FILTER_HIGH);
+
     qth_str_to_pos(PARAM_T_GET(cfg.qth()), &cur_lat, &cur_lon);
 
     lm_set_ab(true);
@@ -928,6 +941,18 @@ static void construct_cb(lv_obj_t *parent)
 
     fetch_heard();
     heard_timer = lv_timer_create(heard_timer_cb, HEARD_PERIOD_MS, NULL);
+}
+
+/* The receive filter, either way round: each edge is validated against the
+ * other, so the one that stays clear of the other's old value goes first. */
+static void rx_filter_set(int low, int high) {
+    if (low < cparam_i_get(cfg.filter.high())) {
+        cparam_i_set(cfg.filter.low(), low);
+        cparam_i_set(cfg.filter.high(), high);
+    } else {
+        cparam_i_set(cfg.filter.high(), high);
+        cparam_i_set(cfg.filter.low(), low);
+    }
 }
 
 static void destruct_cb(void)
@@ -972,6 +997,10 @@ static void destruct_cb(void)
     for (unsigned i = 0; i < sizeof(dsp_watch) / sizeof(dsp_watch[0]); i++) {
         if (dsp_watch[i]) param_unsubscribe(dsp_watch[i]);
         dsp_watch[i] = NULL;
+    }
+    if (filter_saved) {
+        rx_filter_set(saved_filter_low, saved_filter_high);
+        filter_saved = false;
     }
     radio_set_rx_dsp_off(false);
 
