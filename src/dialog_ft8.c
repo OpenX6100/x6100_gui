@@ -80,6 +80,10 @@
 #define FT2_WIDTH_HZ    167
 
 #define MAX_TX_START_DELAY 1.5f
+/* A station picked by hand, as WSJT-X: up to 75 % into the slot (tx_worker.c
+ * leaves out what's already past). FT4's 75 % is after its message has ended. */
+#define PICKED_TX_START_FT8 11.25f
+#define PICKED_TX_START_FT4 5.0f
 
 /* ---- FT8 / FT4 / FT2 ------------------------------------------------
  * cfg.ft8.protocol: FTX_PROTOCOL_FT4 (0), FTX_PROTOCOL_FT8 (1) or
@@ -110,9 +114,12 @@ static int ftx_width_hz(void) {
 }
 
 /* A transmission may start this late into its slot. FT2 lasts 2.52 s
- * and must end inside the 3.75 s slot. */
-static float ftx_max_tx_start(void) {
-    return ftx_is_ft2() ? 0.8f : MAX_TX_START_DELAY;
+ * and must end inside the 3.75 s slot. A CQ or an automatic reply would
+ * rather wait for a slot it can fill. */
+static float ftx_max_tx_start(bool picked) {
+    if (ftx_is_ft2()) return 0.8f;
+    if (!picked) return MAX_TX_START_DELAY;
+    return ftx_mode() == FTX_PROTOCOL_FT4 ? PICKED_TX_START_FT4 : PICKED_TX_START_FT8;
 }
 
 static qso_log_mode_t ftx_log_mode(void) {
@@ -136,6 +143,7 @@ static ft8_state_t state = RX_PROCESS;
 static SubjectInt *tx_enabled;
 static SubjectInt *cq_enabled;
 static bool        tx_time_slot;
+static bool        tx_picked;       /* the operator chose this station just now */
 
 static ftx_tx_msg_t tx_msg;
 
@@ -1088,9 +1096,10 @@ static void tx_cq_en_dis_cb(struct button_data_t *btn_data) {
         clock_gettime(CLOCK_REALTIME, &now);
         float time_since_slot_start;
         tx_time_slot = !get_time_slot(now, &time_since_slot_start);
-        if (time_since_slot_start < ftx_max_tx_start()) {
+        if (time_since_slot_start < ftx_max_tx_start(false)) {
             tx_time_slot = !tx_time_slot;
         }
+        tx_picked = false;
 
         if (tx_msg.msg[2] == '_') {
             msg_schedule_text_fmt("Next TX: CQ %s", tx_msg.msg + 3);
@@ -1193,6 +1202,7 @@ static void on_table_press(const cell_data_t *cell_data) {
             set_freq(cell_data->meta.freq_hz);
         }
         tx_time_slot = !cell_data->odd;
+        tx_picked    = true;
         subject_i_set(tx_enabled, true);
         {
             cell_data_t cd;
@@ -1339,6 +1349,7 @@ static void add_rx_text(int16_t snr, const char * text, slot_info_t *s_info, flo
             set_freq(freq_hz);
         }
         tx_time_slot = !s_info->odd;
+        tx_picked    = false;
         msg_schedule_text_fmt("Next TX: %s", tx_msg.msg);
         if (subject_i_get(cq_enabled)) {
             subject_i_set(cq_enabled, false);
@@ -1429,7 +1440,7 @@ static void on_tick_cb(const slot_info_t *info, bool new_slot,
 
     bool have_tx_msg = tx_msg.msg[0] != '\0';
 
-    if ((sec_since_slot_start < ftx_max_tx_start()) && have_tx_msg) {
+    if ((sec_since_slot_start < ftx_max_tx_start(tx_picked)) && have_tx_msg) {
         if ((tx_time_slot == info->odd) && subject_i_get(tx_enabled)) {
             state = TX_PROCESS;
             add_tx_text(tx_msg.msg);
