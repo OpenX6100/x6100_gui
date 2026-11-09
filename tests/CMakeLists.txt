@@ -12,6 +12,13 @@ add_executable(test_qth test_qth.cpp)
 target_link_libraries(test_qth PRIVATE QTH Catch2::Catch2WithMain)
 add_test(NAME test_qth COMMAND $<TARGET_FILE:test_qth> --colour-mode=ansi )
 
+# test_itu_region: the ITU region of a position or a locator
+# (src/itu_region.c, plain C, the locator maths from QTH)
+add_executable(test_itu_region test_itu_region.cpp ${PROJECT_SOURCE_DIR}/src/itu_region.c)
+target_include_directories(test_itu_region PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(test_itu_region PRIVATE QTH m Catch2::Catch2WithMain)
+add_test(NAME test_itu_region COMMAND $<TARGET_FILE:test_itu_region> --colour-mode=ansi)
+
 add_subdirectory(../src/ft8 ${CMAKE_BINARY_DIR}/src/ft8)
 add_executable(test_ft8_qso test_ft8_qso.cpp)
 target_link_libraries(test_ft8_qso PRIVATE ft8_core QTH aether_x6100_control Catch2::Catch2WithMain)
