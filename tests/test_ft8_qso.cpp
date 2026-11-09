@@ -1,4 +1,5 @@
 #include "../src/ft8/qso.h"
+#include "../src/ft8/call_table.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
@@ -558,4 +559,31 @@ TEST_CASE("Standard own callsign with /P keeps the grid", "[ft8_qso]") {
     q.start_qso(&meta, &tx_msg);
     REQUIRE_THAT(tx_msg.msg, Equals("W1ABC SP2KMO/P JO94"));
     qso_vec.clear();
+}
+
+TEST_CASE("Callsign table never fills up", "[ft8_qso]") {
+    ftx_call_table_reset();
+    auto &t = ftx_call_table_if;
+    char  call[12], got[12];
+    /* Far more calls than places, all landing on the same few places too */
+    for (uint32_t i = 0; i < 20000; i++) {
+        snprintf(call, sizeof(call), "K%uAB", i);
+        t.save_hash(call, (i * 2654435761u) & 0x3FFFFFu);
+    }
+    for (uint32_t i = 0; i < 5000; i++) {
+        snprintf(call, sizeof(call), "W%uAB", i);
+        t.save_hash(call, (i & 3) << 12);
+    }
+    t.lookup_hash(FTX_CALLSIGN_HASH_22_BITS, 0x3FFFFFu, got);   /* returns, found or not */
+
+    ftx_call_table_reset();
+    t.save_hash("K1ABC", 0x2ABCDEu);
+    REQUIRE(t.lookup_hash(FTX_CALLSIGN_HASH_22_BITS, 0x2ABCDEu, got));
+    REQUIRE_THAT(got, Equals("K1ABC"));
+    REQUIRE(t.lookup_hash(FTX_CALLSIGN_HASH_12_BITS, 0x2ABCDEu >> 10, got));
+    REQUIRE(t.lookup_hash(FTX_CALLSIGN_HASH_10_BITS, 0x2ABCDEu >> 12, got));
+    for (int i = 0; i < 11; i++) ftx_call_table_age(10);
+    REQUIRE(t.lookup_hash(FTX_CALLSIGN_HASH_22_BITS, 0x2ABCDEu, got));
+    ftx_call_table_age(10);
+    REQUIRE(!t.lookup_hash(FTX_CALLSIGN_HASH_22_BITS, 0x2ABCDEu, got));
 }

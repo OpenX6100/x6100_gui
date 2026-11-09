@@ -11,12 +11,12 @@
 #include "gfsk.h"
 #include "ft2.h"
 #include "msg_encode.h"
+#include "call_table.h"
 
 #include "lvgl/lvgl.h"
 #include <ft8lib/constants.h>
 #include <ft8lib/decode.h>
 #include <ft8lib/encode.h>
-#include <ft8lib/hashtable.h>
 #include <ft8lib/message.h>
 #include <liquid/liquid.h>
 #include <math.h>
@@ -112,7 +112,7 @@ static void remember_own_call(void) {
     }
     snprintf(text, sizeof(text), "CQ %s", own_call);
     ftx_message_init(&msg);
-    ftx_message_encode(&msg, &hash_if, text);
+    ftx_message_encode(&msg, &ftx_call_table_if, text);
 }
 
 void ftx_worker_set_own_call(const char *call) {
@@ -156,7 +156,7 @@ void ftx_worker_init(int sample_rate, ftx_protocol_t protocol) {
     }
     int num_samples = slot_period * sample_rate;
 
-    hashtable_init(256);
+    ftx_call_table_reset();
     remember_own_call();
 
     /* FT8 decoder */
@@ -249,14 +249,14 @@ void ftx_worker_free() {
         free(rx_window);
         rx_window = NULL;
     }
-    hashtable_delete();
 }
 
 /**
  * Reset worker
  */
 void ftx_worker_reset() {
-    hashtable_cleanup(10);
+    /* Once a slot: a reset follows the one at a full waterfall at the boundary */
+    if (wf.num_blocks > 0) ftx_call_table_age(10);
     remember_own_call();
     wf.num_blocks = 0;
     num_candidates = 0;
@@ -270,7 +270,7 @@ bool ftx_worker_generate_tx_samples(const char *text, const uint16_t signal_freq
                                     int16_t **samples, uint32_t *n_samples) {
     ftx_message_t msg;
     ftx_message_init(&msg);
-    ftx_message_rc_t rc = ftx_encode_text(&msg, &hash_if, text);
+    ftx_message_rc_t rc = ftx_encode_text(&msg, &ftx_call_table_if, text);
 
     if (rc != FTX_MESSAGE_RC_OK) {
         LV_LOG_ERROR("Cannot parse message %i", rc);
@@ -435,7 +435,7 @@ static void decode_messages(const ftx_waterfall_t *wf, int *num_candidates, ftx_
             decoded_hashtable[idx_hash] = &decoded[idx_hash];
 
             char             text[FTX_MAX_MESSAGE_LENGTH];
-            ftx_message_rc_t unpack_status = ftx_message_decode(&message, &hash_if, text);
+            ftx_message_rc_t unpack_status = ftx_message_decode(&message, &ftx_call_table_if, text);
             if (unpack_status != FTX_MESSAGE_RC_OK) {
                 LV_LOG_INFO("Error [%d] while unpacking!", (int)unpack_status);
             } else {
