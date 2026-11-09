@@ -80,6 +80,9 @@ void wspr_app_put_audio_samples(size_t n, float *samples);
  * here, as WSJT-X does. */
 #define WSPR_APP_RX_CENTER  1500
 
+/* The USB dial frequency the window put the radio on. */
+void wspr_app_set_dial(uint32_t hz);
+
 /* Audio frequency of our transmission (the middle of its four tones),
  * WSPR_APP_TX_MIN to WSPR_APP_TX_MAX: the 6 Hz signal stays inside the
  * 1400-1600 Hz window. */

@@ -33,6 +33,11 @@ typedef void (*digi_menu_cb_t)(int item, void *ctx);
 void digi_menu_open(lv_obj_t *parent, const char *title, const char *const *items, int n,
                     digi_menu_cb_t cb, void *ctx, lv_obj_t *back);
 
+/* After digi_menu_open(): start on `row` instead of the first, e.g. a
+ * list reopened after a press that changes a value, so the next press
+ * changes it again rather than picking row 0. */
+void digi_menu_select(int row);
+
 bool digi_menu_is_open(void);
 
 /* Closes it without picking anything (the window going away, a button). */

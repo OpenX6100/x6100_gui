@@ -189,6 +189,9 @@ typedef struct {
     ParamInt *(*spectrum_peak_speed)(void); /* p_spectrum_peak_speed */
     ParamInt *(*spectrum_filled)(void); /* p_spectrum_filled */
     ParamInt *(*spectrum_height)(void); /* p_spectrum_height */
+    ParamInt *(*spectrum_3d)(void); /* p_spectrum_3d */
+    ParamInt *(*spectrum_3d_size)(void); /* p_spectrum_3d_size */
+    ParamInt *(*band_plan_region)(void); /* p_band_plan_region */
 
     ParamInt *(*waterfall_center_line)(void); /* p_waterfall_center_line */
 
@@ -300,6 +303,10 @@ typedef struct {
 } cfg_jtty_refs_t;
 
 typedef struct {
+    ParamInt *(*net)(void); /* p_wspr_net */
+} cfg_wspr_refs_t;
+
+typedef struct {
     ParamText *(*bind)(void); /* p_encoder_bind */
 } cfg_encoder_refs_t;
 
@@ -315,6 +322,8 @@ typedef struct {
     ParamInt *(*protocol)(void); /* p_ft8_protocol */
     ParamInt *(*auto_mode)(void); /* p_ft8_auto */
     ParamInt *(*hold_freq)(void); /* p_ft8_hold_freq */
+    ParamInt *(*psk)(void); /* p_ft8_psk */
+    ParamInt *(*psk_min)(void); /* p_ft8_psk_min */
     ParamInt *(*max_repeats)(void); /* p_ft8_max_repeats */
     ParamInt *(*tx_freq)(void); /* p_ft8_tx_freq */
     ParamFloat *(*output_gain_offset)(void); /* p_ft8_output_gain_offset */
@@ -440,6 +449,10 @@ typedef struct {
 
     ParamText *(*qth)(void); /* p_qth */
     ParamText *(*callsign)(void); /* p_callsign */
+    ParamText *(*op_name)(void); /* p_op_name */
+    ParamText *(*op_qth)(void); /* p_op_qth */
+    ParamInt *(*digi_text_save)(void); /* p_digi_text_save */
+    ParamInt *(*digi_auto_log)(void); /* p_digi_auto_log */
 
 
     cfg_ui_refs_t ui;
@@ -464,6 +477,7 @@ typedef struct {
     cfg_radio_refs_t radio;
     cfg_js8_refs_t js8;
     cfg_jtty_refs_t jtty;
+    cfg_wspr_refs_t wspr;
 } cfg_refs_t;
 
 extern const cfg_refs_t cfg;

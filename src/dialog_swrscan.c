@@ -306,7 +306,12 @@ static void key_cb(lv_event_t * e) {
 
     switch (key) {
         case LV_KEY_ESC:
-            dialog_destruct(&dialog);
+            /* The RFG knob, as JS8: the first stops the scan, the next closes. */
+            if (run) {
+                dialog_swrscan_run_cb(NULL);
+            } else {
+                dialog_destruct(&dialog);
+            }
             break;
 
         case KEY_VOL_LEFT_EDIT:

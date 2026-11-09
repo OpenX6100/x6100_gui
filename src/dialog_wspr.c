@@ -38,12 +38,15 @@
 #include "scheduler.h"
 
 #include "ft8_ui/table_view.h"
-#include "widgets/lv_waterfall.h"
+#include "app_wf.h"
 #include "widgets/lv_finder.h"
 
 #include "wspr_app.h"
 #include "wspr_demod.h"
+#include "wspr_map.h"
+#include "wspr_net.h"
 
+#include <ctype.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -61,6 +64,10 @@
  * 1400-1600 Hz window. */
 #define TX_STEP_HZ      5
 #define TX_MARK_HZ      6               /* four tones, 1.46 Hz apart */
+/* All WSPR lives in 1400-1600 Hz: the radio's filter stays well clear of it,
+ * its roll-off outside, and the rest of the band is kept out of the AGC. */
+#define WSPR_FILTER_LOW  1000
+#define WSPR_FILTER_HIGH 2000
 
 /* ------------------------------------------------------------------ */
 /* Standard WSPR dial frequencies                                      */
@@ -119,6 +126,14 @@ static void txf_hold_cb(button_data_t *b);
 static void clear_press_cb(button_data_t *b);
 static void band_up_cb(button_data_t *b);
 static void band_down_cb(button_data_t *b);
+static const char *map_label_getter(void);
+static void show_map_cb(button_data_t *b);
+static void map_mode_cb(button_data_t *b);
+static const char *net_label_getter(void);
+static void net_press_cb(button_data_t *b);
+static void fetch_heard(void);
+static void on_table_close(void);
+static void on_table_vol_change(int32_t delta);
 
 #define table (table_view_obj())
 
@@ -127,6 +142,13 @@ static lv_obj_t   *finder;            /* our transmit frequency */
 static lv_obj_t   *window_box;        /* 1400-1600 Hz, decoded */
 
 static lv_timer_t *status_timer = NULL;
+static lv_timer_t *heard_timer = NULL;
+
+/* NR, NB and the notches: off on the radio while the app is open, as in JS8 */
+static Observer *dsp_watch[4];
+static int      saved_filter_low, saved_filter_high;
+static bool     filter_saved;
+static void     rx_filter_set(int low, int high);
 static lv_timer_t *fade_timer = NULL;
 
 static lv_anim_t   fade;
@@ -139,9 +161,10 @@ static double      cur_lat, cur_lon;
 
 static buttons_page_t btn_page_1;
 static buttons_page_t btn_page_2;
+static buttons_page_t btn_page_3;
 
 static button_data_t button_page_1 = {
-    .type = BTN_TEXT, .label = "(WSPR 1:2)",
+    .type = BTN_TEXT, .label = "(WSPR 1:3)",
     .press = button_next_page_cb, .next = &btn_page_2,
 };
 static button_data_t button_tx = {
@@ -160,8 +183,8 @@ static button_data_t button_clear = {
 };
 
 static button_data_t button_page_2 = {
-    .type = BTN_TEXT, .label = "(WSPR 2:2)",
-    .press = button_next_page_cb, .next = &btn_page_1,
+    .type = BTN_TEXT, .label = "(WSPR 2:3)",
+    .press = button_next_page_cb, .next = &btn_page_3,
 };
 static button_data_t button_band_down = {
     .type = BTN_TEXT, .label = "Band\ndown", .press = band_down_cb,
@@ -173,13 +196,30 @@ static button_data_t button_center = {
     .type = BTN_TEXT_FN, .label_fn = txf_label_getter,
     .press = txf_press_cb, .hold = txf_hold_cb,
 };
+static button_data_t button_show_map = {
+    .type = BTN_TEXT_FN, .label_fn = map_label_getter,
+    .press = show_map_cb, .hold = map_mode_cb,
+};
+
+static button_data_t button_page_3 = {
+    .type = BTN_TEXT, .label = "(WSPR 3:3)",
+    .press = button_next_page_cb, .next = &btn_page_1,
+};
+static button_data_t button_net = {
+    .type = BTN_TEXT_FN, .label_fn = net_label_getter,
+    .press = net_press_cb,
+};
 
 static buttons_page_t btn_page_1 = {
     {&button_page_1, &button_tx, &button_pwr, &button_status, &button_clear}
 };
 
 static buttons_page_t btn_page_2 = {
-    {&button_page_2, &button_band_down, &button_band_up, &button_center}
+    {&button_page_2, &button_band_down, &button_band_up, &button_center, &button_show_map}
+};
+
+static buttons_page_t btn_page_3 = {
+    {&button_page_3, &button_net, NULL, NULL, NULL}
 };
 
 static dialog_t dialog = {
@@ -244,19 +284,27 @@ static void load_band(int8_t dir)
 
 static void clean_screen(void)
 {
+    char title[24];
+
     table_view_reset();
-    lv_waterfall_clear_data(waterfall);
+    app_wf_clear();
+
+    snprintf(title, sizeof(title), "WSPR %s", cur_band >= 0 ? wspr_bands[cur_band].label : "");
+    wspr_map_set_title(title);
+    wspr_map_clear();
+    fetch_heard();
 }
 
 static void change_band(int8_t dir)
 {
-    /* The receive chain is rebuilt: the collected baseband belongs to the
-     * old band. It goes down before the radio retunes, because that ends
-     * a transmission in progress: the radio mustn't change frequency, nor
-     * an amplifier its band, while keyed. */
+    /* The old chain down first: set_active(false) ends a transmission
+     * (the radio mustn't retune, nor the amplifier switch bands, while
+     * keyed) and waits for a decode in progress, whose spots are still
+     * the old band's. Then the new band and its dial for WSPRnet. */
     wspr_app_set_active(false);
     load_band(dir);
-    wspr_app_set_active(true);
+    wspr_app_set_dial(wspr_bands[cur_band].dial_hz);
+    wspr_app_set_active(true);  /* a new chain: the baseband was the old band's */
     clean_screen();
     buttons_refresh(&button_status);
 }
@@ -280,40 +328,6 @@ static void band_down_cb(button_data_t *b)
 
 /* ---- Waterfall -------------------------------------------------------- */
 
-struct waterfall_data {
-    float *psd;
-    size_t size;
-};
-
-static void waterfall_add_data(void *data)
-{
-    struct waterfall_data *wf = (struct waterfall_data *)data;
-
-    /* A line queued just before the window closed arrives after its
-     * waterfall is gone (destruct_cb clears the pointer). */
-    if (waterfall)
-        lv_waterfall_add_data(waterfall, wf->psd, wf->size);
-    free(wf->psd);
-}
-
-static void on_psd(const float *mag_db, int nbins, void *ctx)
-{
-    struct waterfall_data wf;
-
-    (void)ctx;
-
-    if (!mag_db || nbins <= 0)
-        return;
-
-    wf.size = (size_t)nbins;
-    wf.psd = (float *)malloc(sizeof(float) * wf.size);
-    if (!wf.psd)
-        return;
-
-    memcpy(wf.psd, mag_db, wf.size * sizeof(float));
-    scheduler_put(waterfall_add_data, &wf, sizeof(wf));
-}
-
 /* ---- Spots ------------------------------------------------------------ */
 
 /*
@@ -324,12 +338,10 @@ static void on_psd(const float *mag_db, int nbins, void *ctx)
  */
 static void slot_time_str(char *out, size_t out_sz)
 {
-    time_t     t = time(NULL) - 60;
-    struct tm  tm_utc;
+    char date[16], hhmm[16];
 
-    t -= t % 120;
-    gmtime_r(&t, &tm_utc);
-    snprintf(out, out_sz, "%02d%02d", tm_utc.tm_hour, tm_utc.tm_min);
+    wspr_net_slot_time(date, hhmm);   /* the time WSPRnet gets too */
+    snprintf(out, out_sz, "%s", hhmm);
 }
 
 /* Settings > Interface > Decoder text, read when the window opens. */
@@ -371,6 +383,7 @@ static void on_spot(const wspr_spot_t *spot, void *ctx)
     }
 
     scheduler_put(table_view_add_msg_cb, &cd, sizeof(cd));
+    scheduler_put(wspr_map_spot_cb, (void *)spot, sizeof(*spot));
 }
 
 static void on_slot_end(void *ctx)
@@ -386,7 +399,7 @@ static void on_note(const char *text, void *ctx)
 
 static wspr_app_ui_cb_t ui_cb = {
     .on_spot     = on_spot,
-    .on_psd      = on_psd,
+    .on_psd      = NULL,     /* the waterfall listens itself (app_wf.c) */
     .on_slot_end = on_slot_end,
     .on_note     = on_note,
     .ctx         = NULL,
@@ -462,6 +475,8 @@ static void status_timer_cb(lv_timer_t *t)
     /* BTN_TEXT_FN without a subject never repaints by itself. */
     if (button_status.disp_btn)
         buttons_refresh(&button_status);
+    if (button_net.disp_btn)
+        buttons_refresh(&button_net);
 }
 
 /* ---- Button actions --------------------------------------------------- */
@@ -551,6 +566,82 @@ static void clear_press_cb(button_data_t *b)
     clean_screen();
 }
 
+/* ---- Show: Map (wspr_map.c) ------------------------------------------ */
+
+static const char *map_label_getter(void)
+{
+    return wspr_map_shown() ? "Show:\nList" : "Show:\nMap";
+}
+
+static void show_map_cb(button_data_t *b)
+{
+    char title[24];
+
+    snprintf(title, sizeof(title), "WSPR %s", cur_band >= 0 ? wspr_bands[cur_band].label : "");
+    wspr_map_set_title(title);
+    if (wspr_map_show(dialog.obj, table, waterfall, !wspr_map_shown(), on_table_close, on_table_vol_change) &&
+        wspr_map_shown())
+        msg_update_text_fmt("Map: turn MFK to pick a station. Hold: Auto/Close-in/World");
+    buttons_refresh(b);
+}
+
+/* ---- WSPRnet (wspr_net.c) -------------------------------------------- */
+
+/* wspr.live copies WSPRnet's spots every few minutes; asking more often
+ * than that gains nothing. */
+#define HEARD_PERIOD_MS (5 * 60 * 1000)
+
+/* Who heard us on this band in the last hour: blue on the map. */
+static void fetch_heard(void)
+{
+    char   call[PARAM_TEXT_MAX];
+    size_t i;
+
+    wspr_net_forget();
+    if (cur_band < 0)
+        return;
+    param_t_get_into(cfg.callsign(), call, sizeof(call));
+    for (i = 0; call[i]; i++)
+        call[i] = (char)toupper((unsigned char)call[i]);
+    wspr_net_fetch_heard(call, wspr_bands[cur_band].dial_hz);
+}
+
+static void heard_timer_cb(lv_timer_t *t)
+{
+    (void)t;
+    fetch_heard();
+}
+
+static const char *net_label_getter(void)
+{
+    static char buf[32];
+
+    snprintf(buf, sizeof(buf), "WSPRnet:\n%s", wspr_net_state());
+    return buf;
+}
+
+static void net_press_cb(button_data_t *b)
+{
+    bool on = !wspr_net_enabled();
+
+    wspr_net_set_enabled(on);
+    if (on) {
+        msg_update_text_fmt("WSPRnet on: spots go to wsprnet.org, who heard you comes from wspr.live");
+        fetch_heard();
+    } else {
+        msg_update_text_fmt("WSPRnet off: spots are only saved to wspr_spots.txt");
+    }
+    buttons_refresh(b);
+}
+
+/* Held: the map's view, Auto -> Close-in -> World. */
+static void map_mode_cb(button_data_t *b)
+{
+    (void)b;
+    if (wspr_map_shown())
+        msg_update_text_fmt("Map: %s", wspr_map_next_mode());
+}
+
 /* ---- Transmit frequency ---------------------------------------------- */
 
 #define WF_LOW_HZ   (WSPR_APP_RX_CENTER - WSPR_WORK_RATE / 2)
@@ -635,7 +726,7 @@ static void key_cb(lv_event_t *e)
 
     switch (key) {
         case LV_KEY_ESC:
-            dialog_destruct();
+            on_table_close();
             break;
 
         case KEY_VOL_LEFT_EDIT:
@@ -650,14 +741,28 @@ static void key_cb(lv_event_t *e)
     }
 }
 
+/* The RFG knob's press (ESC), as JS8: the first stops a transmission, the
+ * next closes the app. */
 static void on_table_close(void)
 {
+    if (wspr_app_is_transmitting()) {
+        tx_hold_cb(&button_tx);
+        return;
+    }
     dialog_destruct();
 }
 
 static void on_table_vol_change(int32_t delta)
 {
     radio_change_vol(delta > 0 ? 1 : -1);
+}
+
+/* NR, NB, DNF or DNF auto changed while the app is open: on whichever thread
+ * changed it (CAT's own), so radio calls only, nothing on the screen. */
+static void dsp_held_cb(Subject *subj, void *user_data) {
+    (void)subj;
+    (void)user_data;
+    radio_set_rx_dsp_off(true);
 }
 
 static void construct_cb(lv_obj_t *parent)
@@ -676,22 +781,17 @@ static void construct_cb(lv_obj_t *parent)
 
     /* Waterfall */
 
-    waterfall = lv_waterfall_create(dialog.obj);
-
-    lv_obj_clear_flag(waterfall, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_waterfall_set_palette(waterfall, (lv_color_t *)style.wf_palette, 256);
-    lv_waterfall_set_size(waterfall, WIDTH, WF_HEIGHT);
-
-    /*
-     * The spectrum module hands over dB above the noise floor of each
-     * line, so these limits are absolute and never need adjusting when
-     * the operator changes AF or RF gain.
-     */
-    lv_waterfall_set_min(waterfall, -3);
-    lv_waterfall_set_max(waterfall, 25);
-
+    /* The shared waterfall (app_wf.c, as JS8's) shows through this box.
+     * 375 Hz across: each row looks back over the last FFT's worth of
+     * audio (sliding), so WSPR's 6 Hz signals stay sharp. */
+    waterfall = lv_obj_create(dialog.obj);
+    lv_obj_remove_style_all(waterfall);
+    lv_obj_clear_flag(waterfall, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(waterfall, WIDTH, WF_HEIGHT);
     lv_obj_set_pos(waterfall, 13, 13);
+    const app_wf_cfg_t wf_cfg = {.lo_hz = WF_LOW_HZ, .hi_hz = WF_HIGH_HZ, .sliding = true};
+    if (!app_wf_start(waterfall, &wf_cfg))
+        msg_update_text_fmt("No memory for the waterfall");
 
     /* The decoded window, 1400-1600 Hz: its edges */
 
@@ -767,6 +867,13 @@ static void construct_cb(lv_obj_t *parent)
     mem_save(MEM_BACKUP_ID);
     load_band(0);
 
+    /* The radio's filter while the app is open (your own comes back on
+     * close): around WSPR's 200 Hz. */
+    saved_filter_low  = cparam_i_get(cfg.filter.low());
+    saved_filter_high = cparam_i_get(cfg.filter.high());
+    filter_saved      = true;
+    rx_filter_set(WSPR_FILTER_LOW, WSPR_FILTER_HIGH);
+
     qth_str_to_pos(PARAM_T_GET(cfg.qth()), &cur_lat, &cur_lon);
 
     lm_set_ab(true);
@@ -774,16 +881,46 @@ static void construct_cb(lv_obj_t *parent)
     lm_set_freq(true);
     lm_set_band(true);
 
+    /* The base applies noise reduction, the noise blanker and the notches in
+     * DIGI modes too, and they damage steady tones (the auto-notch goes for
+     * exactly those). Off while the app is open, radio only, the settings
+     * kept; turned on meanwhile (CAT, a front-panel control): off again. */
+    radio_set_rx_dsp_off(true);
+    dsp_watch[0] = subject_subscribe((Subject *)cfg.dsp.nr(), dsp_held_cb, NULL);
+    dsp_watch[1] = subject_subscribe((Subject *)cfg.dsp.nb(), dsp_held_cb, NULL);
+    dsp_watch[2] = subject_subscribe((Subject *)cfg.dsp.dnf(), dsp_held_cb, NULL);
+    dsp_watch[3] = subject_subscribe((Subject *)cfg.dsp.dnf_auto(), dsp_held_cb, NULL);
+
     /* Receiver */
 
     wspr_app_init();
     wspr_app_set_ui_cb(&ui_cb);
+    wspr_app_set_dial(wspr_bands[cur_band].dial_hz);
     wspr_app_set_active(true);
+
+    /* Spots of the last session that were still on their way when it
+     * closed may have reached the map since. */
+    wspr_map_clear();
 
     tx_hz = wspr_app_get_tx_freq();
     update_finder();
 
     status_timer = lv_timer_create(status_timer_cb, 1000, NULL);
+
+    fetch_heard();
+    heard_timer = lv_timer_create(heard_timer_cb, HEARD_PERIOD_MS, NULL);
+}
+
+/* The receive filter, either way round: each edge is validated against the
+ * other, so the one that stays clear of the other's old value goes first. */
+static void rx_filter_set(int low, int high) {
+    if (low < cparam_i_get(cfg.filter.high())) {
+        cparam_i_set(cfg.filter.low(), low);
+        cparam_i_set(cfg.filter.high(), high);
+    } else {
+        cparam_i_set(cfg.filter.high(), high);
+        cparam_i_set(cfg.filter.low(), low);
+    }
 }
 
 static void destruct_cb(void)
@@ -792,6 +929,11 @@ static void destruct_cb(void)
         lv_timer_del(status_timer);
         status_timer = NULL;
     }
+    if (heard_timer) {
+        lv_timer_del(heard_timer);
+        heard_timer = NULL;
+    }
+    wspr_net_forget();
     if (fade_timer) {
         lv_timer_del(fade_timer);
         fade_timer = NULL;
@@ -813,11 +955,23 @@ static void destruct_cb(void)
     wspr_app_set_active(false);
     wspr_app_set_ui_cb(NULL);
 
+    wspr_map_destroy();     /* its objects go with the window */
     table_view_destroy();
-    waterfall = NULL;       /* deleted with the window; see waterfall_add_data */
+    app_wf_stop();          /* also turns the main screen's back on */
+    waterfall = NULL;       /* deleted with the window */
 
     waterfall_set_enabled(true);
     spectrum_set_enabled(true);
+
+    for (unsigned i = 0; i < sizeof(dsp_watch) / sizeof(dsp_watch[0]); i++) {
+        if (dsp_watch[i]) param_unsubscribe(dsp_watch[i]);
+        dsp_watch[i] = NULL;
+    }
+    if (filter_saved) {
+        rx_filter_set(saved_filter_low, saved_filter_high);
+        filter_saved = false;
+    }
+    radio_set_rx_dsp_off(false);
 
     mem_load(MEM_BACKUP_ID);
 

@@ -18,6 +18,7 @@ target_sources(${PROJECT_NAME} PUBLIC
     main.c main_screen.c
     channels.c dialog_channels.c broadcast_db.c broadcast_overlay.c cJSON.c
     styles.c spectrum.c radio.c dsp.cpp util.cpp
+    band_bar.c band_plan.c itu_region.c
     app_ports.cpp
     waterfall.c rotary.cpp keyboard.c kbd_rollover.c encoder.c
     events.c msg.c msg_tiny.c keypad.c
@@ -26,21 +27,24 @@ target_sources(${PROJECT_NAME} PUBLIC
     audio.c mfk.cpp cw.cpp panel.cpp
     rtty.c screenshot.c display.cpp gps.c
     rtty_tx.c rtty_sql.c rtty_buttons.c digi_qso.c digi_next.c
+    digi_txq.c digi_text.c digi_log.c digi_qso_menu.c
     ui_list.c app_info.c
     app_radio.c
     dialog.c dialog_swrscan.c
     dxcc.c
     dialog_ft8.c dialog_freq.c dialog_gps.c dialog_msg_cw.c
-    ft8_ui/table_view.c
+    ft8_ui/table_view.c ft8_ui/map_view.c
+    app_wf.c
     ft8_udp.c
     dialog_msg_voice.c dialog_recorder.c dialog_qth.c dialog_callsign.c digi_menu.c
     textarea_window.c cw_encoder.c buttons.cpp vol.cpp recorder.c
-    voice.cpp cw_tune_ui.c adif.c qso_log.c scheduler.cpp
+    voice.cpp cw_tune_ui.c adif.c adif_rec.c qso_log.c scheduler.cpp
     format.c msg_cw_store.c
     dialog_wifi.c wifi.cpp controls.cpp usb_devices.cpp
     bt_audio.c
     knobs.cpp lock_manager.c indicators.cpp freq_info.cpp
     dialog_bt.c bt_ctl.c bt_dev.c bt_spp.c
+    map_widget.c map_scene.c
     # JTTY
     dialog_jtty.c jtty/jtty_proto.c jtty/jtty_fec.c jtty/jtty_source.c
     jtty/jtty_demod.c jtty/jtty_rx.c jtty/jtty_mod.c jtty/jtty_pack.c jtty_tx.c jtty_log.c
@@ -49,7 +53,8 @@ target_sources(${PROJECT_NAME} PUBLIC
     # The apps on their way in: each one's sources below its name
     # WSPR
     dialog_wspr.c wspr_app.c wspr_worker.c wspr_demod.c wspr_fano.c
-    wspr_encode.c wspr_mod.c wspr_spec.c wsprd/wsprd_utils.c wsprd/nhash.c
+    wspr_encode.c wspr_mod.c wspr_spec.c wspr_map.c wspr_net.c wsprd/wsprd_utils.c wsprd/nhash.c
+    psk_reporter.c
     # JS8
     dialog_js8.c js8_wf.c js8_clock.c
     # PSK31
@@ -60,6 +65,8 @@ target_sources(${PROJECT_NAME} PUBLIC
     psk_spec.c digi_qso.c digi_menu.c digi_next.c
     # WeFax
     dialog_wefax.c wefax/decoder.c wefax/stations.c wefax/wefax_pp.c
+    # NavTex
+    dialog_navtex.c navtex/decoder.c navtex/sitorb.c navtex/bulletin.c
     # SSTV
     dialog_sstv.c sstv_resources.c sstv/decoder.c sstv/encoder.c sstv/autodetect.c sstv/vis.c sstv/linesync.c sstv/preview.c sstv/sstv_denoise.c sstv/sstv_dnn.c sstv/syncgrid.c
 )

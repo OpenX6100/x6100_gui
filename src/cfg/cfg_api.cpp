@@ -65,6 +65,8 @@ static ParamInt *cfg_vox_delay(void) { return param_ref<ParamInt>(cfg_instance()
 static ParamInt *cfg_ft8_show_all(void) { return param_ref<ParamInt>(cfg_instance().p_ft8_show_all); }
 static ParamInt *cfg_ft8_protocol(void) { return param_ref<ParamInt>(cfg_instance().p_ft8_protocol); }
 static ParamInt *cfg_ft8_auto(void) { return param_ref<ParamInt>(cfg_instance().p_ft8_auto); }
+static ParamInt *cfg_ft8_psk(void) { return param_ref<ParamInt>(cfg_instance().p_ft8_psk); }
+static ParamInt *cfg_ft8_psk_min(void) { return param_ref<ParamInt>(cfg_instance().p_ft8_psk_min); }
 static ParamInt *cfg_ft8_hold_freq(void) { return param_ref<ParamInt>(cfg_instance().p_ft8_hold_freq); }
 static ParamInt *cfg_ft8_max_repeats(void) { return param_ref<ParamInt>(cfg_instance().p_ft8_max_repeats); }
 static ParamInt *cfg_swrscan_linear(void) { return param_ref<ParamInt>(cfg_instance().p_swrscan_linear); }
@@ -152,6 +154,9 @@ static ParamInt *cfg_spectrum_peak_hold(void) { return param_ref<ParamInt>(cfg_i
 static ParamInt *cfg_spectrum_peak_speed(void) { return param_ref<ParamInt>(cfg_instance().p_spectrum_peak_speed); }
 static ParamInt *cfg_spectrum_filled(void) { return param_ref<ParamInt>(cfg_instance().p_spectrum_filled); }
 static ParamInt *cfg_spectrum_height(void) { return param_ref<ParamInt>(cfg_instance().p_spectrum_height); }
+static ParamInt *cfg_spectrum_3d(void) { return param_ref<ParamInt>(cfg_instance().p_spectrum_3d); }
+static ParamInt *cfg_spectrum_3d_size(void) { return param_ref<ParamInt>(cfg_instance().p_spectrum_3d_size); }
+static ParamInt *cfg_band_plan_region(void) { return param_ref<ParamInt>(cfg_instance().p_band_plan_region); }
 static ParamInt *cfg_waterfall_center_line(void) { return param_ref<ParamInt>(cfg_instance().p_waterfall_center_line); }
 static ParamInt *cfg_mag_freq(void) { return param_ref<ParamInt>(cfg_instance().p_mag_freq); }
 static ParamInt *cfg_mag_info(void) { return param_ref<ParamInt>(cfg_instance().p_mag_info); }
@@ -175,6 +180,10 @@ static ParamFloat *cfg_ft8_output_gain_offset(void) { return param_ref<ParamFloa
 static ParamText *cfg_ft8_cq_modifier(void) { return param_ref<ParamText>(cfg_instance().p_ft8_cq_modifier); }
 static ParamText *cfg_qth(void) { return param_ref<ParamText>(cfg_instance().p_qth); }
 static ParamText *cfg_callsign(void) { return param_ref<ParamText>(cfg_instance().p_callsign); }
+static ParamText *cfg_op_name(void) { return param_ref<ParamText>(cfg_instance().p_op_name); }
+static ParamText *cfg_op_qth(void) { return param_ref<ParamText>(cfg_instance().p_op_qth); }
+static ParamInt *cfg_digi_text_save(void) { return param_ref<ParamInt>(cfg_instance().p_digi_text_save); }
+static ParamInt *cfg_digi_auto_log(void) { return param_ref<ParamInt>(cfg_instance().p_digi_auto_log); }
 static ParamInt *cfg_wifi_enabled(void) { return param_ref<ParamInt>(cfg_instance().p_wifi_enabled); }
 static ParamInt *cfg_long_gen(void) { return param_ref<ParamInt>(cfg_instance().p_long_gen); }
 static ParamInt *cfg_long_app(void) { return param_ref<ParamInt>(cfg_instance().p_long_app); }
@@ -219,6 +228,7 @@ static ParamInt *cfg_js8_custom_on(void) { return param_ref<ParamInt>(cfg_instan
 static ParamInt *cfg_js8_custom_hz(void) { return param_ref<ParamInt>(cfg_instance().p_js8_custom_hz); }
 static ParamInt *cfg_jtty_serial(void) { return param_ref<ParamInt>(cfg_instance().p_jtty_serial); }
 static ParamInt *cfg_jtty_tx_freq(void) { return param_ref<ParamInt>(cfg_instance().p_jtty_tx_freq); }
+static ParamInt *cfg_wspr_net(void) { return param_ref<ParamInt>(cfg_instance().p_wspr_net); }
 static ParamInt *cfg_theme(void) { return param_ref<ParamInt>(cfg_instance().p_theme); }
 static ParamInt *cfg_meter_color(void) { return param_ref<ParamInt>(cfg_instance().p_meter_color); }
 static ParamInt *cfg_ft8_info(void) { return param_ref<ParamInt>(cfg_instance().p_ft8_info); }
@@ -255,6 +265,10 @@ extern "C" const cfg_refs_t cfg = {
 
     .qth = &cfg_qth,
     .callsign = &cfg_callsign,
+    .op_name = &cfg_op_name,
+    .op_qth = &cfg_op_qth,
+    .digi_text_save = &cfg_digi_text_save,
+    .digi_auto_log = &cfg_digi_auto_log,
 
     .ui = {
         .auto_level_enabled = &cfg_auto_level_enabled,
@@ -268,6 +282,9 @@ extern "C" const cfg_refs_t cfg = {
         .spectrum_peak_speed = &cfg_spectrum_peak_speed,
         .spectrum_filled = &cfg_spectrum_filled,
         .spectrum_height = &cfg_spectrum_height,
+        .spectrum_3d = &cfg_spectrum_3d,
+        .spectrum_3d_size = &cfg_spectrum_3d_size,
+        .band_plan_region = &cfg_band_plan_region,
 
         .waterfall_center_line = &cfg_waterfall_center_line,
 
@@ -303,6 +320,8 @@ extern "C" const cfg_refs_t cfg = {
         .protocol = &cfg_ft8_protocol,
         .auto_mode = &cfg_ft8_auto,
         .hold_freq = &cfg_ft8_hold_freq,
+        .psk = &cfg_ft8_psk,
+        .psk_min = &cfg_ft8_psk_min,
         .max_repeats = &cfg_ft8_max_repeats,
         .tx_freq = &cfg_ft8_tx_freq,
         .output_gain_offset = &cfg_ft8_output_gain_offset,
@@ -478,6 +497,9 @@ extern "C" const cfg_refs_t cfg = {
     .jtty = {
         .serial = &cfg_jtty_serial,
         .tx_freq = &cfg_jtty_tx_freq,
+    },
+    .wspr = {
+        .net = &cfg_wspr_net,
     },
 };
 

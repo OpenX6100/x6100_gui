@@ -47,6 +47,8 @@ typedef enum {
      * line below its name, so they can be merged in any order. */
     /* WeFax */
     ACTION_APP_WEFAX = 109,
+    /* NavTex */
+    ACTION_APP_NAVTEX = 110,
     /* SSTV */
     ACTION_APP_SSTV = 111,
     /* JS8 */

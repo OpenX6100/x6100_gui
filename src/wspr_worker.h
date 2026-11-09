@@ -40,6 +40,7 @@ typedef struct {
     int   power_dbm;
     float snr_db;        /* in the 2500 Hz reference band  */
     float freq_hz;       /* audio frequency of the signal  */
+    float dt_s;          /* start relative to 1 s into the slot (DT) */
     int   errors;        /* bit mismatches, lower is better */
 } wspr_spot_t;
 
