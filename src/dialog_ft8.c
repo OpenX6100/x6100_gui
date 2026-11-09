@@ -42,7 +42,7 @@
 #include "ft8_ui/table_view.h"
 #include "ft8_ui/map_view.h"
 #include "ft8/tx_worker.h"
-#include "widgets/lv_waterfall.h"
+#include "app_wf.h"
 #include "widgets/lv_finder.h"
 
 #include "ft8/worker.h"
@@ -177,8 +177,6 @@ static void rotary_cb(int32_t diff, uint16_t dt);
  * through scheduler_put() to land on the LVGL task. */
 static void on_message_cb(const char *text, int snr, float freq_hz, float time_sec,
                           const slot_info_t *info, void *ctx);
-static void on_psd_cb(const float *psd, uint16_t nfft, float sec_since_slot_start,
-                      const slot_info_t *info, void *ctx);
 static void on_slot_end_cb(const slot_info_t *info, void *ctx);
 static void on_tick_cb(const slot_info_t *info, bool new_slot,
                        float sec_since_slot_start, void *ctx);
@@ -408,7 +406,7 @@ static void worker_init() {
 
     audio_worker_cb_t cb = {
         .on_message  = on_message_cb,
-        .on_psd      = on_psd_cb,
+        .on_psd      = NULL,        /* the waterfall listens itself (app_wf.c) */
         .on_slot_end = on_slot_end_cb,
         .on_tick     = on_tick_cb,
         .ctx         = NULL,
@@ -487,6 +485,7 @@ static void destruct_cb() {
     map_view_destroy();     /* its objects go with the window */
     table_view_destroy();
 
+    app_wf_stop();          /* also turns the main screen's back on */
     waterfall_set_enabled(true);
     spectrum_set_enabled(true);
 
@@ -533,7 +532,7 @@ static void clean_screen() {
     table_view_reset();
     map_view_clear();
     map_view_set_title(ftx_mode_name());
-    lv_waterfall_clear_data(waterfall);
+    app_wf_clear();
 
     int32_t *c = malloc(sizeof(int32_t));
     *c = LV_KEY_UP;
@@ -651,15 +650,12 @@ static void construct_cb(lv_obj_t *parent) {
 
     /* Waterfall */
 
-    waterfall = lv_waterfall_create(dialog.obj);
-
-    lv_obj_clear_flag(waterfall, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_waterfall_set_palette(waterfall, (lv_color_t*)style.wf_palette, 256);
-    lv_waterfall_set_size(waterfall, WIDTH, 325);
-    lv_waterfall_set_min(waterfall, -60);
-    lv_waterfall_set_auto_levels(waterfall, true);   /* 1KO125: colours follow the noise floor */
-
+    /* The shared waterfall (app_wf.c, as JS8's) shows through this box,
+     * started below once the filter is known. */
+    waterfall = lv_obj_create(dialog.obj);
+    lv_obj_remove_style_all(waterfall);
+    lv_obj_clear_flag(waterfall, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(waterfall, WIDTH, 325);
     lv_obj_set_pos(waterfall, 13, 13);
 
     /* Freq finder */
@@ -725,6 +721,9 @@ static void construct_cb(lv_obj_t *parent) {
     filter_high = cparam_i_get(cfg.filter.high());
 
     lv_finder_set_range(finder, filter_low, filter_high);
+
+    const app_wf_cfg_t wf_cfg = {.lo_hz = filter_low, .hi_hz = filter_high};
+    if (!app_wf_start(waterfall, &wf_cfg)) msg_update_text_fmt("No memory for the waterfall");
 
     qth_str_to_pos(PARAM_T_GET(cfg.qth()), &cur_lat, &cur_lon);
 
@@ -1349,37 +1348,6 @@ static void on_message_cb(const char *text, int snr, float freq_hz, float time_s
  * Helper function to update UI in main thread
  */
 
-struct waterfall_data {
-    float *psd;
-    size_t size;
-};
-
-static void waterfall_add_data(void *data) {
-    struct waterfall_data *wf_data = (struct waterfall_data *)data;
-    lv_waterfall_add_data(waterfall, wf_data->psd, wf_data->size);
-    free(wf_data->psd);
-}
-
-static void on_psd_cb(const float *psd, uint16_t nfft, float sec_since_slot_start,
-                      const slot_info_t *info, void *ctx) {
-    (void)sec_since_slot_start;
-    (void)info;
-    (void)ctx;
-    if (!psd || !nfft) return;
-
-    uint32_t low_bin  = (uint32_t)nfft / 2u + (uint32_t)nfft * filter_low  / FTX_CAPTURE_RATE;
-    uint32_t high_bin = (uint32_t)nfft / 2u + (uint32_t)nfft * filter_high / FTX_CAPTURE_RATE;
-    if (high_bin > nfft) high_bin = nfft;
-    if (low_bin >= high_bin) return;
-
-    // Schedule waterfall update in main thread
-    struct waterfall_data wf_data;
-    wf_data.size = high_bin - low_bin;
-    wf_data.psd = (float *)calloc(sizeof(float), wf_data.size);
-    memcpy((void*)wf_data.psd, (void*)&psd[low_bin], wf_data.size * sizeof(float));
-    scheduler_put(waterfall_add_data, &wf_data, sizeof(wf_data));
-}
-
 static void on_slot_end_cb(const slot_info_t *info, void *ctx) {
     (void)info;
     (void)ctx;
@@ -1398,6 +1366,8 @@ static void on_tick_cb(const slot_info_t *info, bool new_slot,
         if ((tx_time_slot == info->odd) && subject_i_get(tx_enabled)) {
             state = TX_PROCESS;
             add_tx_text(tx_msg.msg);
+            /* tx_worker sends at FT8_TX_AUDIO_HZ with the VFO moved to put it on tx_freq */
+            app_wf_set_tx_shift((int)param_i_get(cfg.ft8.tx_freq()) - FT8_TX_AUDIO_HZ);
             tx_worker_run(tx_msg.msg, base_gain_offset,
                           tx_should_abort_cb, NULL);
             state = RX_PROCESS;

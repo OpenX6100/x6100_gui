@@ -38,7 +38,7 @@
 #include "scheduler.h"
 
 #include "ft8_ui/table_view.h"
-#include "widgets/lv_waterfall.h"
+#include "app_wf.h"
 #include "widgets/lv_finder.h"
 
 #include "wspr_app.h"
@@ -277,7 +277,7 @@ static void clean_screen(void)
     char title[24];
 
     table_view_reset();
-    lv_waterfall_clear_data(waterfall);
+    app_wf_clear();
 
     snprintf(title, sizeof(title), "WSPR %s", cur_band >= 0 ? wspr_bands[cur_band].label : "");
     wspr_map_set_title(title);
@@ -317,40 +317,6 @@ static void band_down_cb(button_data_t *b)
 }
 
 /* ---- Waterfall -------------------------------------------------------- */
-
-struct waterfall_data {
-    float *psd;
-    size_t size;
-};
-
-static void waterfall_add_data(void *data)
-{
-    struct waterfall_data *wf = (struct waterfall_data *)data;
-
-    /* A line queued just before the window closed arrives after its
-     * waterfall is gone (destruct_cb clears the pointer). */
-    if (waterfall)
-        lv_waterfall_add_data(waterfall, wf->psd, wf->size);
-    free(wf->psd);
-}
-
-static void on_psd(const float *mag_db, int nbins, void *ctx)
-{
-    struct waterfall_data wf;
-
-    (void)ctx;
-
-    if (!mag_db || nbins <= 0)
-        return;
-
-    wf.size = (size_t)nbins;
-    wf.psd = (float *)malloc(sizeof(float) * wf.size);
-    if (!wf.psd)
-        return;
-
-    memcpy(wf.psd, mag_db, wf.size * sizeof(float));
-    scheduler_put(waterfall_add_data, &wf, sizeof(wf));
-}
 
 /* ---- Spots ------------------------------------------------------------ */
 
@@ -423,7 +389,7 @@ static void on_note(const char *text, void *ctx)
 
 static wspr_app_ui_cb_t ui_cb = {
     .on_spot     = on_spot,
-    .on_psd      = on_psd,
+    .on_psd      = NULL,     /* the waterfall listens itself (app_wf.c) */
     .on_slot_end = on_slot_end,
     .on_note     = on_note,
     .ctx         = NULL,
@@ -791,22 +757,17 @@ static void construct_cb(lv_obj_t *parent)
 
     /* Waterfall */
 
-    waterfall = lv_waterfall_create(dialog.obj);
-
-    lv_obj_clear_flag(waterfall, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_waterfall_set_palette(waterfall, (lv_color_t *)style.wf_palette, 256);
-    lv_waterfall_set_size(waterfall, WIDTH, WF_HEIGHT);
-
-    /*
-     * The spectrum module hands over dB above the noise floor of each
-     * line, so these limits are absolute and never need adjusting when
-     * the operator changes AF or RF gain.
-     */
-    lv_waterfall_set_min(waterfall, -3);
-    lv_waterfall_set_max(waterfall, 25);
-
+    /* The shared waterfall (app_wf.c, as JS8's) shows through this box.
+     * 375 Hz across: each row looks back over the last FFT's worth of
+     * audio (sliding), so WSPR's 6 Hz signals stay sharp. */
+    waterfall = lv_obj_create(dialog.obj);
+    lv_obj_remove_style_all(waterfall);
+    lv_obj_clear_flag(waterfall, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(waterfall, WIDTH, WF_HEIGHT);
     lv_obj_set_pos(waterfall, 13, 13);
+    const app_wf_cfg_t wf_cfg = {.lo_hz = WF_LOW_HZ, .hi_hz = WF_HIGH_HZ, .sliding = true};
+    if (!app_wf_start(waterfall, &wf_cfg))
+        msg_update_text_fmt("No memory for the waterfall");
 
     /* The decoded window, 1400-1600 Hz: its edges */
 
@@ -943,7 +904,8 @@ static void destruct_cb(void)
 
     wspr_map_destroy();     /* its objects go with the window */
     table_view_destroy();
-    waterfall = NULL;       /* deleted with the window; see waterfall_add_data */
+    app_wf_stop();          /* also turns the main screen's back on */
+    waterfall = NULL;       /* deleted with the window */
 
     waterfall_set_enabled(true);
     spectrum_set_enabled(true);
