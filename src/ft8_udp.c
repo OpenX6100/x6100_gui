@@ -10,6 +10,7 @@
 
 #include "bt_ctl.h"
 #include "bt_spp.h"
+#include "adif_rec.h"
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -341,12 +342,8 @@ void ft8_udp_init(void) {
 }
 
 void ft8_udp_deinit(void) {
-    running = false;
     bt_ctl_deinit();
-    if (sock_fd >= 0) {
-        close(sock_fd);
-        sock_fd = -1;
-    }
+    ft8_udp_close();
 }
 
 void ft8_udp_close(void) {
@@ -508,77 +505,32 @@ void ft8_udp_send_qso_logged(time_t when, const char *dx_call, const char *dx_gr
  *  ADIF record construction
  * ==================================================================== */
 
-const char *ft8_udp_band_name(uint64_t f) {
-    /* ADIF band names for the HF/6m ranges this radio covers. */
-    if (f >=  1800000ULL && f <=  2000000ULL) return "160m";
-    if (f >=  3500000ULL && f <=  4000000ULL) return "80m";
-    if (f >=  5250000ULL && f <=  5450000ULL) return "60m";
-    if (f >=  7000000ULL && f <=  7300000ULL) return "40m";
-    if (f >= 10100000ULL && f <= 10150000ULL) return "30m";
-    if (f >= 14000000ULL && f <= 14350000ULL) return "20m";
-    if (f >= 18068000ULL && f <= 18168000ULL) return "17m";
-    if (f >= 21000000ULL && f <= 21450000ULL) return "15m";
-    if (f >= 24890000ULL && f <= 24990000ULL) return "12m";
-    if (f >= 28000000ULL && f <= 29700000ULL) return "10m";
-    if (f >= 50000000ULL && f <= 54000000ULL) return "6m";
-    return "";
-}
-
-/* Append "<name:len>value" only when the value is non-empty. An empty
- * field written as "<name:0>" is not valid ADIF and can make a parser
- * discard the whole record, which is why this guard matters. */
-static void adif_add(char *out, size_t out_sz, size_t *o,
-                     const char *name, const char *value) {
-    if (!value || !*value) return;
-    int n = snprintf(out + *o, out_sz - *o, "<%s:%d>%s",
-                     name, (int)strlen(value), value);
-    if (n > 0 && (size_t)n < out_sz - *o) *o += (size_t)n;
-}
-
 size_t ft8_udp_build_adif(char *out, size_t out_sz, time_t when,
                           const char *dx_call, const char *dx_grid,
                           uint64_t freq_hz, const char *mode,
                           int snr_sent, int snr_rcvd, int tx_power_w,
                           const char *my_call, const char *my_grid) {
-    struct tm tm_utc;
-    gmtime_r(&when, &tm_utc);
-
     /* Sized for any int, so the compiler can prove nothing truncates. */
-    char date[40], tstr[40], freq_str[32], rs[12], rr[12], pwr[12];
-    snprintf(date, sizeof(date), "%04d%02d%02d",
-             tm_utc.tm_year + 1900, tm_utc.tm_mon + 1, tm_utc.tm_mday);
-    snprintf(tstr, sizeof(tstr), "%02d%02d%02d",
-             tm_utc.tm_hour, tm_utc.tm_min, tm_utc.tm_sec);
-    snprintf(freq_str, sizeof(freq_str), "%.6f", (double)freq_hz / 1000000.0);
+    char       rs[12], rr[12];
+    adif_rec_t r;
+
     snprintf(rs, sizeof(rs), "%+d", snr_sent);
     snprintf(rr, sizeof(rr), "%+d", snr_rcvd);
-    snprintf(pwr, sizeof(pwr), "%d", tx_power_w);
 
-    size_t o = 0;
-    int n = snprintf(out, out_sz,
-                     "X6100 ADIF export\n<adif_ver:5>3.1.0\n"
-                     "<programid:5>X6100\n<EOH>\n");
-    if (n < 0 || (size_t)n >= out_sz) { if (out_sz) out[0] = '\0'; return 0; }
-    o = (size_t)n;
-
-    adif_add(out, out_sz, &o, "call", dx_call);
-    adif_add(out, out_sz, &o, "gridsquare", dx_grid);
-    adif_add(out, out_sz, &o, "mode", mode);
-    adif_add(out, out_sz, &o, "rst_sent", rs);
-    adif_add(out, out_sz, &o, "rst_rcvd", rr);
-    adif_add(out, out_sz, &o, "qso_date", date);
-    adif_add(out, out_sz, &o, "time_on", tstr);
-    adif_add(out, out_sz, &o, "qso_date_off", date);
-    adif_add(out, out_sz, &o, "time_off", tstr);
-    adif_add(out, out_sz, &o, "band", ft8_udp_band_name(freq_hz));
-    adif_add(out, out_sz, &o, "freq", freq_str);
-    adif_add(out, out_sz, &o, "station_callsign", my_call);
-    adif_add(out, out_sz, &o, "my_gridsquare", my_grid);
-    adif_add(out, out_sz, &o, "tx_pwr", pwr);
-
-    n = snprintf(out + o, out_sz - o, "<eor>\n");
-    if (n > 0 && (size_t)n < out_sz - o) o += (size_t)n;
-    return o;
+    adif_rec_begin(&r, out, out_sz);
+    adif_rec_str(&r, "call", dx_call);
+    adif_rec_str(&r, "gridsquare", dx_grid);
+    adif_rec_mode_name(&r, mode);       /* FT4: MFSK / FT4 */
+    adif_rec_str(&r, "rst_sent", rs);
+    adif_rec_str(&r, "rst_rcvd", rr);
+    adif_rec_times(&r, when, when);
+    adif_rec_freq(&r, freq_hz);
+    adif_rec_str(&r, "station_callsign", my_call);
+    adif_rec_str(&r, "my_gridsquare", my_grid);
+    if (tx_power_w > 0) {
+        adif_rec_int(&r, "tx_pwr", tx_power_w);
+    }
+    return adif_rec_end(&r);
 }
 
 void ft8_udp_log_qso(time_t when, const char *dx_call, const char *dx_grid,
@@ -604,9 +556,14 @@ void ft8_udp_log_qso(time_t when, const char *dx_call, const char *dx_grid,
 }
 
 void ft8_udp_send_logged_adif(const char *adif_record) {
-    if (!emitters_on() || !adif_record) return;
+    if (!emitters_on() || !adif_record || !*adif_record) return;
+    /* With the header, as WSJT-X sends it: a logger may read the
+     * message as a file of its own. */
+    char text[BUF_MAX];
+    int  n = snprintf(text, sizeof(text), "%s%s", ADIF_HEADER, adif_record);
+    if (n < 0 || (size_t)n >= sizeof(text)) return;
     qbuf_t b;
     qb_header(&b, MSG_LOGGED_ADIF);
-    qb_str(&b, adif_record);
+    qb_str(&b, text);
     qb_send(&b);
 }

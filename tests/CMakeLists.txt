@@ -46,6 +46,13 @@ target_include_directories(test_civ PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(test_civ PRIVATE cat_core Catch2::Catch2WithMain)
 add_test(NAME test_civ COMMAND $<TARGET_FILE:test_civ> --colour-mode=ansi)
 
+# test_adif_rec: the ADIF records of the logs and of UDP (src/adif_rec.c,
+# plain C)
+add_executable(test_adif_rec test_adif_rec.cpp ${PROJECT_SOURCE_DIR}/src/adif_rec.c)
+target_include_directories(test_adif_rec PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(test_adif_rec PRIVATE Catch2::Catch2WithMain)
+add_test(NAME test_adif_rec COMMAND $<TARGET_FILE:test_adif_rec> --colour-mode=ansi)
+
 # test_tx_level: the digital modes' drive level (src/tx_level.c, plain C,
 # no radio) against a model radio.
 add_executable(test_tx_level test_tx_level.cpp ${PROJECT_SOURCE_DIR}/src/tx_level.c)
