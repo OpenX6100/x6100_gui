@@ -24,6 +24,7 @@
 #include "keyboard.h"
 #include "events.h"
 #include "buttons.h"
+#include "psk_reporter.h"
 #include "main_screen.h"
 #include "spectrum.h"
 #include "waterfall.h"
@@ -141,6 +142,12 @@ static lv_anim_t   fade;
 static bool        fade_run        = false;
 static bool        disable_buttons = false;
 
+#define PSK_MIN_STEP 5
+#define PSK_KNOB_MS  4000       /* the MFK sets the time this long after the button */
+static lv_obj_t   *psk_knob;
+static lv_timer_t *psk_knob_timer;
+static int         psk_up = -1; /* last told: listening, or no connection */
+
 static lv_obj_t *finder;
 static lv_obj_t *waterfall;
 
@@ -195,6 +202,10 @@ static void time_sync(struct button_data_t *btn_data);
 
 static void force_save_qso(struct button_data_t *btn_data);
 static const char * map_label_getter();
+static const char * psk_label_getter();
+static void psk_cb(struct button_data_t *btn_data);
+static void psk_hold_cb(struct button_data_t *btn_data);
+static void psk_update(void);
 static void show_map_cb(struct button_data_t *btn_data);
 static void map_mode_cb(struct button_data_t *btn_data);
 static void add_msg_cb(void *data);
@@ -235,6 +246,8 @@ static button_data_t button_page_3 = { .type=BTN_TEXT, .label = "(Page: 3:3)", .
 static button_data_t button_cq_mod = { .type=BTN_TEXT, .label = "CQ\nModifier", .press = cq_modifier_cb };
 static button_data_t button_time_sync = { .type=BTN_TEXT, .label = "Time\nSync", .press = time_sync };
 
+static button_data_t button_psk = { .type=BTN_TEXT_FN, .label_fn = psk_label_getter, .press = psk_cb, .hold = psk_hold_cb };
+
 static buttons_page_t btn_page_1 = {
     {&button_page_1, &button_show_cq_all, &button_mode_ft4_ft8, &button_tx_cq_en_dis, &button_tx_call_en_dis}
 };
@@ -244,7 +257,7 @@ static buttons_page_t btn_page_2 = {
 };
 
 static buttons_page_t btn_page_3 = {
-    {&button_page_3, &button_cq_mod, &button_time_sync}
+    {&button_page_3, &button_cq_mod, &button_time_sync, &button_psk}
 };
 
 static dialog_t dialog = {
@@ -463,6 +476,14 @@ static void destruct_cb() {
     }
     ft8_udp_deinit();
 
+    psk_reporter_watch(NULL, NULL, NULL, NULL);
+    if (psk_knob_timer) {
+        lv_timer_del(psk_knob_timer);
+        psk_knob_timer = NULL;
+    }
+    psk_knob = NULL;        /* deleted with the window */
+    psk_up   = -1;
+
     map_view_destroy();     /* its objects go with the window */
     table_view_destroy();
 
@@ -504,6 +525,7 @@ static void load_band(int8_t dir) {
     if (res) {
         msg_update_text_fmt("%s", cfg_digital_label_get());
     }
+    psk_update();
 }
 
 /// @brief Clean waterfall and table
@@ -825,6 +847,129 @@ static void map_mode_cb(struct button_data_t *btn_data) {
     (void)btn_data;
     if (disable_buttons || !map_view_shown()) return;
     msg_update_text_fmt("Map: %s", map_view_next_mode());
+}
+
+/* ---- PSK Reporter: who hears you, on the map ---- */
+
+static void psk_on_spot(const char *call, const char *grid, int snr, int64_t when) {
+    map_view_heard_you(call, grid, snr, when);
+}
+
+static void psk_on_state(bool up) {
+    if (psk_up == (int)up) return;
+    psk_up = up;
+    msg_update_text_fmt("PSK Reporter: %s", up ? "listening for who hears you" : "no connection, trying again");
+}
+
+/* What's wanted now: band and mode change here, and it's off outside the bands. */
+static void psk_update(void) {
+    static const psk_reporter_cb_t cb = {.on_spot = psk_on_spot, .on_state = psk_on_state};
+    bool on = param_i_get(cfg.ft8.psk());
+    map_view_set_you_minutes(on ? param_i_get(cfg.ft8.psk_min()) : 0);
+    psk_reporter_watch(PARAM_T_GET(cfg.callsign()), on ? psk_reporter_band(cparam_i_get(cfg.cur.fg_freq())) : NULL,
+                       ftx_mode_name(), &cb);
+}
+
+static const char * psk_label_getter() {
+    static char buf[32];
+    if (param_i_get(cfg.ft8.psk()))
+        snprintf(buf, sizeof(buf), "PSK Rep:\n%d min", (int)param_i_get(cfg.ft8.psk_min()));
+    else
+        snprintf(buf, sizeof(buf), "PSK Rep:\nOff");
+    return buf;
+}
+
+/* The MFK back to whatever had it (unless something else took it since). */
+static void psk_knob_end_cb(lv_timer_t *t) {
+    (void)t;
+    psk_knob_timer = NULL;
+    if (!psk_knob) return;
+    bool had = lv_group_get_focused(keyboard_group) == psk_knob;
+    lv_group_remove_obj(psk_knob);
+    if (!had) return;
+    if (map_view_shown()) {
+        map_view_focus();
+    } else {
+        lv_group_focus_obj(table);
+        lv_group_set_editing(keyboard_group, true);
+    }
+}
+
+static void psk_knob_key_cb(lv_event_t *e) {
+    uint32_t key = *((uint32_t *) lv_event_get_param(e));
+    int      dir = 0;
+    switch (key) {
+        case LV_KEY_RIGHT:
+        case LV_KEY_DOWN:
+            dir = 1;
+            break;
+        case LV_KEY_LEFT:
+        case LV_KEY_UP:
+            dir = -1;
+            break;
+        case LV_KEY_ESC:
+            if (psk_knob_timer) lv_timer_ready(psk_knob_timer);
+            return;
+        case KEY_VOL_LEFT_EDIT:
+        case KEY_VOL_LEFT_SELECT:
+            radio_change_vol(-1);
+            return;
+        case KEY_VOL_RIGHT_EDIT:
+        case KEY_VOL_RIGHT_SELECT:
+            radio_change_vol(1);
+            return;
+        default:
+            return;
+    }
+    int m = LV_CLAMP(PSK_MIN_STEP, (int)param_i_get(cfg.ft8.psk_min()) + dir * PSK_MIN_STEP, 60);
+    param_i_set(cfg.ft8.psk_min(), m);
+    map_view_set_you_minutes(m);
+    msg_update_text_fmt("PSK Reporter: lines stay %d min", m);
+    buttons_refresh(&button_psk);
+    if (psk_knob_timer) lv_timer_reset(psk_knob_timer);
+}
+
+/* For a few seconds the MFK sets the time, in the list or on the map. */
+static void psk_knob_start(void) {
+    if (!psk_knob) {
+        psk_knob = lv_obj_create(dialog.obj);
+        lv_obj_remove_style_all(psk_knob);
+        lv_obj_set_size(psk_knob, 0, 0);
+        lv_obj_add_event_cb(psk_knob, psk_knob_key_cb, LV_EVENT_KEY, NULL);
+    }
+    if (lv_obj_get_group(psk_knob) != keyboard_group) lv_group_add_obj(keyboard_group, psk_knob);
+    lv_group_focus_obj(psk_knob);
+    lv_group_set_editing(keyboard_group, true);
+    if (psk_knob_timer) {
+        lv_timer_reset(psk_knob_timer);
+    } else {
+        psk_knob_timer = lv_timer_create(psk_knob_end_cb, PSK_KNOB_MS, NULL);
+        lv_timer_set_repeat_count(psk_knob_timer, 1);
+    }
+    msg_update_text_fmt("PSK Reporter: turn MFK to set how long lines stay (%d min)", (int)param_i_get(cfg.ft8.psk_min()));
+}
+
+static void psk_cb(struct button_data_t *btn_data) {
+    if (disable_buttons) return;
+    bool on = !param_i_get(cfg.ft8.psk());
+    if (on && strlen(PARAM_T_GET(cfg.callsign())) < 3) {
+        msg_update_text_fmt("PSK Reporter: set your callsign first");
+        return;
+    }
+    param_i_set(cfg.ft8.psk(), on);
+    psk_up = -1;
+    if (!on) map_view_forget_you();
+    psk_update();
+    buttons_refresh(btn_data);
+    if (on) psk_knob_start();
+    else msg_update_text_fmt("PSK Reporter off");
+}
+
+/* Held, while on: the time, without switching it off and on. */
+static void psk_hold_cb(struct button_data_t *btn_data) {
+    (void)btn_data;
+    if (disable_buttons || !param_i_get(cfg.ft8.psk())) return;
+    psk_knob_start();
 }
 
 static void show_cq_all_cb(struct button_data_t *btn_data) {

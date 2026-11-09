@@ -148,6 +148,10 @@ class SettingsManager {
         StorageType::GLOBAL, pending_writes_, &global_params_};
     Parameter<int32_t> p_ft8_hold_freq{"ft8_hold_freq", true, 0, 1,
         StorageType::GLOBAL, pending_writes_, &global_params_};
+    Parameter<int32_t> p_ft8_psk{"ft8_psk", false, 0, 1,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // who hears you, from PSK Reporter
+    Parameter<int32_t> p_ft8_psk_min{"ft8_psk_min", 15, 5, 60,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // how long their lines stay
     Parameter<int32_t> p_ft8_max_repeats{"ft8_max_repeats", 6, {},
         StorageType::GLOBAL, pending_writes_, {}, &global_params_};
 
