@@ -269,11 +269,13 @@ audio_worker_t *audio_worker_create(int audio_sample_rate,
     w->audio_buf = cbufferf_create(audio_sample_rate * 3);
     if (!w->audio_buf) goto fail;
 
-    w->sg = spgramf_create(w->nfft, LIQUID_WINDOW_HANN, w->nfft, w->nfft / 2);
-    if (!w->sg) goto fail;
+    if (w->cb.on_psd) { /* the waterfall may listen for itself (app_wf.c) */
+        w->sg = spgramf_create(w->nfft, LIQUID_WINDOW_HANN, w->nfft, w->nfft / 2);
+        if (!w->sg) goto fail;
 
-    w->psd = (float *)malloc(w->nfft * sizeof(float));
-    if (!w->psd) goto fail;
+        w->psd = (float *)malloc(w->nfft * sizeof(float));
+        if (!w->psd) goto fail;
+    }
 
     ftx_worker_init(w->sample_rate, proto);
     w->block_size          = ftx_worker_get_block_size();
