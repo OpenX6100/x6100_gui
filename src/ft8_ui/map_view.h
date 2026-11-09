@@ -40,7 +40,7 @@ void map_view_clear(void);
  * from you, brightness by snr, until it's older than the time set here). */
 void map_view_heard_you(const char *call, const char *grid, int snr, int64_t when);
 void map_view_set_you_minutes(int minutes); /* 0: off, no lines or legend */
-void map_view_set_you_up(bool up);         /* false: says it's not connected, no legend */
+void map_view_set_you_up(bool up);         /* false: says it's not connected */
 void map_view_forget_you(void);
 
 /* The map over `parent` (the FT8 window), focused for the MFK, or the list

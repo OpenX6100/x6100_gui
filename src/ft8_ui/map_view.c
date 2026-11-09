@@ -300,7 +300,7 @@ static void build(int64_t now) {
                               .mode    = map_scene_mode(),
                               .miles   = miles,
                               .legend  = legend,
-                              .nlegend = sizeof(legend) / sizeof(legend[0]) - (you_min && you_up ? 0 : 1),
+                              .nlegend = sizeof(legend) / sizeof(legend[0]) - (you_min && (you_up || nyou) ? 0 : 1),
                               .status  = status,
                               .status2 = status2,
                               .status3 = status3,
