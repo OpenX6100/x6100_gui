@@ -66,6 +66,11 @@ void   adif_rec_freq(adif_rec_t *r, uint64_t hz);
  * "OLIVIA 32/1000"), NULL keeps it. */
 void   adif_rec_mode(adif_rec_t *r, qso_log_mode_t mode, const char *submode);
 
+/* MODE and SUBMODE of a mode the apps name ("FT4"): from the table, or a
+ * name it does not know as MODE itself, so a record never goes out
+ * without one. */
+void   adif_rec_mode_name(adif_rec_t *r, const char *name);
+
 /* "<eor>\n". The record's length, 0 when it did not fit. */
 size_t adif_rec_end(adif_rec_t *r);
 

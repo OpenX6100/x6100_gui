@@ -520,7 +520,7 @@ size_t ft8_udp_build_adif(char *out, size_t out_sz, time_t when,
     adif_rec_begin(&r, out, out_sz);
     adif_rec_str(&r, "call", dx_call);
     adif_rec_str(&r, "gridsquare", dx_grid);
-    adif_rec_mode(&r, adif_mode_by_name(mode), NULL);  /* FT4: MFSK / FT4 */
+    adif_rec_mode_name(&r, mode);       /* FT4: MFSK / FT4 */
     adif_rec_str(&r, "rst_sent", rs);
     adif_rec_str(&r, "rst_rcvd", rr);
     adif_rec_times(&r, when, when);

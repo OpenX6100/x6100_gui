@@ -97,6 +97,18 @@ TEST_CASE("ADIF modes, both ways", "[adif_rec]") {
     CHECK(adif_mode_by_name("WSPR") == MODE_OTHER);
 }
 
+TEST_CASE("ADIF mode by the apps' name", "[adif_rec]") {
+    char       buf[128];
+    adif_rec_t r;
+
+    adif_rec_begin(&r, buf, sizeof(buf));
+    adif_rec_mode_name(&r, "FT4");
+    adif_rec_mode_name(&r, "Q65");          /* not in the table: as given */
+    adif_rec_mode_name(&r, "");             /* nothing to write */
+    adif_rec_end(&r);
+    CHECK(std::string(buf) == "<mode:4>MFSK <submode:3>FT4 <mode:3>Q65 <eor>\n");
+}
+
 TEST_CASE("ADIF olivia submode", "[adif_rec]") {
     char       buf[128];
     adif_rec_t r;

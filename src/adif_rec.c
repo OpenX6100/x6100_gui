@@ -165,6 +165,17 @@ void adif_rec_mode(adif_rec_t *r, qso_log_mode_t mode, const char *submode)
     adif_rec_str(r, "submode", submode ? submode : s);
 }
 
+void adif_rec_mode_name(adif_rec_t *r, const char *name)
+{
+    qso_log_mode_t mode = adif_mode_by_name(name);
+
+    if (mode == MODE_OTHER) {
+        adif_rec_str(r, "mode", name);  /* not in the table: as given */
+        return;
+    }
+    adif_rec_mode(r, mode, NULL);
+}
+
 size_t adif_rec_end(adif_rec_t *r)
 {
     if (!r->overflow && r->size - r->len > strlen("<eor>\n")) {
