@@ -44,8 +44,8 @@ typedef void (*extra_msg_cb)(const char *text, int snr, float freq_hz, float tim
                              void *user_data);
 void ftx_worker_decode_more(extra_msg_cb msg_cb, void *user_data);
 
-/// @brief The slot about to end, for its extra passes' finds. Call before the
-/// slot's last ftx_worker_decode().
+/// @brief The slot being received, for its extra passes' finds. Call before
+/// feeding it: a full slot is handed over as it fills.
 void ftx_worker_extra_slot(bool odd, int64_t start_ms);
 
 /// @brief Whether the extra passes are still working (PC tests on recordings)
