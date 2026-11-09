@@ -478,7 +478,7 @@ static void decode_messages(const ftx_waterfall_t *wf, int *num_candidates, ftx_
 #define SNR_NOISE_MAX  8192
 #define SNR_MAX_DB     49        /* the highest report the message format carries */
 
-static float snr_noise[SNR_NOISE_MAX];
+static __thread float snr_noise[SNR_NOISE_MAX];
 static float wf_power_lut[256];         /* waterfall value (dB * 2 + 240) to power */
 
 static void wf_power_init(void) {
