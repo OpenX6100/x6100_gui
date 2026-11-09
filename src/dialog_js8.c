@@ -62,6 +62,8 @@
 #include <fcntl.h>
 #include <math.h>
 #include <pthread.h>
+#include <pulse/error.h>
+#include <pulse/simple.h>
 #include <sched.h>
 #include <sys/resource.h>
 #include <sys/syscall.h>
@@ -130,6 +132,9 @@
 #endif
 #define WF_ROWS_PER_SEC  15     /* waterfall rows per second of audio, as the main screen's */
 #define WF_ROW_SAMPLES   (SAMPLE_RATE / WF_ROWS_PER_SEC)
+#define WF_TX_MONITOR    "alsa_output.platform-sound.stereo-fallback.monitor" /* the audio going out */
+#define WF_TX_EDGE_PX    6      /* the red edge on rows of our own transmission, as XARA's */
+#define WF_TX_RED        0xe63c3c
 #define WF_QUEUE         16     /* rows waiting to be drawn (jitter buffer) */
 #define WF_TICK_MS       5      /* how often the drawing timer looks at the clock */
 #define HB_ADJUST_MS     8000   /* setting the HB interval ends after this idle */
@@ -672,6 +677,10 @@ static unsigned wf_row_fill;   /* samples in the row being built (receiver threa
  * a second, fell behind and caught up with a two-row jump every 2 s. */
 static pthread_mutex_t wf_lock = PTHREAD_MUTEX_INITIALIZER;
 static float      wf_rows[WF_QUEUE][WIDTH]; /* rows made, not drawn yet (wf_lock) */
+static pthread_t   wf_tx_thread;
+static bool        wf_tx_up;
+static atomic_bool wf_tx_quit;
+static bool       wf_rows_tx[WF_QUEUE];     /* that row is our own transmission (wf_lock) */
 static unsigned   wf_q_head, wf_q_count;    /* (wf_lock) */
 static float      wf_row[WIDTH], wf_sel[WIDTH]; /* the row being made (receiver thread) */
 static lv_timer_t *wf_timer;
@@ -2298,10 +2307,15 @@ static void wf_timer_cb(lv_timer_t *t) {
     static float row[WIDTH];
     pthread_mutex_lock(&wf_lock);
     memcpy(row, wf_rows[wf_q_head], sizeof(row));
+    bool tx   = wf_rows_tx[wf_q_head];
     wf_q_head = (wf_q_head + 1) % WF_QUEUE;
     wf_q_count--;
     pthread_mutex_unlock(&wf_lock);
     js8_wf_add_row(row, WIDTH);
+    if (tx) { /* a red edge on rows of our own transmission */
+        js8_wf_fill_rect(0, 0, WF_TX_EDGE_PX - 1, 0, lv_color_hex(WF_TX_RED));
+        js8_wf_fill_rect(WIDTH - WF_TX_EDGE_PX, 0, WIDTH - 1, 0, lv_color_hex(WF_TX_RED));
+    }
     wf_due_us += period;
     js8_wf_tick();
 }
@@ -2329,6 +2343,21 @@ static float select_nth(float *v, int n, int k) {
         else return v[k];
     }
     return v[k];
+}
+
+/* Into the ring for wf_timer_cb; far behind, the oldest goes. */
+static void wf_queue_row(const float *row, bool tx) {
+    pthread_mutex_lock(&wf_lock);
+    if (wf_q_count == WF_QUEUE) {
+        wf_q_head = (wf_q_head + 1) % WF_QUEUE;
+        wf_q_count--;
+        wf_dropped++;
+    }
+    unsigned at = (wf_q_head + wf_q_count) % WF_QUEUE;
+    memcpy(wf_rows[at], row, sizeof(wf_rows[at]));
+    wf_rows_tx[at] = tx;
+    wf_q_count++;
+    pthread_mutex_unlock(&wf_lock);
 }
 
 static void wf_emit_row(void) {
@@ -2370,16 +2399,7 @@ static void wf_emit_row(void) {
         memcpy(wf_row, wf_avg, sizeof(wf_row));
     }
 
-    /* Into the ring for wf_timer_cb; far behind, the oldest goes. */
-    pthread_mutex_lock(&wf_lock);
-    if (wf_q_count == WF_QUEUE) {
-        wf_q_head = (wf_q_head + 1) % WF_QUEUE;
-        wf_q_count--;
-        wf_dropped++;
-    }
-    memcpy(wf_rows[(wf_q_head + wf_q_count) % WF_QUEUE], wf_row, sizeof(wf_row));
-    wf_q_count++;
-    pthread_mutex_unlock(&wf_lock);
+    wf_queue_row(wf_row, false);
 }
 
 static void on_audio(const float *samples, unsigned n, void *ctx) {
@@ -2411,6 +2431,98 @@ static void on_audio(const float *samples, unsigned n, void *ctx) {
             wf_emit_row();
         }
     }
+}
+
+/* ---- Our own transmission on the waterfall ------------------------------ */
+
+/* As XARA's: the receiver is off while we send, so these rows show the audio
+ * going out, read from the playback device's monitor, each relative to its own
+ * peak. The monitor is read the whole time JS8 is open (it's small); rows are
+ * made only while the radio transmits. Its own FFT: the receiver's is left
+ * alone. */
+static void wf_tx_row(spgramf s, float *p, float *row) {
+    spgramf_get_psd(s, p);
+    spgramf_reset(s);
+    /* tx_player sends a fixed tone and moves the VFO: its place on the air */
+    int      shift    = atomic_load(&tx_offset_active) - TX_PLAYER_AUDIO_HZ;
+    int64_t  lo       = (int64_t)nfft / 2 + (int64_t)nfft * (filter_low - shift) / SAMPLE_RATE;
+    int64_t  hi       = (int64_t)nfft / 2 + (int64_t)nfft * (filter_high - shift) / SAMPLE_RATE;
+    if (lo < 0) lo = 0;
+    if (hi > nfft) hi = nfft;
+    if (lo >= hi) return;
+    uint32_t low_bin = (uint32_t)lo, bins = (uint32_t)(hi - lo);
+    float    top     = -200.0f;
+    for (uint32_t x = 0; x < WIDTH; x++) {
+        uint32_t b0 = low_bin + x * bins / WIDTH, b1 = low_bin + (x + 1) * bins / WIDTH;
+        float    v  = p[b0];
+        for (uint32_t b = b0 + 1; b < b1; b++) v = p[b] > v ? p[b] : v;
+        row[x] = v;
+        top    = v > top ? v : top;
+    }
+    float base = top - (WF_MAX_DB - 4);
+    for (uint32_t i = 0; i < WIDTH; i++) row[i] -= base;
+    atomic_store(&wf_avg_restart, true); /* the next receive row starts the blend again */
+    wf_queue_row(row, true);
+}
+
+static void *wf_tx_main(void *arg) {
+    (void)arg;
+    pa_sample_spec spec = {.format = PA_SAMPLE_FLOAT32NE, .channels = 1, .rate = SAMPLE_RATE};
+    pa_buffer_attr attr = {.maxlength = (uint32_t)-1, .fragsize = WF_ROW_SAMPLES * sizeof(float)};
+    unsigned step = nfft / 2 < WF_ROW_SAMPLES / 2 ? nfft / 2 : WF_ROW_SAMPLES / 2;
+    spgramf  s    = spgramf_create(nfft, LIQUID_WINDOW_HANN, nfft, step);
+    float   *p    = malloc(nfft * sizeof(float));
+    static float row[WIDTH];
+    float        buf[WF_ROW_SAMPLES / 2];
+    pa_simple   *pa   = NULL;
+    unsigned     fill = 0;
+    bool         was  = false;
+    int          err;
+
+    while (p && !atomic_load(&wf_tx_quit)) {
+        if (!pa) {
+            pa = pa_simple_new(NULL, "X6100 GUI JS8 waterfall", PA_STREAM_RECORD, WF_TX_MONITOR, "Waterfall TX monitor",
+                               &spec, NULL, &attr, &err);
+            if (!pa) {
+                for (int i = 0; i < 10 && !atomic_load(&wf_tx_quit); i++) usleep(200000);
+                continue;
+            }
+        }
+        if (pa_simple_read(pa, buf, sizeof(buf), &err) < 0) {
+            pa_simple_free(pa);
+            pa = NULL;
+            continue;
+        }
+        bool tx = radio_get_state() == RADIO_TX;
+        if (tx != was) { /* a transmission starts or ends: a fresh row */
+            spgramf_reset(s);
+            fill = 0;
+            was  = tx;
+        }
+        if (!tx) continue;
+        spgramf_write(s, buf, WF_ROW_SAMPLES / 2);
+        fill += WF_ROW_SAMPLES / 2;
+        if (fill >= WF_ROW_SAMPLES) {
+            fill = 0;
+            wf_tx_row(s, p, row);
+        }
+    }
+    if (pa) pa_simple_free(pa);
+    spgramf_destroy(s);
+    free(p);
+    return NULL;
+}
+
+static void wf_tx_start(void) {
+    atomic_store(&wf_tx_quit, false);
+    wf_tx_up = pthread_create(&wf_tx_thread, NULL, wf_tx_main, NULL) == 0;
+}
+
+static void wf_tx_end(void) {
+    if (!wf_tx_up) return;
+    atomic_store(&wf_tx_quit, true);
+    pthread_join(wf_tx_thread, NULL);
+    wf_tx_up = false;
 }
 
 /* ---- Receiver lifecycle ----------------------------------------------- */
@@ -2477,6 +2589,7 @@ static void rx_start(void) {
     wf_avg_set   = false;
     wf_row_fill  = 0;
     psd      = malloc(nfft * sizeof(float));
+    wf_tx_start();
 
     js8_rx_cb_t cb = {
         .on_message    = on_message,
@@ -2514,6 +2627,7 @@ static void rx_stop(void) {
      * spgram below is no longer in use. */
     js8_rx_destroy(rx);
     rx = NULL;
+    wf_tx_end();
     js8_decoder_setup_save(JS8_WISDOM_PATH); /* anything new measured (as desktop at exit) */
 
     if (sg) {
