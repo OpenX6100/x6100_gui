@@ -345,6 +345,8 @@ static button_data_t  btn_sstv   = make_app_btn("SSTV", ACTION_APP_SSTV);
 static button_data_t  btn_channels = make_action_btn("Channels", ACTION_APP_CHANNELS);
 /* JTTY */
 static button_data_t  btn_jtty   = make_app_btn("JTTY", ACTION_APP_JTTY);
+/* XARA */
+static button_data_t  btn_xara   = make_app_btn("XARA", ACTION_APP_XARA);
 
 /* RTTY */
 static button_data_t btn_rtty_p1 = {
@@ -465,11 +467,12 @@ static buttons_page_t page_dfl_1 = {
 };
 
 /* App pages */
-static button_data_t btn_app_p1 = make_page_btn("(APP 1:5)", "Application|page 1");
-static button_data_t btn_app_p2 = make_page_btn("(APP 2:5)", "Application|page 2");
-static button_data_t btn_app_p3 = make_page_btn("(APP 3:5)", "Application|page 3");
-static button_data_t btn_app_p4 = make_page_btn("(APP 4:5)", "Application|page 4");
-static button_data_t btn_app_p5 = make_page_btn("(APP 5:5)", "Application|page 5");
+static button_data_t btn_app_p1 = make_page_btn("(APP 1:6)", "Application|page 1");
+static button_data_t btn_app_p2 = make_page_btn("(APP 2:6)", "Application|page 2");
+static button_data_t btn_app_p3 = make_page_btn("(APP 3:6)", "Application|page 3");
+static button_data_t btn_app_p4 = make_page_btn("(APP 4:6)", "Application|page 4");
+static button_data_t btn_app_p5 = make_page_btn("(APP 5:6)", "Application|page 5");
+static button_data_t btn_app_p6 = make_page_btn("(APP 6:6)", "Application|page 6");
 
 static buttons_page_t page_app_1 = {
     {&btn_app_p1, &btn_rtty, &btn_ft8, &btn_swr, &btn_gps}
@@ -500,6 +503,12 @@ static buttons_page_t page_app_5 = {{
     /* JTTY */
     &btn_jtty,
 }};
+/* Page 5 fills with NavTex and DSC (Hany's); XARA starts page 6. */
+static buttons_page_t page_app_6 = {{
+    &btn_app_p6,
+    /* XARA */
+    &btn_xara,
+}};
 
 /* RTTY */
 
@@ -528,6 +537,7 @@ buttons_group_t buttons_group_app = {
     &page_app_3,
     &page_app_4,
     &page_app_5,
+    &page_app_6,
 };
 
 buttons_group_t buttons_group_key = {

@@ -64,6 +64,8 @@
 /* SSTV */
 #include "dialog_sstv.h"
 #include "dialog_jtty.h"
+/* XARA */
+#include "dialog_xara.h"
 #include "display.h"
 #include "buttons.h"
 #include "recorder.h"
@@ -277,6 +279,12 @@ void main_screen_start_app(press_action_t app_action) {
             voice_say_text_fmt("JTTY window");
             break;
 
+        /* XARA */
+        case ACTION_APP_XARA:
+            dialog_construct(dialog_xara, obj);
+            voice_say_text_fmt("XARA window");
+            break;
+
         default:
             break;
     }
@@ -358,6 +366,8 @@ void main_screen_action(press_action_t action) {
         case ACTION_APP_SSTV:
         /* JTTY */
         case ACTION_APP_JTTY:
+        /* XARA */
+        case ACTION_APP_XARA:
             main_screen_start_app(action);
             break;
 
