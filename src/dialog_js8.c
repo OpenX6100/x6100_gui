@@ -2484,6 +2484,7 @@ static void *wf_tx_main(void *arg) {
             pa = pa_simple_new(NULL, "X6100 GUI JS8 waterfall", PA_STREAM_RECORD, WF_TX_MONITOR, "Waterfall TX monitor",
                                &spec, NULL, &attr, &err);
             if (!pa) {
+                LV_LOG_WARN("JS8 waterfall: TX monitor: %s", pa_strerror(err));
                 for (int i = 0; i < 10 && !atomic_load(&wf_tx_quit); i++) usleep(200000);
                 continue;
             }
@@ -2500,6 +2501,9 @@ static void *wf_tx_main(void *arg) {
             was  = tx;
         }
         if (!tx) continue;
+        bool silent = true; /* keyed, but the sound isn't there yet or any more */
+        for (unsigned i = 0; silent && i < WF_ROW_SAMPLES / 2; i++) silent = buf[i] == 0.0f;
+        if (silent) continue;
         spgramf_write(s, buf, WF_ROW_SAMPLES / 2);
         fill += WF_ROW_SAMPLES / 2;
         if (fill >= WF_ROW_SAMPLES) {
