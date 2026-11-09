@@ -77,8 +77,12 @@ static uint32_t     dsp_audio_sub_id = AUDIO_SUB_INVALID;
 #define AFC_PERIOD_S    1.0f
 #define AFC_DEADBAND_HZ 4.0f
 
+#define AFC_MIN_FRAMES  3       /* good frames a second (of about 6) that make "decoding" */
+
 static volatile bool snap_req;
 static float         afc_last_s;
+static int           frames_ok, frames_bad;  /* stop bits since the AFC last looked */
+static volatile int  pass_lo = 0, pass_hi = 4000;   /* the receive filter, audio Hz */
 
 static x6100_mode_t cur_mode;
 
@@ -296,6 +300,8 @@ static void add_symbol(float pwr) {
                 if (is_mark()) {
                     char c = baudot_decoder(rx_data);
 
+                    frames_ok++;
+
                     if (c) {
                         char str[2] = {c, 0};
 
@@ -305,6 +311,8 @@ static void add_symbol(float pwr) {
                          * sent. */
                         scheduler_put(feed_rx_ui, &c, sizeof(c));
                     }
+                } else {
+                    frames_bad++;
                 }
                 rx_state = RX_STATE_IDLE;
             }
@@ -364,28 +372,59 @@ static void afc_step(void) {
         }
         snap_req = false;
         m.snap = true;
-        if (rtty_afc_find(center, shift, RTTY_AFC_SNAP_HZ, 800.0f, 1600.0f, &found)) {
+        if (rtty_afc_find(center, shift, RTTY_AFC_SNAP_HZ, 800.0f, 1600.0f, (float)pass_lo,
+                          (float)pass_hi, &found)) {
             m.center = (int16_t)lroundf(found);
         }
         scheduler_put(center_found_ui, &m, sizeof(m));
         afc_last_s = now;
         return;
     }
-    if (!param_i_get(cfg.rtty.afc()) || !rtty_squelch_is_open() || now - afc_last_s < AFC_PERIOD_S) {
+    if (!param_i_get(cfg.rtty.afc()) || now - afc_last_s < AFC_PERIOD_S) {
         return;
     }
-    afc_last_s = now;
-    if (rtty_afc_find(center, shift, RTTY_AFC_TRACK_HZ, 800.0f, 1600.0f, &found) &&
+    /* Only a signal being decoded is followed: most frames with a good
+     * stop bit. The squelch alone is no gate, as at 0 it is always open
+     * and a neighbour or a carrier would pull the centre (and TX). */
+    {
+        bool decoding = frames_ok >= AFC_MIN_FRAMES * (now - afc_last_s) / AFC_PERIOD_S &&
+                        frames_ok >= 3 * frames_bad;
+
+        afc_last_s = now;
+        frames_ok = frames_bad = 0;
+        if (!decoding) {
+            return;
+        }
+    }
+    if (rtty_afc_find(center, shift, RTTY_AFC_TRACK_HZ, 800.0f, 1600.0f, (float)pass_lo,
+                      (float)pass_hi, &found) &&
         fabsf(found - center) > AFC_DEADBAND_HZ) {
         m.center = (int16_t)lroundf(found);
         scheduler_put(center_found_ui, &m, sizeof(m));
     }
 }
 
+void rtty_set_passband(int32_t lo, int32_t hi) {
+    pass_lo = lo;
+    pass_hi = hi;
+}
+
 void rtty_snap(void) {
+    int32_t shift = param_i_get(cfg.rtty.shift());
+
+    if (state != RTTY_RX) {
+        msg_update_text_fmt("#FF0000 RTTY: snap while receiving only");
+        return;
+    }
+    if (pass_hi - pass_lo < shift + 60) {
+        msg_update_text_fmt("#FF0000 RTTY: the filter (%d Hz) is too narrow for %d Hz shift",
+                            (int)(pass_hi - pass_lo), (int)shift);
+        return;
+    }
     pthread_mutex_lock(&rtty_mux);
     rtty_afc_reset();                   /* what is heard from now on */
     afc_last_s = 0.0f;
+    frames_ok = frames_bad = 0;
     snap_req = true;
     pthread_mutex_unlock(&rtty_mux);
     msg_update_text_fmt("#FFFFFF RTTY: looking for the signal...");
@@ -450,6 +489,14 @@ void rtty_set_state(rtty_state_t x) {
         pthread_mutex_lock(&rtty_mux);
         rtty_afc_reset();               /* the band may have changed meanwhile */
         afc_last_s = 0.0f;
+        frames_ok = frames_bad = 0;
+        pthread_mutex_unlock(&rtty_mux);
+    }
+    if (x != RTTY_RX) {
+        /* A snap asked for and not yet done is dropped with the receive:
+         * it must not go off after TX, or on another band next time. */
+        pthread_mutex_lock(&rtty_mux);
+        snap_req = false;
         pthread_mutex_unlock(&rtty_mux);
     }
     state = x;

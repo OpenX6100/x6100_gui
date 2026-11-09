@@ -44,4 +44,5 @@ void digi_next_sent(digi_next_t *s, const char *name, const char *dx);
 void digi_next_label(const digi_next_t *s, const char *dx, int count, digi_next_name_fn name,
                      char *out, size_t size);
 
+/* "CQ", "CQ TEST", "CQ DX": a CQ, which clears the QSO before it goes. */
 bool digi_next_is_cq(const char *name);

@@ -159,7 +159,7 @@ static int cmp_float(const void *a, const void *b)
 }
 
 bool rtty_afc_find(float center, float shift, float range, float lo, float hi,
-                   float *found)
+                   float pass_lo, float pass_hi, float *found)
 {
     float bw = fs / NFFT;
     float tmp[NBIN];
@@ -170,9 +170,20 @@ bool rtty_afc_find(float center, float shift, float range, float lo, float hi,
         return false;                   /* half a second of audio at least */
     }
 
-    /* The band searched, both tones included: its median is the noise. */
-    k0 = bin_of(center - range - shift / 2.0f - 50.0f, bw);
-    k1 = bin_of(center + range + shift / 2.0f + 50.0f, bw);
+    /* The band searched, both tones included, inside the receive filter:
+     * its median is the noise. */
+    {
+        float f0 = center - range - shift / 2.0f - 50.0f;
+        float f1 = center + range + shift / 2.0f + 50.0f;
+
+        if (f0 < pass_lo + bw) f0 = pass_lo + bw;
+        if (f1 > pass_hi - bw) f1 = pass_hi - bw;
+        if (f1 <= f0) {
+            return false;
+        }
+        k0 = bin_of(f0, bw);
+        k1 = bin_of(f1, bw);
+    }
     for (int k = k0; k <= k1; k++) {
         tmp[n++] = avg[k];
     }
@@ -191,8 +202,8 @@ bool rtty_afc_find(float center, float shift, float range, float lo, float hi,
     for (float c = center - range; c <= center + range; c += bw / 4.0f) {
         float m, s, lo_p, hi_p, score;
 
-        if (c < lo || c > hi) {
-            continue;
+        if (c < lo || c > hi || c - shift / 2.0f < pass_lo + bw || c + shift / 2.0f > pass_hi - bw) {
+            continue;                   /* both tones inside the filter */
         }
         m = power_at(c + shift / 2.0f, bw);
         s = power_at(c - shift / 2.0f, bw);

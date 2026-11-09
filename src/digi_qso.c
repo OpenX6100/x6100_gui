@@ -40,6 +40,11 @@ const char *digi_qso_dx(void) { return qso_dx; }
  * the one received. The next to send is p_digi_serial. */
 static int     serial_sent;
 static char    serial_rcvd[8];
+static bool    serial_rcvd_typed;     /* typed in the menu: the text never replaces it */
+static bool    serial_rcvd_sure;      /* sent twice: a single one won't replace it */
+static char    serial_heard[8];       /* an exchange heard in this QSO, before we sent ours */
+static bool    serial_heard_sure;
+static bool    next_by_hand;          /* "Next serial" set while this QSO had its number */
 
 static void new_qso(void) {
     qso_name[0] = '\0';
@@ -47,6 +52,11 @@ static void new_qso(void) {
     qso_qth[0] = '\0';
     serial_sent = 0;
     serial_rcvd[0] = '\0';
+    serial_rcvd_typed = false;
+    serial_rcvd_sure = false;
+    serial_heard[0] = '\0';
+    serial_heard_sure = false;
+    next_by_hand = false;
     qso_logged = false;
     qso_start = time(NULL);
     rst_s = rst_r = 9;
@@ -124,34 +134,88 @@ int digi_qso_rst_num(const char *rst) {
 
 int digi_qso_serial_next(void) { return param_i_get(cfg.digi_serial()); }
 
-void digi_qso_set_serial_next(int n) {
+static void put_serial_next(int n) {
     param_i_set(cfg.digi_serial(), n < 1 ? 1 : (n > 9999 ? 9999 : n));
+}
+
+void digi_qso_set_serial_next(int n) {
+    put_serial_next(n);
+    /* Set by hand while this QSO already has its number: that number has
+     * gone out and stays this QSO's, and logging it must not move the
+     * next one back up past what was set. */
+    next_by_hand = serial_sent > 0;
 }
 
 int digi_qso_serial_sent(void) { return serial_sent; }
 
 const char *digi_qso_serial_rcvd(void) { return serial_rcvd; }
 
-void digi_qso_set_serial_rcvd(const char *nr) {
+static void copy_serial(char *dst, size_t size, const char *nr) {
     size_t o = 0;
 
-    for (const char *p = nr ? nr : ""; *p && o + 1 < sizeof(serial_rcvd); p++) {
+    for (const char *p = nr ? nr : ""; *p && o + 1 < size; p++) {
         if (*p >= '0' && *p <= '9') {
-            serial_rcvd[o++] = *p;
+            dst[o++] = *p;
         }
     }
-    serial_rcvd[o] = '\0';
+    dst[o] = '\0';
+}
+
+void digi_qso_set_serial_rcvd(const char *nr) {
+    copy_serial(serial_rcvd, sizeof(serial_rcvd), nr);
+    serial_rcvd_typed = serial_rcvd[0] != '\0';
+}
+
+/* An exchange heard in the text: taken only while this QSO uses <CNTR>
+ * (we sent our number), never over a typed one. `sure`: the number was
+ * sent twice ("599 012 012"), which may replace a single one. */
+static void take_serial(const char *nr, bool sure) {
+    if (serial_rcvd_typed) {
+        return;
+    }
+    if (serial_sent == 0) {
+        if (serial_heard[0] == '\0' || (sure && !serial_heard_sure)) {
+            copy_serial(serial_heard, sizeof(serial_heard), nr);   /* for when we send ours */
+            serial_heard_sure = sure;
+        }
+        return;
+    }
+    if (serial_rcvd[0] && (serial_rcvd_sure || !sure)) {
+        return;
+    }
+    copy_serial(serial_rcvd, sizeof(serial_rcvd), nr);
+    serial_rcvd_sure = sure;
+    msg_update_text_fmt("#FFFFFF Serial received: %s", serial_rcvd);
 }
 
 void digi_qso_note_sent(const char *macro_text) {
     if (macro_text && strstr(macro_text, "<CNTR>") && serial_sent == 0) {
         serial_sent = digi_qso_serial_next();   /* the same one if sent again */
+        next_by_hand = false;
+        if (serial_rcvd[0] == '\0' && serial_heard[0]) {
+            /* searching and pouncing: their exchange came first */
+            snprintf(serial_rcvd, sizeof(serial_rcvd), "%s", serial_heard);
+            serial_rcvd_sure = serial_heard_sure;
+            msg_update_text_fmt("#FFFFFF Serial received: %s", serial_rcvd);
+        }
     }
 }
 
 void digi_qso_serial_used(int sent) {
+    if (next_by_hand) {
+        next_by_hand = false;           /* what was set by hand stands */
+        return;
+    }
     if (sent > 0 && digi_qso_serial_next() <= sent) {
-        digi_qso_set_serial_next(sent + 1);
+        put_serial_next(sent + 1);
+    }
+}
+
+void digi_qso_serial_unused(int sent) {
+    /* only if nothing has taken a later number since: not the next one
+     * to send, nor the QSO on screen (a CQ TEST queued after the 73) */
+    if (sent > 0 && digi_qso_serial_next() == sent + 1 && serial_sent <= sent) {
+        put_serial_next(sent);
     }
 }
 
@@ -367,7 +431,10 @@ void digi_qso_feed_rx(char c) {
     static want_t want = WANT_NONE;
     static char   qth[sizeof(qso_qth)];
     static int    qth_words = 0;
-    static char   rst[8];             /* the report just heard, "599" */
+    static bool   after_rst = false;  /* a report just heard, "599" */
+    static char   num1[8];            /* the number after it, waiting for the next word */
+    static bool   num1_mine = false;  /* our call came just before that report */
+    static int    mine_left = 0;      /* words since our call, counting down */
     bool          is_word;
 
     if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
@@ -393,19 +460,44 @@ void digi_qso_feed_rx(char c) {
     }
 
     /* A contest exchange, "599 012 012": the number after the report is
-     * the serial received, once per QSO. A repeated report is skipped. */
-    if (looks_like_rst(word)) {
-        if (rst[0] == '\0') {
-            snprintf(rst, sizeof(rst), "%s", word);
+     * the serial received. It counts only when it is sent twice, or the
+     * report followed our call ("SP2KMO 599 012"): "599 73 DE ...", a CQ
+     * zone ("599 14") or a third station's exchange are not ours. And it
+     * is taken only while this QSO uses <CNTR> (take_serial()). */
+    if (mine_left > 0) {
+        mine_left--;
+    }
+    if (is_my_call(word)) {
+        mine_left = 4;                    /* "SP2KMO TU 5NN 012" */
+    }
+    if (num1[0]) {
+        if (autograb && looks_like_serial(word) && atoi(word) == atoi(num1)) {
+            take_serial(num1, true);      /* "012 012" */
+        } else if (autograb && num1_mine) {
+            take_serial(num1, false);
         }
+        num1[0] = '\0';
+    }
+    if (looks_like_rst(word)) {
+        if (!after_rst) {
+            num1_mine = mine_left > 0;    /* a repeated report keeps the first */
+        }
+        after_rst = true;
+        /* a report ends whatever was being captured: "QTH POZNAN 599 JOHN" */
+        after_de = false;
+        if (want == WANT_QTH && qth_words > 0) {
+            want = WANT_NONE;
+            goto qth_done;
+        }
+        want = WANT_NONE;
         return;
     }
-    if (rst[0]) {
-        if (autograb && serial_rcvd[0] == '\0' && looks_like_serial(word)) {
-            digi_qso_set_serial_rcvd(word);
-            msg_update_text_fmt("#FFFFFF Serial received: %s", serial_rcvd);
+    if (after_rst) {
+        after_rst = false;
+        if (looks_like_serial(word)) {
+            snprintf(num1, sizeof(num1), "%s", word);   /* decided on the next word */
+            return;
         }
-        rst[0] = '\0';
     }
 
     if (strcmp(word, "DE") == 0) {

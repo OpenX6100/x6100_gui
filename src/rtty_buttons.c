@@ -31,6 +31,13 @@
 
 #define TEXT_PATH "/mnt/rtty_text.txt"
 
+
+/* Snap and AFC search inside the receive filter. */
+static void note_filter(void)
+{
+    rtty_set_passband(cparam_i_get(cfg.filter.low()), cparam_i_get(cfg.filter.high()));
+}
+
 static digi_next_t next_state;          /* where the QSO is, for Next */
 
 /* ---- QSO menu and log ------------------------------------------------ */
@@ -322,6 +329,7 @@ static void menu_pick(int item, void *ctx)
             break;
 
         case MENU_SNAP:
+            note_filter();
             rtty_snap();
             break;
 
@@ -382,10 +390,12 @@ static button_data_t btn_rtty_menu = {
 
 /* ---- page 1's Center, held ------------------------------------------- */
 
+
 void rtty_center_hold_cb(button_data_t *b)
 {
     (void)b;
     digi_menu_close();
+    note_filter();
     rtty_snap();
 }
 
@@ -420,6 +430,7 @@ static void sql_timer_cb(lv_timer_t *t)
         text_band = band;
         digi_text_new_header();
     }
+    note_filter();
     rtty_refresh_macro_labels();
     if (btn_rtty_sql.disp_btn) {
         buttons_refresh(&btn_rtty_sql);
@@ -432,6 +443,7 @@ void rtty_sql_timer_start(void)
 {
     if (!sql_timer) {
         sql_timer = lv_timer_create(sql_timer_cb, 400, NULL);
+        note_filter();
         text_band = qso_log_freq_to_band((uint64_t)cparam_i_get(cfg.cur.fg_freq()));
         digi_log_open();
         digi_text_open("RTTY", TEXT_PATH, qso_freq);

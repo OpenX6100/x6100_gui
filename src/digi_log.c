@@ -155,12 +155,15 @@ bool digi_log_qso(const digi_log_qso_t *q)
         digi_qso_set_logged(true);      /* still the QSO on screen */
     }
     digi_qso_serial_used(q->stx);
-    if (q->stx > 0 || q->srx[0]) {
-        msg_update_text_fmt("#FFFFFF Logged %s  %s %03d / %s %s", q->call, q->rst_sent, q->stx,
-                            q->rst_rcvd, q->srx[0] ? q->srx : "-");
-    } else {
-        msg_update_text_fmt("#FFFFFF Logged %s  %s / %s%s%s", q->call, q->rst_sent, q->rst_rcvd,
-                            q->name[0] ? "  " : "", q->name);
+    {
+        char stx[8] = "";
+
+        if (q->stx > 0) {
+            snprintf(stx, sizeof(stx), " %03d", q->stx);
+        }
+        msg_update_text_fmt("#FFFFFF Logged %s  %s%s / %s%s%s%s%s", q->call, q->rst_sent, stx,
+                            q->rst_rcvd, q->srx[0] ? " " : "", q->srx, q->name[0] ? "  " : "",
+                            q->name);
     }
     return true;
 }

@@ -59,9 +59,14 @@ void        digi_qso_set_logged(bool logged);
 
 /*
  * Contest serial numbers. <CNTR> sends the next number ("001"); the QSO
- * keeps it if sent again, and logging the QSO moves on to the next, so a
- * QSO that was not logged doesn't use a number up. The number received
- * is picked up from the text after the report ("599 012"), or typed.
+ * keeps it if sent again, and logging the QSO (or queueing its 73) moves
+ * on to the next, so a QSO that was not logged doesn't use a number up.
+ * The number received is picked up from the text after the report, only
+ * in a QSO where we send <CNTR>, and only when it is sent twice
+ * ("599 012 012") or follows our call ("SP2KMO 599 012"); heard before we
+ * sent ours, it is kept until we do. A typed one is never replaced.
+ * Setting the next number by hand during a QSO that has its number
+ * leaves that QSO's number as it went out, and the setting stands.
  */
 int         digi_qso_serial_next(void);
 void        digi_qso_set_serial_next(int n);
@@ -76,6 +81,10 @@ void        digi_qso_note_sent(const char *macro_text);
  * next serial follows it. Never goes back, so a QSO logged late (after
  * its 73 went out) cannot hand its number out twice. */
 void        digi_qso_serial_used(int sent);
+
+/* The 73 of the QSO with serial `sent` did not go out (TX stopped): its
+ * number is handed back, if nothing has taken the next one since. */
+void        digi_qso_serial_unused(int sent);
 
 /* RST as a number for the log: "579" -> 579, 599 when unreadable. */
 int         digi_qso_rst_num(const char *rst);

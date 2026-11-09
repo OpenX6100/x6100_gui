@@ -39,3 +39,7 @@ bool rtty_change_reverse(int16_t df);
  * the next 1.5 s of audio (rtty_afc.h). The result is on the message
  * line. */
 void rtty_snap(void);
+
+/* UI thread: the receive filter's edges (audio Hz), which snap and AFC
+ * search inside. */
+void rtty_set_passband(int32_t lo, int32_t hi);

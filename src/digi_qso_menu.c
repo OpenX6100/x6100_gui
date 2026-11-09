@@ -90,7 +90,12 @@ static bool field_ok_cb(void)
             if (t && atoi(t) > 0) {
                 digi_qso_set_serial_next(atoi(t));
             }
-            msg_update_text_fmt("#FFFFFF Next serial: %03d", digi_qso_serial_next());
+            if (digi_qso_serial_sent() > 0) {
+                msg_update_text_fmt("#FFFFFF Next serial: %03d (this QSO keeps %03d, sent)",
+                                    digi_qso_serial_next(), digi_qso_serial_sent());
+            } else {
+                msg_update_text_fmt("#FFFFFF Next serial: %03d", digi_qso_serial_next());
+            }
             break;
 
         case ITEM_SERIAL_RCVD:
@@ -223,6 +228,7 @@ static void pending_drop(bool say)
     }
     lv_timer_del(pending_timer);
     pending_timer = NULL;
+    digi_qso_serial_unused(pending.stx);    /* not logged: its number is free again */
     if (say) {
         msg_update_text_fmt("#FF0000 TX stopped: %s not logged (Menu > QSO > Log QSO)",
                             pending.call);
