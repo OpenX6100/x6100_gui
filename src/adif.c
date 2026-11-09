@@ -269,6 +269,13 @@ static void write_mode(FILE *fd, qso_log_mode_t mode) {
         case MODE_JTTY:
             mode_str = "JTTY";          /* as WSJT-X and jtty_log.c write it */
             break;
+        case MODE_PSK31:
+            mode_str = "PSK";
+            submode_str = "PSK31";
+            break;
+        case MODE_OLIVIA:
+            mode_str = "OLIVIA";
+            break;
         default:
             mode_str = NULL;
             break;
@@ -308,6 +315,9 @@ static qso_log_mode_t create_mode(const char * mode, const char * submode) {
     if (strcmp(mode, "FT8") == 0) return MODE_FT8;
     if (strcmp(mode, "RTTY") == 0) return MODE_RTTY;
     if (strcmp(mode, "JTTY") == 0) return MODE_JTTY;
+    if (strcmp(mode, "OLIVIA") == 0) return MODE_OLIVIA;
+    if (strcmp(mode, "PSK31") == 0) return MODE_PSK31;   /* ADIF before 3.0 */
+    if ((strcmp(mode, "PSK") == 0) && submode && (strcmp(submode, "PSK31") == 0)) return MODE_PSK31;
     if (!submode) return MODE_OTHER;
     if ((strcmp(mode, "MFSK") == 0) && (strcmp(submode, "FT4") == 0)) return MODE_FT4;
     if ((strcmp(mode, "MFSK") == 0) && (strcmp(submode, "JS8") == 0)) return MODE_JS8;

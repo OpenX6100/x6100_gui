@@ -349,6 +349,14 @@ void ft8_udp_deinit(void) {
     }
 }
 
+void ft8_udp_close(void) {
+    running = false;
+    if (sock_fd >= 0) {
+        close(sock_fd);
+        sock_fd = -1;
+    }
+}
+
 bool ft8_udp_is_enabled(void) {
     /* With the FT8 window closed nothing has read the file yet, or it
      * may have been edited by hand since. */

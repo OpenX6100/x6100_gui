@@ -405,6 +405,16 @@ class SettingsManager {
         StorageType::GLOBAL, pending_writes_, {}, &global_params_};
     Parameter<std::string> p_callsign{"callsign", "", {},
         StorageType::GLOBAL, pending_writes_, {}, &global_params_};
+    Parameter<std::string> p_op_name{"op_name", "", {},
+        StorageType::GLOBAL, pending_writes_, {}, &global_params_}; // operator's name, <MYNAME> in the keyboard modes
+    Parameter<std::string> p_op_qth{"op_qth", "", {},
+        StorageType::GLOBAL, pending_writes_, {}, &global_params_}; // operator's town, <MYQTH> (p_qth is the locator)
+
+    // Keyboard modes (PSK31, Olivia, RTTY)
+    Parameter<int32_t> p_digi_text_save{"digi_text_save", 1, 0, 1,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // append sent and received text to /mnt/<mode>_text.txt
+    Parameter<int32_t> p_digi_auto_log{"digi_auto_log", 1, 0, 1,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // log the QSO when the 73 macro goes out
 
     // Network
     Parameter<int32_t> p_wifi_enabled{"wifi_enabled", false, 0, 1,

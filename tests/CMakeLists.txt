@@ -52,3 +52,10 @@ add_executable(test_tx_level test_tx_level.cpp ${PROJECT_SOURCE_DIR}/src/tx_leve
 target_include_directories(test_tx_level PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(test_tx_level PRIVATE Catch2::Catch2WithMain)
 add_test(NAME test_tx_level COMMAND $<TARGET_FILE:test_tx_level> --colour-mode=ansi)
+
+# test_digi_txq: the text queue of the PSK31, Olivia and RTTY transmitters
+# (src/digi_txq.c, plain C and pthreads): typing while sending.
+add_executable(test_digi_txq test_digi_txq.cpp ${PROJECT_SOURCE_DIR}/src/digi_txq.c)
+target_include_directories(test_digi_txq PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(test_digi_txq PRIVATE Catch2::Catch2WithMain pthread)
+add_test(NAME test_digi_txq COMMAND $<TARGET_FILE:test_digi_txq> --colour-mode=ansi)

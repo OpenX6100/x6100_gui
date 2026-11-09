@@ -20,12 +20,11 @@
 
 #include "audio.h"
 #include "cfg/cfg_api.h"
+#include "digi_txq.h"
 #include "main_screen.h"
 #include "msg.h"
 #include "radio.h"
 #include "tx_info.h"
-
-/* Defined in main_screen.c but not declared in its header. */
 
 /* PSK31 is a continuous-carrier mode: keep the same thermal cap the FT8
  * worker uses. */
@@ -36,12 +35,14 @@
 #define AMPLITUDE        30000.0f
 #define CHUNK_SAMPLES    2048       /* 43 ms at 48 kHz */
 
-/* The stock text window takes 64 characters. */
-
 /* 31.25 baud exactly (8000/256, the rate the mode is defined at). */
 #define PSK_BAUD         31.25
 #define PREAMBLE_BITS    32      /* zeros: continuous reversals = idle    */
 #define POSTAMBLE_BITS   16      /* ones: unmodulated carrier             */
+#define RESUME_BITS      16      /* reversals before text that came during
+                                    the postamble, to resynchronise        */
+#define IDLE_BITS        8       /* reversals per pass while the operator
+                                    is typing and the text has run out     */
 
 #define CENTER_MIN       300
 #define CENTER_MAX       2700
@@ -190,9 +191,7 @@ typedef struct {
 } bitstream_t;
 
 static pthread_t     tx_thread;
-static volatile bool tx_on = false;
-static volatile bool tx_stop_req = false;
-static char         *tx_text = NULL;
+static digi_txq_t    txq = DIGI_TXQ_INITIALIZER;
 static uint16_t      center_hz = CENTER_DEFAULT;
 static psk_tx_echo_cb_t echo_cb = NULL;
 
@@ -227,31 +226,53 @@ static bool bs_push_code(bitstream_t *bs, const char *code) {
     return true;
 }
 
-/* text -> bit stream: preamble (zeros), then each character's varicode
- * separated by two zeros, then postamble (ones). */
-static bool varicode_encode(const char *text, bitstream_t *bs) {
-    if (!bs_push(bs, 0, PREAMBLE_BITS)) return false;
+/* One character: its varicode and the two-zero gap. A line break goes
+ * out as CR LF; a CR on its own is dropped. */
+static bool encode_char(bitstream_t *bs, unsigned char c) {
+    if (c == '\r') return true;
+    if (c > 127) c = '?';               /* varicode is 7-bit */
 
-    for (const unsigned char *p = (const unsigned char *)text; *p; p++) {
-        unsigned char c = *p;
-
-        /* Normalise CRLF to a single CR+LF pair; skip stray CR. */
-        if (c == '\r') continue;
-        if (c > 127) c = '?';           /* varicode is 7-bit */
-
-        if (c == '\n') {
-            if (!bs_push_code(bs, varicode[13])) return false;  /* CR */
-            if (!bs_push(bs, 0, 2)) return false;
-            if (!bs_push_code(bs, varicode[10])) return false;  /* LF */
-            if (!bs_push(bs, 0, 2)) return false;
-            continue;
-        }
-
-        if (!bs_push_code(bs, varicode[c])) return false;
-        if (!bs_push(bs, 0, 2)) return false;   /* inter-character gap */
+    if (c == '\n') {
+        if (!bs_push_code(bs, varicode[13])) return false;  /* CR */
+        if (!bs_push(bs, 0, 2)) return false;
+        if (!bs_push_code(bs, varicode[10])) return false;  /* LF */
+        return bs_push(bs, 0, 2);
     }
+    if (!bs_push_code(bs, varicode[c])) return false;
+    return bs_push(bs, 0, 2);           /* inter-character gap */
+}
 
-    return bs_push(bs, 1, POSTAMBLE_BITS);
+typedef enum { PH_PREAMBLE, PH_TEXT, PH_POSTAMBLE } phase_t;
+
+/*
+ * The next few bits, taken from the queue as the transmission goes, so
+ * that text added meanwhile joins it: preamble (zeros), the characters,
+ * reversals while the operator is still typing, then the postamble
+ * (ones). Text that arrives during the postamble continues the same
+ * transmission. Returns false when it is over.
+ */
+static bool next_bits(bitstream_t *bs, phase_t *ph) {
+    int c;
+
+    bs->size = 0;
+    switch (*ph) {
+        case PH_PREAMBLE:
+            *ph = PH_TEXT;
+            return bs_push(bs, 0, PREAMBLE_BITS);
+
+        case PH_TEXT:
+            c = digi_txq_get(&txq);
+            if (c >= 0) return encode_char(bs, (unsigned char)c);
+            if (digi_txq_held(&txq)) return bs_push(bs, 0, IDLE_BITS);
+            *ph = PH_POSTAMBLE;
+            return bs_push(bs, 1, POSTAMBLE_BITS);
+
+        case PH_POSTAMBLE:
+        default:
+            if (digi_txq_close_if_empty(&txq)) return false;
+            *ph = PH_TEXT;
+            return bs_push(bs, 0, RESUME_BITS);
+    }
 }
 
 /* --- ALC-driven gain correction (same scheme as the FT8 worker) ------ */
@@ -275,29 +296,19 @@ static float get_correction(void) {
 
 /* --- Worker thread ---------------------------------------------------- */
 
-static void *tx_thread_fn(void *arg) {
-    (void)arg;
-
+/* One transmission, until the queue closes. False when it could not
+ * start. */
+static bool transmit(void) {
     const double fs = (double)AUDIO_PLAY_RATE;
 
     bitstream_t bs = {0};
-    if (!varicode_encode(tx_text, &bs)) {
-        free(bs.bits);
-        free(tx_text);
-        tx_text = NULL;
-        tx_on = false;
-        return NULL;
-    }
+    phase_t     ph = PH_PREAMBLE;
 
     /* The default 48 kHz mono player is shared and never released. */
     audio_player_t *player = audio_get_player(AUDIO_PLAY_RATE, 1);
 
     if (!player) {
-        free(bs.bits);
-        free(tx_text);
-        tx_text = NULL;
-        tx_on = false;
-        return NULL;
+        return false;
     }
 
     /* radio_set_pwr() only touches the hardware, so putting the stored
@@ -335,66 +346,56 @@ static void *tx_thread_fn(void *arg) {
     double bit_acc = 0.0;                    /* fractional bit boundary     */
     size_t sample_idx = 0;
 
-    uint8_t prev_bit = 1;
+    while (next_bits(&bs, &ph)) {
+        for (size_t i = 0; i < bs.size; i++) {
+            uint8_t bit = bs.bits[i];
 
-    for (size_t i = 0; i < bs.size; i++) {
-        uint8_t bit = bs.bits[i];
+            /* Number of samples for this bit, tracking the fractional rate. */
+            bit_acc += spb;
+            size_t next_boundary = (size_t)(bit_acc + 0.5);
+            size_t n = next_boundary - sample_idx;
 
-        /* Number of samples for this bit, tracking the fractional rate. */
-        bit_acc += spb;
-        size_t next_boundary = (size_t)(bit_acc + 0.5);
-        size_t n = next_boundary - sample_idx;
-
-        for (size_t k = 0; k < n; k++) {
-            /* Amplitude: constant for a steady bit; a cosine sweeping from
-             * +1 to -1 for a reversal, which both tapers the envelope to
-             * zero and applies the 180 degree flip. This shaping is what
-             * keeps PSK31 narrow. */
-            float env;
-            if (bit) {
-                env = polarity;
-            } else {
-                env = polarity * (float)cos(M_PI * (double)k / (double)n);
-            }
-
-            phase += w;
-            if (phase > 2.0 * M_PI) phase -= 2.0 * M_PI;
-
-            chunk[out_n++] = (int16_t)(env * AMPLITUDE * (float)sin(phase));
-
-            if (out_n == CHUNK_SAMPLES) {
-                if (counter > 30) {
-                    gain_offset += get_correction() * 0.4f;
-                    if (gain_offset > GAIN_MAX_DB) gain_offset = GAIN_MAX_DB;
-                    if (gain_offset < GAIN_MIN_DB) gain_offset = GAIN_MIN_DB;
-                }
-                if (gain_offset == prev_gain_offset) {
-                    if (gain_offset != 0.0f) {
-                        audio_gain_db(chunk, out_n, gain_offset, chunk);
-                    }
+            for (size_t k = 0; k < n; k++) {
+                /* Amplitude: constant for a steady bit; a cosine sweeping from
+                 * +1 to -1 for a reversal, which both tapers the envelope to
+                 * zero and applies the 180 degree flip. This shaping is what
+                 * keeps PSK31 narrow. */
+                float env;
+                if (bit) {
+                    env = polarity;
                 } else {
-                    audio_gain_db_transition(chunk, out_n, prev_gain_offset,
-                                             gain_offset, chunk);
-                    prev_gain_offset = gain_offset;
+                    env = polarity * (float)cos(M_PI * (double)k / (double)n);
                 }
-                audio_player_send(player, chunk, out_n);
-                out_n = 0;
-                counter++;
+
+                phase += w;
+                if (phase > 2.0 * M_PI) phase -= 2.0 * M_PI;
+
+                chunk[out_n++] = (int16_t)(env * AMPLITUDE * (float)sin(phase));
+
+                if (out_n == CHUNK_SAMPLES) {
+                    if (counter > 30) {
+                        gain_offset += get_correction() * 0.4f;
+                        if (gain_offset > GAIN_MAX_DB) gain_offset = GAIN_MAX_DB;
+                        if (gain_offset < GAIN_MIN_DB) gain_offset = GAIN_MIN_DB;
+                    }
+                    if (gain_offset == prev_gain_offset) {
+                        if (gain_offset != 0.0f) {
+                            audio_gain_db(chunk, out_n, gain_offset, chunk);
+                        }
+                    } else {
+                        audio_gain_db_transition(chunk, out_n, prev_gain_offset,
+                                                 gain_offset, chunk);
+                        prev_gain_offset = gain_offset;
+                    }
+                    audio_player_send(player, chunk, out_n);
+                    out_n = 0;
+                    counter++;
+                }
             }
-        }
 
-        sample_idx = next_boundary;
-        if (!bit) polarity = -polarity;      /* reversal completed */
-
-        /* Stop requested: finish the character being sent (a varicode
-         * character ends with "00"), then the postamble ones, so the far
-         * end prints it and sees a clean end. Jumping mid-character left
-         * its code open and the character lost. */
-        if (tx_stop_req && i + POSTAMBLE_BITS < bs.size && bit == 0 && prev_bit == 0) {
-            i = bs.size - POSTAMBLE_BITS - 1;
-            tx_stop_req = false;
+            sample_idx = next_boundary;
+            if (!bit) polarity = -polarity;      /* reversal completed */
         }
-        prev_bit = bit;
     }
 
     if (out_n > 0) {
@@ -413,10 +414,19 @@ static void *tx_thread_fn(void *arg) {
     audio_player_release(player);
 
     free(bs.bits);
-    free(tx_text);
-    tx_text = NULL;
-    tx_stop_req = false;
-    tx_on = false;
+    return true;
+}
+
+/* One transmission after another while text keeps coming in as one
+ * ends (digi_txq_finish); text that cannot go out is dropped. */
+static void *tx_thread_fn(void *arg) {
+    (void)arg;
+
+    while (transmit()) {
+        if (!digi_txq_finish(&txq)) return NULL;
+    }
+    digi_txq_abort(&txq);
+    digi_txq_finish(&txq);
     return NULL;
 }
 
@@ -433,32 +443,38 @@ void psk_tx_set_center(uint16_t hz) {
 }
 
 bool psk_tx_send(const char *text) {
-    if (tx_on || !text || !*text) return false;
+    if (!text || !*text) return false;
 
-    tx_text = strdup(text);
-    if (!tx_text) return false;
+    switch (digi_txq_put(&txq, text)) {
+        case DIGI_TXQ_ADDED:
+            break;
 
-    tx_on = true;
-    tx_stop_req = false;
+        case DIGI_TXQ_STARTED:
+            if (pthread_create(&tx_thread, NULL, tx_thread_fn, NULL) != 0) {
+                digi_txq_abort(&txq);
+                digi_txq_finish(&txq);
+                return false;
+            }
+            pthread_detach(tx_thread);
+            break;
 
+        default:                        /* no room */
+            return false;
+    }
     if (echo_cb) {
         echo_cb(text);
     }
-
-    if (pthread_create(&tx_thread, NULL, tx_thread_fn, NULL) != 0) {
-        free(tx_text);
-        tx_text = NULL;
-        tx_on = false;
-        return false;
-    }
-    pthread_detach(tx_thread);
     return true;
 }
 
 void psk_tx_stop(void) {
-    if (tx_on) tx_stop_req = true;
+    digi_txq_abort(&txq);
 }
 
 bool psk_tx_is_on(void) {
-    return tx_on;
+    return digi_txq_running(&txq);
+}
+
+bool psk_tx_hold(bool on) {
+    return digi_txq_hold(&txq, on);
 }

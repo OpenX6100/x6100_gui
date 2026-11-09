@@ -14,15 +14,57 @@
 
 #include "lvgl/lvgl.h"
 
+#include "cfg/cfg_api.h"
 #include "mfk.h"
 #include "msg.h"
+#include "digi_log.h"
 #include "digi_menu.h"
 #include "digi_next.h"
 #include "digi_qso.h"
+#include "digi_qso_menu.h"
+#include "digi_text.h"
+#include "qso_log.h"
+#include "radio.h"
 #include "rtty_sql.h"
 #include "rtty_tx.h"
 
+#define TEXT_PATH "/mnt/rtty_text.txt"
+
 static digi_next_t next_state;          /* where the QSO is, for Next */
+
+/* ---- QSO menu and log ------------------------------------------------ */
+
+static lv_obj_t *qso_parent(void)
+{
+    return lv_scr_act();
+}
+
+static void qso_changed(void)
+{
+    rtty_refresh_macro_labels();
+}
+
+/* What went out: the centre of the two tones, on the dial's side. */
+static uint64_t qso_freq(void)
+{
+    x6100_mode_t mode = (x6100_mode_t)cparam_i_get(cfg.cur.mode());
+    int64_t      dial = cparam_i_get(cfg.cur.fg_freq());
+    int64_t      center = param_i_get(cfg.rtty.center());
+    bool         lsb = (mode == x6100_mode_lsb) || (mode == x6100_mode_lsb_dig);
+
+    return (uint64_t)(lsb ? dial - center : dial + center);
+}
+
+static const digi_qso_menu_t qso_menu = {
+    .parent      = qso_parent,
+    .input_begin = rtty_tx_input_begin,
+    .input_end   = rtty_tx_input_end,
+    .changed     = qso_changed,
+    .mode        = DIGI_LOG_RTTY,
+    .submode     = NULL,
+    .freq        = qso_freq,
+    .tx_on       = rtty_tx_is_on,
+};
 
 /* ---- helpers -------------------------------------------------------- */
 
@@ -33,18 +75,27 @@ static const char *macro_name_at(int idx)
     return m ? m->name : NULL;
 }
 
+/* While a transmission runs the macro joins its end (digi_txq.h). */
 static void send_macro(int idx)
 {
     const rtty_macro_t *m = rtty_macro_get(idx);
+    const char         *missing = NULL;
+    bool                on = rtty_tx_is_on();
 
     if (m == NULL) {
         return;
     }
-    if (!rtty_macro_send(idx)) {
-        msg_update_text_fmt("#FF0000 RTTY TX busy");
+    if (!rtty_macro_send(idx, &missing)) {
+        if (missing) {
+            msg_update_text_fmt("#FF0000 %s", digi_qso_missing_hint(missing));
+        } else {
+            msg_update_text_fmt("#FF0000 RTTY: the TX buffer is full");
+        }
         return;
     }
-    msg_update_text_fmt("#FFFFFF RTTY TX: %s", m->name);
+    msg_update_text_fmt(on ? "#FFFFFF RTTY: %s added to the transmission" : "#FFFFFF RTTY TX: %s",
+                        m->name);
+    digi_qso_menu_sent(&qso_menu, m->name);     /* a 73 logs the QSO */
     digi_next_sent(&next_state, m->name, digi_qso_dx());
     if (digi_next_is_cq(m->name)) {
         digi_qso_clear();               /* a CQ starts a new QSO */
@@ -84,6 +135,7 @@ static void next_press_cb(button_data_t *b)
     digi_menu_close();
     if (rtty_tx_is_on()) {
         rtty_tx_stop();
+        digi_qso_menu_tx_stopped();
         buttons_refresh(b);
         return;
     }
@@ -238,7 +290,7 @@ static button_data_t btn_rtty_macros = {
  * message line as it turns.
  */
 enum {
-    MENU_DX, MENU_RST_SENT, MENU_RST_RCVD, MENU_AUTO_DX, MENU_NEW_QSO, MENU_COUNT
+    MENU_DX, MENU_RST_SENT, MENU_RST_RCVD, MENU_AUTO_DX, MENU_QSO, MENU_NEW_QSO, MENU_COUNT
 };
 
 static void menu_pick(int item, void *ctx)
@@ -259,7 +311,12 @@ static void menu_pick(int item, void *ctx)
 
         case MENU_AUTO_DX:
             digi_qso_toggle_autograb();
-            msg_update_text_fmt("#FFFFFF Auto DX %s", digi_qso_autograb() ? "on" : "off");
+            msg_update_text_fmt("#FFFFFF Call, name and QTH from the text: %s",
+                                digi_qso_autograb() ? "on" : "off");
+            break;
+
+        case MENU_QSO:
+            digi_qso_menu_open(&qso_menu);
             break;
 
         case MENU_NEW_QSO:
@@ -286,9 +343,10 @@ static void menu_press_cb(button_data_t *b)
     snprintf(text[MENU_RST_SENT], 56, "RST sent with the knob  (%s)", digi_qso_rst_sent());
     snprintf(text[MENU_RST_RCVD], 56, "RST received with the knob  (%s)",
              digi_qso_rst_rcvd());
-    snprintf(text[MENU_AUTO_DX], 56, "Auto DX from the text: %s  (press: %s)",
+    snprintf(text[MENU_AUTO_DX], 56, "Call/name/QTH from text: %s  (press: %s)",
              digi_qso_autograb() ? "on" : "off", digi_qso_autograb() ? "off" : "on");
-    snprintf(text[MENU_NEW_QSO], 56, "New QSO (clear DX call, RST)");
+    snprintf(text[MENU_QSO], 56, "QSO: log, name, QTH...");
+    snprintf(text[MENU_NEW_QSO], 56, "New QSO (clear DX call, name, RST)");
     for (int i = 0; i < MENU_COUNT; i++) {
         items[i] = text[i];
     }
@@ -319,29 +377,44 @@ void rtty_refresh_macro_labels(void)
 /* Next follows the transmitter (Stop TX while it runs) and the DX call,
  * which the decoder may pick up off the air, and SQL shows the live
  * level, so both are repainted here. */
-static lv_timer_t *sql_timer = NULL;
+static lv_timer_t     *sql_timer = NULL;
+static qso_log_band_t  text_band = BAND_OTHER;
 
 static void sql_timer_cb(lv_timer_t *t)
 {
+    qso_log_band_t band = qso_log_freq_to_band((uint64_t)cparam_i_get(cfg.cur.fg_freq()));
+
     (void)t;
+    /* the VFO is free here: a new band gets a new header in the file */
+    if (band != text_band) {
+        text_band = band;
+        digi_text_new_header();
+    }
     rtty_refresh_macro_labels();
     if (btn_rtty_sql.disp_btn) {
         buttons_refresh(&btn_rtty_sql);
     }
 }
 
+/* The RTTY pages open and close with these: the log's UDP and the text
+ * file go with them. */
 void rtty_sql_timer_start(void)
 {
     if (!sql_timer) {
         sql_timer = lv_timer_create(sql_timer_cb, 400, NULL);
+        text_band = qso_log_freq_to_band((uint64_t)cparam_i_get(cfg.cur.fg_freq()));
+        digi_log_open();
+        digi_text_open("RTTY", TEXT_PATH, qso_freq);
     }
 }
 
 void rtty_sql_timer_stop(void)
 {
-    digi_menu_close();
+    digi_qso_menu_close();
     if (sql_timer) {
         lv_timer_del(sql_timer);
         sql_timer = NULL;
+        digi_text_close();
+        digi_log_close();
     }
 }
