@@ -88,8 +88,15 @@ const char *band_plan_band_name(uint32_t hz) {
 }
 
 int band_plan_region(void) {
-    int r = param_i_get(cfg.ui.band_plan_region());
-    return (r >= 1 && r <= 3) ? r : itu_region();
+    char loc[PARAM_TEXT_MAX];
+    int  r = param_i_get(cfg.ui.band_plan_region());
+
+    if (r >= 1 && r <= 3) {
+        return r;
+    }
+    param_t_get_into(cfg.qth(), loc, sizeof(loc));
+    r = itu_region_from_locator(loc);
+    return r ? r : 1;                   /* no locator: Region 1, as before */
 }
 
 int band_plan_segments(int region, uint32_t lo_hz, uint32_t hi_hz, band_plan_seg_t *out, int max) {

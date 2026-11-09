@@ -36,8 +36,14 @@ extern "C" {
 /* Read config, open the socket. Safe to call repeatedly. */
 void ft8_udp_init(void);
 
-/* Close the socket and release resources. */
+/* Close the socket and release resources, the Bluetooth bridge too:
+ * for the FT8 window, which owns it. */
 void ft8_udp_deinit(void);
+
+/* Close the socket only, leaving the Bluetooth bridge up: for windows
+ * that log QSOs over UDP but don't own the bridge (JTTY, PSK31, Olivia,
+ * RTTY). */
+void ft8_udp_close(void);
 
 bool ft8_udp_is_enabled(void);
 
@@ -88,10 +94,8 @@ void ft8_udp_log_qso(time_t when, const char *dx_call, const char *dx_grid,
                      int snr_sent, int snr_rcvd, int tx_power_w,
                      const char *my_call, const char *my_grid);
 
-/* Exposed for testing: ADIF band name for a frequency, "" if unknown. */
-const char *ft8_udp_band_name(uint64_t freq_hz);
-
-/* Exposed for testing: build the ADIF record. Returns length written. */
+/* Exposed for testing: build the ADIF record (adif_rec.h; MODE "FT4" is
+ * written MFSK / FT4). Returns its length, 0 when it did not fit. */
 size_t ft8_udp_build_adif(char *out, size_t out_sz, time_t when,
                           const char *dx_call, const char *dx_grid,
                           uint64_t freq_hz, const char *mode,
@@ -108,7 +112,8 @@ void ft8_udp_send_qso_logged(time_t when, const char *dx_call, const char *dx_gr
                              const char *my_grid);
 
 /* QSO logged (ADIF text, WSJT-X type 12). Sent alongside the above for
- * receivers that prefer the ADIF form. Pass a full ADIF fragment. */
+ * receivers that prefer the ADIF form. Pass one ADIF record
+ * (adif_rec.h); the header is put in front of it here. */
 void ft8_udp_send_logged_adif(const char *adif_record);
 
 #ifdef __cplusplus

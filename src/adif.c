@@ -11,6 +11,8 @@
 
 #include "adif.h"
 
+#include "adif_rec.h"
+
 #include "util.h"
 
 #include <stdio.h>
@@ -231,48 +233,10 @@ static void write_band(FILE *fd, qso_log_band_t band) {
 }
 
 static void write_mode(FILE *fd, qso_log_mode_t mode) {
-    char * mode_str;
-    char * submode_str = NULL;
-    switch (mode) {
-        case MODE_SSB:
-            mode_str = "SSB";
-            // submode_str = "USB";
-            break;
-        case MODE_AM:
-            mode_str = "AM";
-            break;
-        case MODE_FM:
-            mode_str = "FM";
-            break;
-        case MODE_CW:
-            mode_str = "CW";
-            // submode_str = "PCW";
-            break;
-        case MODE_FT8:
-            mode_str = "FT8";
-            break;
-        case MODE_FT4:
-            mode_str = "MFSK";
-            submode_str = "FT4";
-            break;
-        case MODE_FT2:
-            mode_str = "MFSK";
-            submode_str = "FT2";
-            break;
-        case MODE_RTTY:
-            mode_str = "RTTY";
-            break;
-        case MODE_JS8:
-            mode_str = "MFSK";
-            submode_str = "JS8";
-            break;
-        case MODE_JTTY:
-            mode_str = "JTTY";          /* as WSJT-X and jtty_log.c write it */
-            break;
-        default:
-            mode_str = NULL;
-            break;
-    }
+    const char * mode_str;
+    const char * submode_str;
+
+    adif_mode_of(mode, &mode_str, &submode_str);    /* one table: adif_rec.c */
     write_str(fd, "MODE", mode_str);
     write_str(fd, "SUBMODE", submode_str);
 }
@@ -300,17 +264,5 @@ static qso_log_band_t str_to_band(const char * s) {
 
 
 static qso_log_mode_t create_mode(const char * mode, const char * submode) {
-    if (!mode) return MODE_OTHER;
-    if (strcmp(mode, "SSB") == 0) return MODE_SSB;
-    if (strcmp(mode, "AM") == 0) return MODE_AM;
-    if (strcmp(mode, "FM") == 0) return MODE_FM;
-    if (strcmp(mode, "CW") == 0) return MODE_CW;
-    if (strcmp(mode, "FT8") == 0) return MODE_FT8;
-    if (strcmp(mode, "RTTY") == 0) return MODE_RTTY;
-    if (strcmp(mode, "JTTY") == 0) return MODE_JTTY;
-    if (!submode) return MODE_OTHER;
-    if ((strcmp(mode, "MFSK") == 0) && (strcmp(submode, "FT4") == 0)) return MODE_FT4;
-    if ((strcmp(mode, "MFSK") == 0) && (strcmp(submode, "JS8") == 0)) return MODE_JS8;
-    if ((strcmp(mode, "MFSK") == 0) && (strcmp(submode, "FT2") == 0)) return MODE_FT2;
-    return MODE_OTHER;
+    return adif_mode_parse(mode, submode);
 }

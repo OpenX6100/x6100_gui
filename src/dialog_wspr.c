@@ -38,7 +38,7 @@
 #include "scheduler.h"
 
 #include "ft8_ui/table_view.h"
-#include "widgets/lv_waterfall.h"
+#include "app_wf.h"
 #include "widgets/lv_finder.h"
 
 #include "wspr_app.h"
@@ -64,6 +64,10 @@
  * 1400-1600 Hz window. */
 #define TX_STEP_HZ      5
 #define TX_MARK_HZ      6               /* four tones, 1.46 Hz apart */
+/* All WSPR lives in 1400-1600 Hz: the radio's filter stays well clear of it,
+ * its roll-off outside, and the rest of the band is kept out of the AGC. */
+#define WSPR_FILTER_LOW  1000
+#define WSPR_FILTER_HIGH 2000
 
 /* ------------------------------------------------------------------ */
 /* Standard WSPR dial frequencies                                      */
@@ -139,6 +143,12 @@ static lv_obj_t   *window_box;        /* 1400-1600 Hz, decoded */
 
 static lv_timer_t *status_timer = NULL;
 static lv_timer_t *heard_timer = NULL;
+
+/* NR, NB and the notches: off on the radio while the app is open, as in JS8 */
+static Observer *dsp_watch[4];
+static int      saved_filter_low, saved_filter_high;
+static bool     filter_saved;
+static void     rx_filter_set(int low, int high);
 static lv_timer_t *fade_timer = NULL;
 
 static lv_anim_t   fade;
@@ -277,7 +287,7 @@ static void clean_screen(void)
     char title[24];
 
     table_view_reset();
-    lv_waterfall_clear_data(waterfall);
+    app_wf_clear();
 
     snprintf(title, sizeof(title), "WSPR %s", cur_band >= 0 ? wspr_bands[cur_band].label : "");
     wspr_map_set_title(title);
@@ -317,40 +327,6 @@ static void band_down_cb(button_data_t *b)
 }
 
 /* ---- Waterfall -------------------------------------------------------- */
-
-struct waterfall_data {
-    float *psd;
-    size_t size;
-};
-
-static void waterfall_add_data(void *data)
-{
-    struct waterfall_data *wf = (struct waterfall_data *)data;
-
-    /* A line queued just before the window closed arrives after its
-     * waterfall is gone (destruct_cb clears the pointer). */
-    if (waterfall)
-        lv_waterfall_add_data(waterfall, wf->psd, wf->size);
-    free(wf->psd);
-}
-
-static void on_psd(const float *mag_db, int nbins, void *ctx)
-{
-    struct waterfall_data wf;
-
-    (void)ctx;
-
-    if (!mag_db || nbins <= 0)
-        return;
-
-    wf.size = (size_t)nbins;
-    wf.psd = (float *)malloc(sizeof(float) * wf.size);
-    if (!wf.psd)
-        return;
-
-    memcpy(wf.psd, mag_db, wf.size * sizeof(float));
-    scheduler_put(waterfall_add_data, &wf, sizeof(wf));
-}
 
 /* ---- Spots ------------------------------------------------------------ */
 
@@ -423,7 +399,7 @@ static void on_note(const char *text, void *ctx)
 
 static wspr_app_ui_cb_t ui_cb = {
     .on_spot     = on_spot,
-    .on_psd      = on_psd,
+    .on_psd      = NULL,     /* the waterfall listens itself (app_wf.c) */
     .on_slot_end = on_slot_end,
     .on_note     = on_note,
     .ctx         = NULL,
@@ -750,7 +726,7 @@ static void key_cb(lv_event_t *e)
 
     switch (key) {
         case LV_KEY_ESC:
-            dialog_destruct();
+            on_table_close();
             break;
 
         case KEY_VOL_LEFT_EDIT:
@@ -765,14 +741,28 @@ static void key_cb(lv_event_t *e)
     }
 }
 
+/* The RFG knob's press (ESC), as JS8: the first stops a transmission, the
+ * next closes the app. */
 static void on_table_close(void)
 {
+    if (wspr_app_is_transmitting()) {
+        tx_hold_cb(&button_tx);
+        return;
+    }
     dialog_destruct();
 }
 
 static void on_table_vol_change(int32_t delta)
 {
     radio_change_vol(delta > 0 ? 1 : -1);
+}
+
+/* NR, NB, DNF or DNF auto changed while the app is open: on whichever thread
+ * changed it (CAT's own), so radio calls only, nothing on the screen. */
+static void dsp_held_cb(Subject *subj, void *user_data) {
+    (void)subj;
+    (void)user_data;
+    radio_set_rx_dsp_off(true);
 }
 
 static void construct_cb(lv_obj_t *parent)
@@ -791,22 +781,17 @@ static void construct_cb(lv_obj_t *parent)
 
     /* Waterfall */
 
-    waterfall = lv_waterfall_create(dialog.obj);
-
-    lv_obj_clear_flag(waterfall, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_waterfall_set_palette(waterfall, (lv_color_t *)style.wf_palette, 256);
-    lv_waterfall_set_size(waterfall, WIDTH, WF_HEIGHT);
-
-    /*
-     * The spectrum module hands over dB above the noise floor of each
-     * line, so these limits are absolute and never need adjusting when
-     * the operator changes AF or RF gain.
-     */
-    lv_waterfall_set_min(waterfall, -3);
-    lv_waterfall_set_max(waterfall, 25);
-
+    /* The shared waterfall (app_wf.c, as JS8's) shows through this box.
+     * 375 Hz across: each row looks back over the last FFT's worth of
+     * audio (sliding), so WSPR's 6 Hz signals stay sharp. */
+    waterfall = lv_obj_create(dialog.obj);
+    lv_obj_remove_style_all(waterfall);
+    lv_obj_clear_flag(waterfall, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(waterfall, WIDTH, WF_HEIGHT);
     lv_obj_set_pos(waterfall, 13, 13);
+    const app_wf_cfg_t wf_cfg = {.lo_hz = WF_LOW_HZ, .hi_hz = WF_HIGH_HZ, .sliding = true};
+    if (!app_wf_start(waterfall, &wf_cfg))
+        msg_update_text_fmt("No memory for the waterfall");
 
     /* The decoded window, 1400-1600 Hz: its edges */
 
@@ -882,12 +867,29 @@ static void construct_cb(lv_obj_t *parent)
     mem_save(MEM_BACKUP_ID);
     load_band(0);
 
+    /* The radio's filter while the app is open (your own comes back on
+     * close): around WSPR's 200 Hz. */
+    saved_filter_low  = cparam_i_get(cfg.filter.low());
+    saved_filter_high = cparam_i_get(cfg.filter.high());
+    filter_saved      = true;
+    rx_filter_set(WSPR_FILTER_LOW, WSPR_FILTER_HIGH);
+
     qth_str_to_pos(PARAM_T_GET(cfg.qth()), &cur_lat, &cur_lon);
 
     lm_set_ab(true);
     lm_set_mode(true);
     lm_set_freq(true);
     lm_set_band(true);
+
+    /* The base applies noise reduction, the noise blanker and the notches in
+     * DIGI modes too, and they damage steady tones (the auto-notch goes for
+     * exactly those). Off while the app is open, radio only, the settings
+     * kept; turned on meanwhile (CAT, a front-panel control): off again. */
+    radio_set_rx_dsp_off(true);
+    dsp_watch[0] = subject_subscribe((Subject *)cfg.dsp.nr(), dsp_held_cb, NULL);
+    dsp_watch[1] = subject_subscribe((Subject *)cfg.dsp.nb(), dsp_held_cb, NULL);
+    dsp_watch[2] = subject_subscribe((Subject *)cfg.dsp.dnf(), dsp_held_cb, NULL);
+    dsp_watch[3] = subject_subscribe((Subject *)cfg.dsp.dnf_auto(), dsp_held_cb, NULL);
 
     /* Receiver */
 
@@ -907,6 +909,18 @@ static void construct_cb(lv_obj_t *parent)
 
     fetch_heard();
     heard_timer = lv_timer_create(heard_timer_cb, HEARD_PERIOD_MS, NULL);
+}
+
+/* The receive filter, either way round: each edge is validated against the
+ * other, so the one that stays clear of the other's old value goes first. */
+static void rx_filter_set(int low, int high) {
+    if (low < cparam_i_get(cfg.filter.high())) {
+        cparam_i_set(cfg.filter.low(), low);
+        cparam_i_set(cfg.filter.high(), high);
+    } else {
+        cparam_i_set(cfg.filter.high(), high);
+        cparam_i_set(cfg.filter.low(), low);
+    }
 }
 
 static void destruct_cb(void)
@@ -943,10 +957,21 @@ static void destruct_cb(void)
 
     wspr_map_destroy();     /* its objects go with the window */
     table_view_destroy();
-    waterfall = NULL;       /* deleted with the window; see waterfall_add_data */
+    app_wf_stop();          /* also turns the main screen's back on */
+    waterfall = NULL;       /* deleted with the window */
 
     waterfall_set_enabled(true);
     spectrum_set_enabled(true);
+
+    for (unsigned i = 0; i < sizeof(dsp_watch) / sizeof(dsp_watch[0]); i++) {
+        if (dsp_watch[i]) param_unsubscribe(dsp_watch[i]);
+        dsp_watch[i] = NULL;
+    }
+    if (filter_saved) {
+        rx_filter_set(saved_filter_low, saved_filter_high);
+        filter_saved = false;
+    }
+    radio_set_rx_dsp_off(false);
 
     mem_load(MEM_BACKUP_ID);
 

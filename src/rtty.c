@@ -9,6 +9,7 @@
 #include "scheduler.h"
 #include "rtty_sql.h"
 #include "digi_qso.h"
+#include "digi_text.h"
 
 #include "dsp.h"
 #include "audio.h"
@@ -194,6 +195,7 @@ static bool is_mark() {
 
 /* UI thread: a decoded character for the DX call pick-up. */
 static void feed_rx_ui(void *arg) {
+    digi_text_rx_char(*(char *)arg);
     digi_qso_feed_rx(*(char *)arg);
 }
 

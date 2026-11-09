@@ -49,7 +49,7 @@ void map_scene_distance(const map_scene_t *sc, int i, char *buf, size_t size) {
 
 /* A status line, top right at `y`, on a dark box; returns where the next
  * one goes under it. */
-static int draw_status(const char *text, int y) {
+static int draw_status(const char *text, int y, uint32_t color) {
     if (!text || !text[0]) return y;
     const map_widget_geom_t *g = map_widget_geom();
     lv_point_t               sz;
@@ -57,7 +57,7 @@ static int draw_status(const char *text, int y) {
     int x = g->w - 12 - sz.x;
     map_widget_rect(x - 4, y - 2, sz.x + 8, sz.y + 4, 0x000000, LV_OPA_50, 0, 0, 3);
     map_widget_take(x - 4, y - 2, g->w, y + sz.y + 2);
-    map_widget_text(x, y, sz.x + 4, &sony_18, 0xFFFFFF, text);
+    map_widget_text(x, y, sz.x + 4, &sony_18, color, text);
     return y + sz.y + 6;
 }
 
@@ -114,6 +114,7 @@ void map_scene_draw(const map_scene_t *sc, bool force) {
         sig                          = map_widget_hash(sig, &s->label, sizeof(s->label));
         sig                          = map_widget_hash(sig, &s->path, sizeof(s->path));
         sig                          = map_widget_hash(sig, &s->path_w, sizeof(s->path_w));
+        sig                          = map_widget_hash(sig, &s->path_opa, sizeof(s->path_opa));
     }
     sig = map_widget_hash(sig, &sc->nlinks, sizeof(sc->nlinks));
     for (unsigned i = 0; i < sc->nlinks; i++) {
@@ -128,6 +129,8 @@ void map_scene_draw(const map_scene_t *sc, bool force) {
     sig = hash_str(sig, sc->my_grid);
     sig = hash_str(sig, sc->status);
     sig = hash_str(sig, sc->status2);
+    sig = hash_str(sig, sc->status3);
+    sig = map_widget_hash(sig, &sc->status3_color, sizeof(sc->status3_color));
     sig = hash_str(sig, sc->hint);
     sig = map_widget_hash(sig, &sc->mode, sizeof(sc->mode));
     if (!force && !base_new && sig == scene_sig) return;
@@ -169,11 +172,12 @@ void map_scene_draw(const map_scene_t *sc, bool force) {
         snprintf(hint_line + len, sizeof(hint_line) - len, "%s%s", len ? "     " : "", sc->hint);
     draw_hint(hint_line, legend_y - MAP_SCENE_HINT_H);
     /* status2's lines each on their own box, right-aligned like status */
-    int  y = draw_status(sc->status, 6);
+    int  y = draw_status(sc->status, 6, 0xFFFFFF);
     char lines[160];
     snprintf(lines, sizeof(lines), "%s", sc->status2 ? sc->status2 : "");
     for (char *save, *ln = strtok_r(lines, "\n", &save); ln; ln = strtok_r(NULL, "\n", &save))
-        y = draw_status(ln, y);
+        y = draw_status(ln, y, 0xFFFFFF);
+    draw_status(sc->status3, y, sc->status3_color);
 
     lv_draw_line_dsc_t line;
     lv_draw_line_dsc_init(&line);
@@ -200,6 +204,7 @@ void map_scene_draw(const map_scene_t *sc, bool force) {
             if (!scene_shown[i] || !s->path || (s->path == MAP_SCENE_RED) != (pass == 1)) continue;
             map_widget_path_points(home.lat, home.lon, scene_pl[i].lat, scene_pl[i].lon, p);
             line.color = lv_color_hex(s->path);
+            line.opa   = s->path_opa ? s->path_opa : LV_OPA_COVER;
             line.width = s->path_w ? s->path_w : 3;
             map_widget_line(p, MAP_WIDGET_PATH_N + 1, &line);
         }

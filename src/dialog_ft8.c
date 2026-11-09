@@ -24,6 +24,7 @@
 #include "keyboard.h"
 #include "events.h"
 #include "buttons.h"
+#include "psk_reporter.h"
 #include "main_screen.h"
 #include "spectrum.h"
 #include "waterfall.h"
@@ -41,7 +42,7 @@
 #include "ft8_ui/table_view.h"
 #include "ft8_ui/map_view.h"
 #include "ft8/tx_worker.h"
-#include "widgets/lv_waterfall.h"
+#include "app_wf.h"
 #include "widgets/lv_finder.h"
 
 #include "ft8/worker.h"
@@ -67,6 +68,12 @@
 #define UNKNOWN_SNR     99
 
 #define MAX_PWR         5.0f
+/* The radio's filter is wider than the window the app works in, so its
+ * roll-off falls outside what's shown and decoded. */
+#define FTX_FILTER_LOW  100
+#define FTX_FILTER_HIGH 3100
+#define FTX_SHOWN_LOW   200
+#define FTX_SHOWN_HIGH  3000
 
 #define FT8_WIDTH_HZ    50
 #define FT4_WIDTH_HZ    83
@@ -141,6 +148,12 @@ static lv_anim_t   fade;
 static bool        fade_run        = false;
 static bool        disable_buttons = false;
 
+#define PSK_MIN_STEP 5
+#define PSK_KNOB_MS  4000       /* the MFK sets the time this long after the button */
+static lv_obj_t   *psk_knob;
+static lv_timer_t *psk_knob_timer;
+static int         psk_up = -1; /* last told: listening, or no connection */
+
 static lv_obj_t *finder;
 static lv_obj_t *waterfall;
 
@@ -160,6 +173,11 @@ static float base_gain_offset;
 
 static uint32_t dsp_audio_sub_id = AUDIO_SUB_INVALID;
 
+/* NR, NB and the notches: off on the radio while the app is open, as in JS8 */
+static Observer *dsp_watch[4];
+static int      saved_filter_low, saved_filter_high;
+static bool     filter_saved;
+
 static void construct_cb(lv_obj_t *parent);
 static void key_cb(lv_event_t * e);
 static void destruct_cb();
@@ -170,8 +188,6 @@ static void rotary_cb(int32_t diff, uint16_t dt);
  * through scheduler_put() to land on the LVGL task. */
 static void on_message_cb(const char *text, int snr, float freq_hz, float time_sec,
                           const slot_info_t *info, void *ctx);
-static void on_psd_cb(const float *psd, uint16_t nfft, float sec_since_slot_start,
-                      const slot_info_t *info, void *ctx);
 static void on_slot_end_cb(const slot_info_t *info, void *ctx);
 static void on_tick_cb(const slot_info_t *info, bool new_slot,
                        float sec_since_slot_start, void *ctx);
@@ -195,6 +211,10 @@ static void time_sync(struct button_data_t *btn_data);
 
 static void force_save_qso(struct button_data_t *btn_data);
 static const char * map_label_getter();
+static const char * psk_label_getter();
+static void psk_cb(struct button_data_t *btn_data);
+static void psk_hold_cb(struct button_data_t *btn_data);
+static void psk_update(void);
 static void show_map_cb(struct button_data_t *btn_data);
 static void map_mode_cb(struct button_data_t *btn_data);
 static void add_msg_cb(void *data);
@@ -235,6 +255,8 @@ static button_data_t button_page_3 = { .type=BTN_TEXT, .label = "(Page: 3:3)", .
 static button_data_t button_cq_mod = { .type=BTN_TEXT, .label = "CQ\nModifier", .press = cq_modifier_cb };
 static button_data_t button_time_sync = { .type=BTN_TEXT, .label = "Time\nSync", .press = time_sync };
 
+static button_data_t button_psk = { .type=BTN_TEXT_FN, .label_fn = psk_label_getter, .press = psk_cb, .hold = psk_hold_cb };
+
 static buttons_page_t btn_page_1 = {
     {&button_page_1, &button_show_cq_all, &button_mode_ft4_ft8, &button_tx_cq_en_dis, &button_tx_call_en_dis}
 };
@@ -244,7 +266,7 @@ static buttons_page_t btn_page_2 = {
 };
 
 static buttons_page_t btn_page_3 = {
-    {&button_page_3, &button_cq_mod, &button_time_sync}
+    {&button_page_3, &button_cq_mod, &button_time_sync, &button_psk}
 };
 
 static dialog_t dialog = {
@@ -395,7 +417,7 @@ static void worker_init() {
 
     audio_worker_cb_t cb = {
         .on_message  = on_message_cb,
-        .on_psd      = on_psd_cb,
+        .on_psd      = NULL,        /* the waterfall listens itself (app_wf.c) */
         .on_slot_end = on_slot_end_cb,
         .on_tick     = on_tick_cb,
         .ctx         = NULL,
@@ -435,7 +457,7 @@ static void key_cb(lv_event_t * e) {
 
     switch (key) {
         case LV_KEY_ESC:
-            dialog_destruct(&dialog);
+            on_table_close();
             break;
 
         case KEY_VOL_LEFT_EDIT:
@@ -447,6 +469,18 @@ static void key_cb(lv_event_t * e) {
         case KEY_VOL_RIGHT_SELECT:
             radio_change_vol(1);
             break;
+    }
+}
+
+/* The receive filter, either way round: each edge is validated against the
+ * other, so the one that stays clear of the other's old value goes first. */
+static void rx_filter_set(int low, int high) {
+    if (low < cparam_i_get(cfg.filter.high())) {
+        cparam_i_set(cfg.filter.low(), low);
+        cparam_i_set(cfg.filter.high(), high);
+    } else {
+        cparam_i_set(cfg.filter.high(), high);
+        cparam_i_set(cfg.filter.low(), low);
     }
 }
 
@@ -463,11 +497,30 @@ static void destruct_cb() {
     }
     ft8_udp_deinit();
 
+    psk_reporter_watch(NULL, NULL, NULL, NULL);
+    if (psk_knob_timer) {
+        lv_timer_del(psk_knob_timer);
+        psk_knob_timer = NULL;
+    }
+    psk_knob = NULL;        /* deleted with the window */
+    psk_up   = -1;
+
     map_view_destroy();     /* its objects go with the window */
     table_view_destroy();
 
+    app_wf_stop();          /* also turns the main screen's back on */
     waterfall_set_enabled(true);
     spectrum_set_enabled(true);
+
+    for (unsigned i = 0; i < sizeof(dsp_watch) / sizeof(dsp_watch[0]); i++) {
+        if (dsp_watch[i]) param_unsubscribe(dsp_watch[i]);
+        dsp_watch[i] = NULL;
+    }
+    if (filter_saved) {
+        rx_filter_set(saved_filter_low, saved_filter_high);
+        filter_saved = false;
+    }
+    radio_set_rx_dsp_off(false);
 
     mem_load(MEM_BACKUP_ID);
 
@@ -504,6 +557,7 @@ static void load_band(int8_t dir) {
     if (res) {
         msg_update_text_fmt("%s", cfg_digital_label_get());
     }
+    psk_update();
 }
 
 /// @brief Clean waterfall and table
@@ -511,7 +565,7 @@ static void clean_screen() {
     table_view_reset();
     map_view_clear();
     map_view_set_title(ftx_mode_name());
-    lv_waterfall_clear_data(waterfall);
+    app_wf_clear();
 
     int32_t *c = malloc(sizeof(int32_t));
     *c = LV_KEY_UP;
@@ -593,6 +647,14 @@ static void rotary_cb(int32_t diff, uint16_t dt) {
 
 }
 
+/* NR, NB, DNF or DNF auto changed while the app is open: on whichever thread
+ * changed it (CAT's own), so radio calls only, nothing on the screen. */
+static void dsp_held_cb(Subject *subj, void *user_data) {
+    (void)subj;
+    (void)user_data;
+    radio_set_rx_dsp_off(true);
+}
+
 static void construct_cb(lv_obj_t *parent) {
     dialog.obj = dialog_init(parent);
 
@@ -629,15 +691,12 @@ static void construct_cb(lv_obj_t *parent) {
 
     /* Waterfall */
 
-    waterfall = lv_waterfall_create(dialog.obj);
-
-    lv_obj_clear_flag(waterfall, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_waterfall_set_palette(waterfall, (lv_color_t*)style.wf_palette, 256);
-    lv_waterfall_set_size(waterfall, WIDTH, 325);
-    lv_waterfall_set_min(waterfall, -60);
-    lv_waterfall_set_auto_levels(waterfall, true);   /* 1KO125: colours follow the noise floor */
-
+    /* The shared waterfall (app_wf.c, as JS8's) shows through this box,
+     * started below once the filter is known. */
+    waterfall = lv_obj_create(dialog.obj);
+    lv_obj_remove_style_all(waterfall);
+    lv_obj_clear_flag(waterfall, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(waterfall, WIDTH, 325);
     lv_obj_set_pos(waterfall, 13, 13);
 
     /* Freq finder */
@@ -699,10 +758,20 @@ static void construct_cb(lv_obj_t *parent) {
     mem_save(MEM_BACKUP_ID);
     load_band(0);
 
-    filter_low = cparam_i_get(cfg.filter.low());
-    filter_high = cparam_i_get(cfg.filter.high());
+    /* The radio's filter while the app is open (your own comes back on
+     * close): a little wider than the window shown. */
+    saved_filter_low  = cparam_i_get(cfg.filter.low());
+    saved_filter_high = cparam_i_get(cfg.filter.high());
+    filter_saved      = true;
+    rx_filter_set(FTX_FILTER_LOW, FTX_FILTER_HIGH);
+
+    filter_low = FTX_SHOWN_LOW;
+    filter_high = FTX_SHOWN_HIGH;
 
     lv_finder_set_range(finder, filter_low, filter_high);
+
+    const app_wf_cfg_t wf_cfg = {.lo_hz = filter_low, .hi_hz = filter_high};
+    if (!app_wf_start(waterfall, &wf_cfg)) msg_update_text_fmt("No memory for the waterfall");
 
     qth_str_to_pos(PARAM_T_GET(cfg.qth()), &cur_lat, &cur_lon);
 
@@ -710,6 +779,16 @@ static void construct_cb(lv_obj_t *parent) {
     lm_set_mode(true);
     lm_set_freq(true);
     lm_set_band(true);
+
+    /* The base applies noise reduction, the noise blanker and the notches in
+     * DIGI modes too, and they damage steady tones (the auto-notch goes for
+     * exactly those). Off while the app is open, radio only, the settings
+     * kept; turned on meanwhile (CAT, a front-panel control): off again. */
+    radio_set_rx_dsp_off(true);
+    dsp_watch[0] = subject_subscribe((Subject *)cfg.dsp.nr(), dsp_held_cb, NULL);
+    dsp_watch[1] = subject_subscribe((Subject *)cfg.dsp.nb(), dsp_held_cb, NULL);
+    dsp_watch[2] = subject_subscribe((Subject *)cfg.dsp.dnf(), dsp_held_cb, NULL);
+    dsp_watch[3] = subject_subscribe((Subject *)cfg.dsp.dnf_auto(), dsp_held_cb, NULL);
 
     worker_init();
 
@@ -825,6 +904,129 @@ static void map_mode_cb(struct button_data_t *btn_data) {
     (void)btn_data;
     if (disable_buttons || !map_view_shown()) return;
     msg_update_text_fmt("Map: %s", map_view_next_mode());
+}
+
+/* ---- PSK Reporter: who hears you, on the map ---- */
+
+static void psk_on_spot(const char *call, const char *grid, int snr, int64_t when) {
+    map_view_heard_you(call, grid, snr, when);
+}
+
+static void psk_on_state(bool up) {
+    if (psk_up == (int)up) return;
+    psk_up = up;
+    msg_update_text_fmt("PSK Reporter: %s", up ? "listening for who hears you" : "no connection, trying again");
+}
+
+/* What's wanted now: band and mode change here, and it's off outside the bands. */
+static void psk_update(void) {
+    static const psk_reporter_cb_t cb = {.on_spot = psk_on_spot, .on_state = psk_on_state};
+    bool on = param_i_get(cfg.ft8.psk());
+    map_view_set_you_minutes(on ? param_i_get(cfg.ft8.psk_min()) : 0);
+    psk_reporter_watch(PARAM_T_GET(cfg.callsign()), on ? psk_reporter_band(cparam_i_get(cfg.cur.fg_freq())) : NULL,
+                       ftx_mode_name(), &cb);
+}
+
+static const char * psk_label_getter() {
+    static char buf[32];
+    if (param_i_get(cfg.ft8.psk()))
+        snprintf(buf, sizeof(buf), "PSK Rep:\n%d min", (int)param_i_get(cfg.ft8.psk_min()));
+    else
+        snprintf(buf, sizeof(buf), "PSK Rep:\nOff");
+    return buf;
+}
+
+/* The MFK back to whatever had it (unless something else took it since). */
+static void psk_knob_end_cb(lv_timer_t *t) {
+    (void)t;
+    psk_knob_timer = NULL;
+    if (!psk_knob) return;
+    bool had = lv_group_get_focused(keyboard_group) == psk_knob;
+    lv_group_remove_obj(psk_knob);
+    if (!had) return;
+    if (map_view_shown()) {
+        map_view_focus();
+    } else {
+        lv_group_focus_obj(table);
+        lv_group_set_editing(keyboard_group, true);
+    }
+}
+
+static void psk_knob_key_cb(lv_event_t *e) {
+    uint32_t key = *((uint32_t *) lv_event_get_param(e));
+    int      dir = 0;
+    switch (key) {
+        case LV_KEY_RIGHT:
+        case LV_KEY_DOWN:
+            dir = 1;
+            break;
+        case LV_KEY_LEFT:
+        case LV_KEY_UP:
+            dir = -1;
+            break;
+        case LV_KEY_ESC:
+            if (psk_knob_timer) lv_timer_ready(psk_knob_timer);
+            return;
+        case KEY_VOL_LEFT_EDIT:
+        case KEY_VOL_LEFT_SELECT:
+            radio_change_vol(-1);
+            return;
+        case KEY_VOL_RIGHT_EDIT:
+        case KEY_VOL_RIGHT_SELECT:
+            radio_change_vol(1);
+            return;
+        default:
+            return;
+    }
+    int m = LV_CLAMP(PSK_MIN_STEP, (int)param_i_get(cfg.ft8.psk_min()) + dir * PSK_MIN_STEP, 60);
+    param_i_set(cfg.ft8.psk_min(), m);
+    map_view_set_you_minutes(m);
+    msg_update_text_fmt("PSK Reporter: lines stay %d min", m);
+    buttons_refresh(&button_psk);
+    if (psk_knob_timer) lv_timer_reset(psk_knob_timer);
+}
+
+/* For a few seconds the MFK sets the time, in the list or on the map. */
+static void psk_knob_start(void) {
+    if (!psk_knob) {
+        psk_knob = lv_obj_create(dialog.obj);
+        lv_obj_remove_style_all(psk_knob);
+        lv_obj_set_size(psk_knob, 0, 0);
+        lv_obj_add_event_cb(psk_knob, psk_knob_key_cb, LV_EVENT_KEY, NULL);
+    }
+    if (lv_obj_get_group(psk_knob) != keyboard_group) lv_group_add_obj(keyboard_group, psk_knob);
+    lv_group_focus_obj(psk_knob);
+    lv_group_set_editing(keyboard_group, true);
+    if (psk_knob_timer) {
+        lv_timer_reset(psk_knob_timer);
+    } else {
+        psk_knob_timer = lv_timer_create(psk_knob_end_cb, PSK_KNOB_MS, NULL);
+        lv_timer_set_repeat_count(psk_knob_timer, 1);
+    }
+    msg_update_text_fmt("PSK Reporter: turn MFK to set how long lines stay (%d min)", (int)param_i_get(cfg.ft8.psk_min()));
+}
+
+static void psk_cb(struct button_data_t *btn_data) {
+    if (disable_buttons) return;
+    bool on = !param_i_get(cfg.ft8.psk());
+    if (on && strlen(PARAM_T_GET(cfg.callsign())) < 3) {
+        msg_update_text_fmt("PSK Reporter: set your callsign first");
+        return;
+    }
+    param_i_set(cfg.ft8.psk(), on);
+    psk_up = -1;
+    if (!on) map_view_forget_you();
+    psk_update();
+    buttons_refresh(btn_data);
+    if (on) psk_knob_start();
+    else msg_update_text_fmt("PSK Reporter off");
+}
+
+/* Held, while on: the time, without switching it off and on. */
+static void psk_hold_cb(struct button_data_t *btn_data) {
+    (void)btn_data;
+    if (disable_buttons || !param_i_get(cfg.ft8.psk())) return;
+    psk_knob_start();
 }
 
 static void show_cq_all_cb(struct button_data_t *btn_data) {
@@ -1005,7 +1207,16 @@ static void on_table_press(const cell_data_t *cell_data) {
     }
 }
 
+/* The RFG knob's press (ESC), as JS8: the first stops TX, sending or waiting
+ * for its slot; the next closes the app. */
 static void on_table_close(void) {
+    if (state == TX_PROCESS || subject_i_get(cq_enabled) || (tx_msg.msg[0] && subject_i_get(tx_enabled))) {
+        tx_call_off();
+        subject_i_set(cq_enabled, false);
+        tx_msg.msg[0] = '\0';
+        msg_update_text_fmt("TX stopped");
+        return;
+    }
     dialog_destruct(&dialog);
 }
 
@@ -1204,37 +1415,6 @@ static void on_message_cb(const char *text, int snr, float freq_hz, float time_s
  * Helper function to update UI in main thread
  */
 
-struct waterfall_data {
-    float *psd;
-    size_t size;
-};
-
-static void waterfall_add_data(void *data) {
-    struct waterfall_data *wf_data = (struct waterfall_data *)data;
-    lv_waterfall_add_data(waterfall, wf_data->psd, wf_data->size);
-    free(wf_data->psd);
-}
-
-static void on_psd_cb(const float *psd, uint16_t nfft, float sec_since_slot_start,
-                      const slot_info_t *info, void *ctx) {
-    (void)sec_since_slot_start;
-    (void)info;
-    (void)ctx;
-    if (!psd || !nfft) return;
-
-    uint32_t low_bin  = (uint32_t)nfft / 2u + (uint32_t)nfft * filter_low  / FTX_CAPTURE_RATE;
-    uint32_t high_bin = (uint32_t)nfft / 2u + (uint32_t)nfft * filter_high / FTX_CAPTURE_RATE;
-    if (high_bin > nfft) high_bin = nfft;
-    if (low_bin >= high_bin) return;
-
-    // Schedule waterfall update in main thread
-    struct waterfall_data wf_data;
-    wf_data.size = high_bin - low_bin;
-    wf_data.psd = (float *)calloc(sizeof(float), wf_data.size);
-    memcpy((void*)wf_data.psd, (void*)&psd[low_bin], wf_data.size * sizeof(float));
-    scheduler_put(waterfall_add_data, &wf_data, sizeof(wf_data));
-}
-
 static void on_slot_end_cb(const slot_info_t *info, void *ctx) {
     (void)info;
     (void)ctx;
@@ -1253,6 +1433,8 @@ static void on_tick_cb(const slot_info_t *info, bool new_slot,
         if ((tx_time_slot == info->odd) && subject_i_get(tx_enabled)) {
             state = TX_PROCESS;
             add_tx_text(tx_msg.msg);
+            /* tx_worker sends at FT8_TX_AUDIO_HZ with the VFO moved to put it on tx_freq */
+            app_wf_set_tx_shift((int)param_i_get(cfg.ft8.tx_freq()) - FT8_TX_AUDIO_HZ);
             tx_worker_run(tx_msg.msg, base_gain_offset,
                           tx_should_abort_cb, NULL);
             state = RX_PROCESS;
