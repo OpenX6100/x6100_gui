@@ -912,9 +912,15 @@ static void psk_on_spot(const char *call, const char *grid, int snr, int64_t whe
     map_view_heard_you(call, grid, snr, when);
 }
 
+/* -1: nothing to report yet. The map says who heard you only while listening. */
+static void psk_set_up(int up) {
+    psk_up = up;
+    map_view_set_you_up(up == 1);
+}
+
 static void psk_on_state(bool up) {
     if (psk_up == (int)up) return;
-    psk_up = up;
+    psk_set_up(up);
     msg_update_text_fmt("PSK Reporter: %s", up ? "listening for who hears you" : "no connection, trying again");
 }
 
@@ -922,9 +928,10 @@ static void psk_on_state(bool up) {
 static void psk_update(void) {
     static const psk_reporter_cb_t cb = {.on_spot = psk_on_spot, .on_state = psk_on_state};
     bool on = param_i_get(cfg.ft8.psk());
+    const char *band = on ? psk_reporter_band(cparam_i_get(cfg.cur.fg_freq())) : NULL;
     map_view_set_you_minutes(on ? param_i_get(cfg.ft8.psk_min()) : 0);
-    psk_reporter_watch(PARAM_T_GET(cfg.callsign()), on ? psk_reporter_band(cparam_i_get(cfg.cur.fg_freq())) : NULL,
-                       ftx_mode_name(), &cb);
+    if (!band) psk_set_up(-1);
+    psk_reporter_watch(PARAM_T_GET(cfg.callsign()), band, ftx_mode_name(), &cb);
 }
 
 static const char * psk_label_getter() {
@@ -1014,7 +1021,7 @@ static void psk_cb(struct button_data_t *btn_data) {
         return;
     }
     param_i_set(cfg.ft8.psk(), on);
-    psk_up = -1;
+    psk_set_up(-1);
     if (!on) map_view_forget_you();
     psk_update();
     buttons_refresh(btn_data);

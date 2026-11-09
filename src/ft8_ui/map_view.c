@@ -53,6 +53,7 @@ static int64_t    qso_ms;
 static char       title[32] = "FT8";
 static map_view_actions_t act;
 static int        you_min;      /* minutes PSK Reporter's lines stay, 0: off */
+static bool       you_up;       /* PSK Reporter connected */
 
 static int64_t now_ms(void) {
     struct timespec t;
@@ -159,6 +160,11 @@ void map_view_set_you_minutes(int minutes) {
     if (map_scene_shown()) redraw(false);
 }
 
+void map_view_set_you_up(bool up) {
+    you_up = up;
+    if (map_scene_shown()) redraw(false);
+}
+
 void map_view_forget_you(void) {
     for (int i = 0; i < st_n; i++) st[i].you_ms = 0;
     if (map_scene_shown()) redraw(true);
@@ -191,7 +197,7 @@ static const map_legend_item_t legend[] = {
     {MAP_SCENE_DIM, MAP_LEGEND_SQUARE, "other"},
     {MAP_SCENE_RED, MAP_LEGEND_LINE, "QSO"},
     {MAP_WIDGET_HOME, MAP_LEGEND_SQUARE, "you"},
-    {MAP_SCENE_BLUE, MAP_LEGEND_LINE, "heard you"}, /* with PSK Reporter on */
+    {MAP_SCENE_BLUE, MAP_LEGEND_LINE, "heard you"}, /* with PSK Reporter on and connected */
 };
 
 /* The scene from the stations heard in the last 15 min. */
@@ -267,7 +273,8 @@ static void build(int64_t now) {
     bool   miles = info == TABLE_INFO_MI || info == TABLE_INFO_COUNTRY_MI;
     snprintf(status, sizeof(status), "%s   %d heard  %d CQ  %d calling you", title, nhere, ncq, ncall);
     status3[0] = '\0';
-    if (you_min) snprintf(status3, sizeof(status3), "%d heard you  (%d min)", nyou, you_min);
+    if (you_min && you_up) snprintf(status3, sizeof(status3), "%d heard you  (%d min)", nyou, you_min);
+    else if (you_min) snprintf(status3, sizeof(status3), "Not connected to PSK Reporter");
     double best  = -1, km;
     int    dx    = -1;
     for (int i = 0; i < n; i++) /* the farthest heard: "DX ZL2AB 11300 km" */
@@ -293,7 +300,7 @@ static void build(int64_t now) {
                               .mode    = map_scene_mode(),
                               .miles   = miles,
                               .legend  = legend,
-                              .nlegend = sizeof(legend) / sizeof(legend[0]) - (you_min ? 0 : 1),
+                              .nlegend = sizeof(legend) / sizeof(legend[0]) - (you_min && you_up ? 0 : 1),
                               .status  = status,
                               .status2 = status2,
                               .status3 = status3,
@@ -351,6 +358,7 @@ const char *map_view_next_mode(void) {
 }
 
 void map_view_destroy(void) {
+    you_up = false;
     map_scene_destroy();
     st_n        = 0;
     sel_call[0] = '\0';
