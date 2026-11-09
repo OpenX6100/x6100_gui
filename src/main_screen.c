@@ -61,6 +61,8 @@
 #include "dialog_olivia.h"
 /* WeFax */
 #include "dialog_wefax.h"
+/* NavTex */
+#include "dialog_navtex.h"
 /* SSTV */
 #include "dialog_sstv.h"
 #include "dialog_jtty.h"
@@ -265,6 +267,12 @@ void main_screen_start_app(press_action_t app_action) {
             voice_say_text_fmt("WeFax window");
             break;
 
+        /* NavTex */
+        case ACTION_APP_NAVTEX:
+            dialog_construct(dialog_navtex, obj);
+            voice_say_text_fmt("NAVTEX window");
+            break;
+
         /* SSTV */
         case ACTION_APP_SSTV:
             dialog_construct(dialog_sstv, obj);
@@ -354,6 +362,8 @@ void main_screen_action(press_action_t action) {
         case ACTION_APP_OLIVIA:
         /* WeFax */
         case ACTION_APP_WEFAX:
+        /* NavTex */
+        case ACTION_APP_NAVTEX:
         /* SSTV */
         case ACTION_APP_SSTV:
         /* JTTY */
@@ -903,8 +913,8 @@ static void main_screen_hkey_cb(lv_event_t * e) {
         case HKEY_UP:
             if (hkey->state == HKEY_RELEASE) {
                 if (!lm_get_freq()) {
-                    if (dialog_wefax_mic_step(-1)) {
-                        /* WeFax open: previous station in its list */
+                    if (dialog_wefax_mic_step(-1) || dialog_navtex_mic_step(-1)) {
+                        /* WeFax / NavTex open: previous station in its list */
                     } else if (dialog_channels_recall_relative(-1)) {
                         msg_update_text_fmt("%s", dialog_channels_last_recalled_name());
                     } else if (dialog_channels_empty()) {
@@ -922,8 +932,8 @@ static void main_screen_hkey_cb(lv_event_t * e) {
         case HKEY_DOWN:
             if (hkey->state == HKEY_RELEASE) {
                 if (!lm_get_freq()) {
-                    if (dialog_wefax_mic_step(+1)) {
-                        /* WeFax open: next station in its list */
+                    if (dialog_wefax_mic_step(+1) || dialog_navtex_mic_step(+1)) {
+                        /* WeFax / NavTex open: next station in its list */
                     } else if (dialog_channels_recall_relative(+1)) {
                         msg_update_text_fmt("%s", dialog_channels_last_recalled_name());
                     } else if (dialog_channels_empty()) {
@@ -939,12 +949,13 @@ static void main_screen_hkey_cb(lv_event_t * e) {
             break;
 
         case HKEY_VM:
-            /* WeFax open: its stations list; otherwise open/close CHANNELS,
+            /* WeFax / NavTex open: its stations list; otherwise open/close CHANNELS,
              * also on top of another dialog (an overlay, see
              * dialog_channels.c). CHANNELS already open over WeFax is still
              * closed by V/M. As in Hany's 1KO125 firmware (#311). */
             if (hkey->state == HKEY_RELEASE) {
-                if (dialog_channels_is_open() || !dialog_wefax_vm_toggle()) {
+                if (dialog_channels_is_open() ||
+                    !(dialog_wefax_vm_toggle() || dialog_navtex_vm_toggle())) {
                     dialog_channels_toggle(obj, dialog_running);
                 }
             }
