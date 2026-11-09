@@ -162,7 +162,7 @@ static pthread_t        extra_thread;
 static bool             extra_thread_up;
 static pthread_mutex_t  extra_mux = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t   extra_cv  = PTHREAD_COND_INITIALIZER;
-static bool             extra_quit, extra_job, extra_busy, extra_cancel;
+static bool             extra_quit, extra_job, extra_busy;
 static extra_found_t    extra_found[MAX_DECODED_MESSAGES];
 static int              extra_found_n;
 /* The callsign table: both threads use it */
@@ -326,7 +326,6 @@ void ftx_worker_init(int sample_rate, ftx_protocol_t protocol) {
                                      protocol == FTX_PROTOCOL_FT8 ? FT8_SYMBOL_BT : FT4_SYMBOL_BT);
         if (extra_on) {
             extra_quit      = false;
-            extra_cancel    = false;
             extra_job       = false;
             extra_busy      = false;
             extra_found_n   = 0;
@@ -407,16 +406,18 @@ static void extra_submit(void) {
     for (int i = 0; i < MAX_DECODED_MESSAGES; i++)
         extra_table[i] = decoded_hashtable[i] ? &extra_decoded[decoded_hashtable[i] - decoded] : NULL;
     extra_found_n = 0;
-    extra_cancel  = false;
     extra_job     = true;
     pthread_cond_signal(&extra_cv);
     pthread_mutex_unlock(&extra_mux);
 }
 
 void ftx_worker_reset() {
-    pthread_mutex_lock(&hash_mux);
-    ftx_call_table_age(10);
-    pthread_mutex_unlock(&hash_mux);
+    /* Once a slot: a reset follows the one at a full waterfall at the boundary */
+    if (wf.num_blocks > 0) {
+        pthread_mutex_lock(&hash_mux);
+        ftx_call_table_age(10);
+        pthread_mutex_unlock(&hash_mux);
+    }
     remember_own_call();
     wf.num_blocks = 0;
     num_candidates = 0;
@@ -558,6 +559,8 @@ static void decode_messages(const ftx_waterfall_t *wf, int *num_candidates, ftx_
     int to_delete_size = 0;
 
     for (int idx = 0; idx < *num_candidates; ++idx) {
+        if (retry && extra_stop()) break; /* the extra passes' time, or the window closing */
+
         const ftx_candidate_t *cand = &candidate_list[idx];
 
         // Skip candidates, that are not fully received
@@ -571,7 +574,7 @@ static void decode_messages(const ftx_waterfall_t *wf, int *num_candidates, ftx_
         ftx_decode_status_t status;
         /* The strongest candidates first: the extra passes' retries go as far as the time allows */
         if (!ftx_decode_candidate(wf, cand, ldpc_iterations, &message, &status) &&
-            !(retry && idx < RETRY_CANDIDATES && !extra_stop() && ftx_decode_retry(wf, cand, ldpc_iterations, &message))) {
+            !(retry && idx < RETRY_CANDIDATES && ftx_decode_retry(wf, cand, ldpc_iterations, &message))) {
             if (status.ldpc_errors > 0) {
                 LV_LOG_INFO("LDPC decode: %d errors", status.ldpc_errors);
             } else if (status.crc_calculated != status.crc_extracted) {
@@ -654,7 +657,7 @@ void ftx_worker_set_realtime(bool on) {
 /* Its time is up, or the window is closing. */
 static bool extra_stop(void) {
     pthread_mutex_lock(&extra_mux);
-    bool quit = extra_quit || extra_cancel;
+    bool quit = extra_quit;
     pthread_mutex_unlock(&extra_mux);
     if (quit) return true;
     if (!extra_realtime) return false;
@@ -668,7 +671,7 @@ static bool extra_stop(void) {
 static void extra_found_cb(const char *text, int snr, float freq_hz, float time_sec, void *user_data) {
     (void)user_data;
     pthread_mutex_lock(&extra_mux);
-    if (!extra_cancel && extra_found_n < MAX_DECODED_MESSAGES) {
+    if (extra_found_n < MAX_DECODED_MESSAGES) {
         extra_found_t *f = &extra_found[extra_found_n++];
         snprintf(f->text, sizeof(f->text), "%s", text);
         f->snr      = snr;
@@ -760,13 +763,6 @@ void ftx_worker_decode_more(decoded_msg_cb msg_cb, void *user_data) {
     extra_found_n = 0;
     pthread_mutex_unlock(&extra_mux);
     for (int i = 0; i < n; i++) msg_cb(found[i].text, found[i].snr, found[i].freq_hz, found[i].time_sec, user_data);
-}
-
-void ftx_worker_extra_cancel(void) {
-    pthread_mutex_lock(&extra_mux);
-    extra_cancel  = true;
-    extra_found_n = 0;
-    pthread_mutex_unlock(&extra_mux);
 }
 
 bool ftx_worker_extra_busy(void) {

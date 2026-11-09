@@ -17,7 +17,7 @@ extern "C" {
 
 /* As JS8's decoder (js8core legacy_decoder.cpp, from JS8Call): when
  * ftx_decode_candidate() has failed, the same LDPC decoder again on other
- * views of the signal: the tones' power instead of their dB, then with the
+ * views of the signal: the tones' amplitude instead of their dB, then with the
  * first 24 and the first 48 bits marked unknown (a fade or a burst at the
  * start). Each try has JS8's limit on how many bits the result may have
  * changed, and the CRC decides. False if none gave a message. */

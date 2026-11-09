@@ -19,6 +19,9 @@
 #include <string.h>
 
 #define TRIES 3
+/* JS8 asks less of a result from a barely synced signal (its sync < 2) */
+#define WEAK_SYNC_SCORE      15
+#define WEAK_SYNC_MAX_ERRORS 35
 
 /* The most bits each try's result may differ from what was received */
 static const int max_hard_errors[TRIES] = {59, 39, 30};
@@ -33,14 +36,20 @@ static float max4(float a, float b, float c, float d) {
     return max2(max2(a, b), max2(c, d));
 }
 
-/* The tone's power, as JS8's first metric (ft8_lib's is the dB) */
-static float tone_power(WF_ELEM_T e) {
-    return powf(10.0f, WF_ELEM_MAG(e) / 10.0f);
+/* The tone's amplitude for each waterfall value, as JS8's first metric
+ * (ft8_lib's is the dB). This thread only. */
+static float amplitude[256];
+
+static void amplitude_init(void) {
+    if (amplitude[255] != 0.0f) return;
+    for (int i = 0; i < 256; i++) amplitude[i] = powf(10.0f, WF_ELEM_MAG((WF_ELEM_T)i) / 20.0f);
 }
+
+#define TONE(e) (amplitude[(uint8_t)(e)])
 
 static void ft8_symbol(const WF_ELEM_T *mag, float *logl) {
     float s[8];
-    for (int j = 0; j < 8; j++) s[j] = tone_power(mag[kFT8_Gray_map[j]]);
+    for (int j = 0; j < 8; j++) s[j] = TONE(mag[kFT8_Gray_map[j]]);
     logl[0] = max4(s[4], s[5], s[6], s[7]) - max4(s[0], s[1], s[2], s[3]);
     logl[1] = max4(s[2], s[3], s[6], s[7]) - max4(s[0], s[1], s[4], s[5]);
     logl[2] = max4(s[1], s[3], s[5], s[7]) - max4(s[0], s[2], s[4], s[6]);
@@ -48,7 +57,7 @@ static void ft8_symbol(const WF_ELEM_T *mag, float *logl) {
 
 static void ft4_symbol(const WF_ELEM_T *mag, float *logl) {
     float s[4];
-    for (int j = 0; j < 4; j++) s[j] = tone_power(mag[kFT4_Gray_map[j]]);
+    for (int j = 0; j < 4; j++) s[j] = TONE(mag[kFT4_Gray_map[j]]);
     logl[0] = max2(s[2], s[3]) - max2(s[0], s[1]);
     logl[1] = max2(s[1], s[3]) - max2(s[0], s[2]);
 }
@@ -111,6 +120,7 @@ bool ftx_decode_retry(const ftx_waterfall_t *wf, const ftx_candidate_t *cand, in
     float   logl[FTX_LDPC_N], tried[FTX_LDPC_N];
     uint8_t plain[FTX_LDPC_N];
 
+    amplitude_init();
     extract(wf, cand, logl);
     normalize(logl);
 
@@ -127,6 +137,7 @@ bool ftx_decode_retry(const ftx_waterfall_t *wf, const ftx_candidate_t *cand, in
             if (tried[i] != 0 && (tried[i] > 0) != (plain[i] != 0)) hard++;
         }
         if (ones == 0 || hard > max_hard_errors[t]) continue;
+        if (cand->score < WEAK_SYNC_SCORE && hard > WEAK_SYNC_MAX_ERRORS) continue;
         if (to_message(wf, plain, message)) return true;
     }
     return false;

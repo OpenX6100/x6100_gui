@@ -508,7 +508,6 @@ static void load_band(int8_t dir) {
 
 /// @brief Clean waterfall and table
 static void clean_screen() {
-    ftx_worker_extra_cancel();  /* what they'd find is the old band's */
     table_view_reset();
     map_view_clear();
     map_view_set_title(ftx_mode_name());
