@@ -12,6 +12,7 @@
 #include "ft2.h"
 #include "msg_encode.h"
 #include "call_table.h"
+#include "contest_msg.h"
 
 #include "lvgl/lvgl.h"
 #include <ft8lib/constants.h>
@@ -434,8 +435,11 @@ static void decode_messages(const ftx_waterfall_t *wf, int *num_candidates, ftx_
             memcpy(&decoded[idx_hash], &message, sizeof(message));
             decoded_hashtable[idx_hash] = &decoded[idx_hash];
 
-            char             text[FTX_MAX_MESSAGE_LENGTH];
+            char             text[FTX_CONTEST_TEXT_LEN];
             ftx_message_rc_t unpack_status = ftx_message_decode(&message, &ftx_call_table_if, text);
+            /* Contest and DXpedition messages ft8_lib can't unpack */
+            if (unpack_status != FTX_MESSAGE_RC_OK && ftx_contest_decode(&message, &ftx_call_table_if, text, sizeof(text)))
+                unpack_status = FTX_MESSAGE_RC_OK;
             if (unpack_status != FTX_MESSAGE_RC_OK) {
                 LV_LOG_INFO("Error [%d] while unpacking!", (int)unpack_status);
             } else {
