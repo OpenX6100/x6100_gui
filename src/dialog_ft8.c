@@ -1136,12 +1136,14 @@ static void tx_call_en_dis_cb(struct button_data_t *btn_data) {
         if (state == TX_PROCESS) {
             state = RX_PROCESS;
         }
+        tx_picked = false;
         subject_i_set(tx_enabled, false);
     }
 }
 
 static void tx_call_off() {
-    state = RX_PROCESS;
+    state     = RX_PROCESS;
+    tx_picked = false;
     subject_i_set(tx_enabled, false);
 }
 
@@ -1448,7 +1450,8 @@ static void on_tick_cb(const slot_info_t *info, bool new_slot,
             app_wf_set_tx_shift((int)param_i_get(cfg.ft8.tx_freq()) - FT8_TX_AUDIO_HZ);
             tx_worker_run(tx_msg.msg, base_gain_offset,
                           tx_should_abort_cb, NULL);
-            state = RX_PROCESS;
+            state     = RX_PROCESS;
+            tx_picked = false;
             if (tx_msg.repeats > 0) {
                 tx_msg.repeats--;
             }
