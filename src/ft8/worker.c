@@ -133,9 +133,11 @@ typedef struct {
     int         n;
 } heard_list_t;
 typedef struct {
-    char  text[FTX_CONTEST_TEXT_LEN];
-    int   snr;
-    float freq_hz, time_sec;
+    char    text[FTX_CONTEST_TEXT_LEN];
+    int     snr;
+    float   freq_hz, time_sec;
+    bool    odd;
+    int64_t start_ms;
 } extra_found_t;
 
 static bool    extra_on;
@@ -146,6 +148,8 @@ static float   slot_secs;
 static float        *slot_audio;
 static int           slot_len, slot_cap;
 static heard_list_t  heard;
+static bool          slot_odd;
+static int64_t       slot_start_ms;
 /* The passes' own, after extra_submit() */
 static float           *extra_audio;
 static int              extra_len;
@@ -157,6 +161,8 @@ static int              extra_num_candidates;
 static ftx_message_t    extra_decoded[MAX_DECODED_MESSAGES];
 static ftx_message_t   *extra_table[MAX_DECODED_MESSAGES];
 static struct timespec  extra_started;
+static bool             extra_odd;
+static int64_t          extra_start_ms;
 /* Shared, under extra_mux */
 static pthread_t        extra_thread;
 static bool             extra_thread_up;
@@ -405,8 +411,9 @@ static void extra_submit(void) {
     memcpy(extra_decoded, decoded, sizeof(decoded));
     for (int i = 0; i < MAX_DECODED_MESSAGES; i++)
         extra_table[i] = decoded_hashtable[i] ? &extra_decoded[decoded_hashtable[i] - decoded] : NULL;
-    extra_found_n = 0;
-    extra_job     = true;
+    extra_odd      = slot_odd;
+    extra_start_ms = slot_start_ms;
+    extra_job      = true;
     pthread_cond_signal(&extra_cv);
     pthread_mutex_unlock(&extra_mux);
 }
@@ -677,6 +684,8 @@ static void extra_found_cb(const char *text, int snr, float freq_hz, float time_
         f->snr      = snr;
         f->freq_hz  = freq_hz;
         f->time_sec = time_sec;
+        f->odd      = extra_odd;
+        f->start_ms = extra_start_ms;
     }
     pthread_mutex_unlock(&extra_mux);
 }
@@ -754,7 +763,12 @@ static void *extra_main(void *arg) {
     }
 }
 
-void ftx_worker_decode_more(decoded_msg_cb msg_cb, void *user_data) {
+void ftx_worker_extra_slot(bool odd, int64_t start_ms) {
+    slot_odd      = odd;
+    slot_start_ms = start_ms;
+}
+
+void ftx_worker_decode_more(extra_msg_cb msg_cb, void *user_data) {
     if (!extra_on) return;
     extra_found_t found[MAX_DECODED_MESSAGES];
     pthread_mutex_lock(&extra_mux);
@@ -762,7 +776,9 @@ void ftx_worker_decode_more(decoded_msg_cb msg_cb, void *user_data) {
     memcpy(found, extra_found, sizeof(found[0]) * n);
     extra_found_n = 0;
     pthread_mutex_unlock(&extra_mux);
-    for (int i = 0; i < n; i++) msg_cb(found[i].text, found[i].snr, found[i].freq_hz, found[i].time_sec, user_data);
+    for (int i = 0; i < n; i++)
+        msg_cb(found[i].text, found[i].snr, found[i].freq_hz, found[i].time_sec, found[i].odd, found[i].start_ms,
+               user_data);
 }
 
 bool ftx_worker_extra_busy(void) {
