@@ -175,6 +175,7 @@ static void *worker_main(void *arg) {
     diag_set_source("FT8");
     audio_worker_t *w = (audio_worker_t *)arg;
     slot_info_t     info = { .odd = false, .answer_generated = false };
+    slot_info_t     extra_info = { 0 };     /* the slot the extra passes are on */
     decode_ctx_t    dc   = { .w = w, .info = &info };
 
     atomic_store(&w->thread_running, true);
@@ -212,6 +213,8 @@ static void *worker_main(void *arg) {
         rx_consume_frames(w, &info, sec_since_slot_start);
 
         if (new_slot) {
+            extra_info = info;
+
             /* Slot boundary: flush a final decode, drain stale audio that
              * accumulated during TX, and fire the slot_end handler. */
             ftx_worker_decode(decode_cb, true, (void *)&dc);
@@ -227,6 +230,13 @@ static void *worker_main(void *arg) {
 
         if (w->cb.on_tick && !tick_done) {
             w->cb.on_tick(&info, new_slot, sec_since_slot_start, w->cb.ctx);
+        }
+
+        /* What the extra passes over the slot just ended have found
+         * (FT8/FT4, ft8/worker.c), reported as that slot's */
+        if (extra_info.start_ms) {
+            decode_ctx_t dc_ended = {.w = w, .info = &extra_info};
+            ftx_worker_decode_more(decode_cb, (void *)&dc_ended);
         }
 
         if (!new_slot && !atomic_load(&w->stop_req)) {

@@ -6,13 +6,19 @@
  *  Copyright (c) 2024 Georgy Dyuldin aka R2RFE
  */
 
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE /* the thread's name and core */
+#endif
+
 #include "worker.h"
 
 #include "gfsk.h"
 #include "ft2.h"
 #include "msg_encode.h"
-#include "call_table.h"
 #include "contest_msg.h"
+#include "subtract.h"
+#include "decode_retry.h"
+#include "call_table.h"
 
 #include "lvgl/lvgl.h"
 #include <ft8lib/constants.h>
@@ -27,6 +33,12 @@
 #include <stdint.h>
 #include <errno.h>
 #include <ctype.h>
+#include <time.h>
+#include <pthread.h>
+#include <sched.h>
+#include <sys/resource.h>
+#include <sys/syscall.h>
+#include <unistd.h>
 
 #define MAX_CANDIDATES 200
 #define MAX_DECODED_MESSAGES 50
@@ -38,11 +50,17 @@
 #define DECODE_BLOCK_STRIDE 2    // Try to decode each N block
 #define EARLY_LDPC_ITERATIONS 25 // LDPC iterations on early decoding
 
-static float complex *time_buf;
-static float complex *freq_buf;
-static fftplan        fft;
-static windowf        frame_window;
-static float         *rx_window = NULL;
+/* The spectrum the decoder searches, and what makes it */
+typedef struct {
+    ftx_waterfall_t *wf;
+    float complex   *time_buf;
+    float complex   *freq_buf;
+    fftplan          fft;
+    windowf          window;
+} spectrum_t;
+
+static spectrum_t rx_spec;
+static float     *rx_window = NULL;
 
 static float symbol_period;
 static int   block_size;
@@ -91,9 +109,68 @@ static ftx_waterfall_t wf;
 static int             find_candidates_at;
 static char            own_call[12]; /* kept in the hash table, see remember_own_call() */
 
+/* More passes, as WSJT-X: each signal decoded in a slot is taken out of
+ * its audio (subtract.c), the spectrum made again and searched again, so
+ * stations sitting next to stronger ones come through. FT8 and FT4; FT2
+ * stays single-pass.
+ *
+ * As JS8's decoder: on a thread of their own, with their own copy of the
+ * slot, off the core kept for the screen and below the audio's priority, so
+ * however long they take they can't touch the receiver or a transmission.
+ * What they find is handed back on the audio thread by
+ * ftx_worker_decode_more(). */
+#define EXTRA_PASSES      2     /* WSJT-X: 3 passes in all */
+#define EXTRA_BUDGET      0.8f  /* of a slot: done before the next one's */
+#define EXTRA_NICE        5
+#define RETRY_CANDIDATES  60    /* a pass's candidates that get JS8's extra tries */
+typedef struct {
+    uint8_t tones[FT4_NN];
+    float   freq_hz, time_sec;
+    bool    subtracted;
+} heard_sig_t;
+typedef struct {
+    heard_sig_t sig[MAX_DECODED_MESSAGES];
+    int         n;
+} heard_list_t;
+typedef struct {
+    char  text[FTX_CONTEST_TEXT_LEN];
+    int   snr;
+    float freq_hz, time_sec;
+} extra_found_t;
+
+static bool    extra_on;
+static bool    extra_realtime = true;
+static int     rx_rate;
+static float   slot_secs;
+/* The audio thread's */
+static float        *slot_audio;
+static int           slot_len, slot_cap;
+static heard_list_t  heard;
+/* The passes' own, after extra_submit() */
+static float           *extra_audio;
+static int              extra_len;
+static heard_list_t     extra_heard;
+static ftx_waterfall_t  extra_wf;
+static spectrum_t       extra_spec;
+static ftx_candidate_t  extra_candidates[MAX_CANDIDATES];
+static int              extra_num_candidates;
+static ftx_message_t    extra_decoded[MAX_DECODED_MESSAGES];
+static ftx_message_t   *extra_table[MAX_DECODED_MESSAGES];
+static struct timespec  extra_started;
+/* Shared, under extra_mux */
+static pthread_t        extra_thread;
+static bool             extra_thread_up;
+static pthread_mutex_t  extra_mux = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t   extra_cv  = PTHREAD_COND_INITIALIZER;
+static bool             extra_quit, extra_job, extra_busy;
+static extra_found_t    extra_found[MAX_DECODED_MESSAGES];
+static int              extra_found_n;
+/* The callsign table: both threads use it */
+static pthread_mutex_t  hash_mux = PTHREAD_MUTEX_INITIALIZER;
+
 static void decode_messages(const ftx_waterfall_t *wf, int *num_candidates, ftx_candidate_t *candidate_list,
                             ftx_message_t *decoded, ftx_message_t **decoded_hashtable, int ldpc_iterations,
-                            decoded_msg_cb msg_cb, void *user_data);
+                            heard_list_t *heard_list, bool retry, decoded_msg_cb msg_cb, void *user_data);
 
 static int get_message_snr(const ftx_waterfall_t *wf, const ftx_candidate_t *candidate, ftx_message_t *msg);
 
@@ -113,7 +190,9 @@ static void remember_own_call(void) {
     }
     snprintf(text, sizeof(text), "CQ %s", own_call);
     ftx_message_init(&msg);
+    pthread_mutex_lock(&hash_mux);
     ftx_message_encode(&msg, &ftx_call_table_if, text);
+    pthread_mutex_unlock(&hash_mux);
 }
 
 void ftx_worker_set_own_call(const char *call) {
@@ -123,6 +202,28 @@ void ftx_worker_set_own_call(const char *call) {
     }
     strcpy(own_call, call);
 }
+
+static bool spectrum_init(spectrum_t *sp, ftx_waterfall_t *w) {
+    sp->wf       = w;
+    sp->time_buf = (float complex *)malloc(nfft * sizeof(float complex));
+    sp->freq_buf = (float complex *)malloc(nfft * sizeof(float complex));
+    if (!sp->time_buf || !sp->freq_buf) return false;
+    sp->fft    = fft_create_plan(nfft, sp->time_buf, sp->freq_buf, LIQUID_FFT_FORWARD, 0);
+    sp->window = windowf_create(nfft);
+    return true;
+}
+
+static void spectrum_free(spectrum_t *sp) {
+    if (sp->window) windowf_destroy(sp->window);
+    if (sp->fft) fft_destroy_plan(sp->fft);
+    free(sp->time_buf);
+    free(sp->freq_buf);
+    memset(sp, 0, sizeof(*sp));
+}
+
+static void *extra_main(void *arg);
+static bool extra_stop(void);
+static void forget_slot(void);
 
 /**
  * Init worker
@@ -156,6 +257,8 @@ void ftx_worker_init(int sample_rate, ftx_protocol_t protocol) {
         return;
     }
     int num_samples = slot_period * sample_rate;
+    rx_rate   = sample_rate;
+    slot_secs = slot_period;
 
     ftx_call_table_reset();
     remember_own_call();
@@ -194,14 +297,10 @@ void ftx_worker_init(int sample_rate, ftx_protocol_t protocol) {
     /* FT8 DSP */
     nfft = block_size * FREQ_OSR;
     float fft_norm = 2.0f / nfft;
-    time_buf = (float complex *)malloc(nfft * sizeof(float complex));
-    freq_buf = (float complex *)malloc(nfft * sizeof(float complex));
-    if (!time_buf || !freq_buf) {
+    if (!spectrum_init(&rx_spec, &wf)) {
         LV_LOG_ERROR("FT8 worker: time_buf/freq_buf malloc failed");
         goto error_cleanup;
     }
-    fft = fft_create_plan(nfft, time_buf, freq_buf, LIQUID_FFT_FORWARD, 0);
-    frame_window = windowf_create(nfft);
 
     rx_window = malloc(nfft * sizeof(float));
     if (!rx_window) {
@@ -212,6 +311,28 @@ void ftx_worker_init(int sample_rate, ftx_protocol_t protocol) {
 
     for (uint16_t i = 0; i < nfft; i++) {
         rx_window[i] = liquid_hann(i, nfft) * window_norm;
+    }
+
+    /* More passes: FT8/FT4 only */
+    extra_on = false;
+    if ((int)protocol != (int)FTX_PROTOCOL_FT2) {
+        slot_cap     = (int)(slot_period * sample_rate);
+        slot_audio   = malloc(sizeof(float) * slot_cap);
+        extra_audio  = malloc(sizeof(float) * slot_cap);
+        extra_wf     = wf;
+        extra_wf.mag = (uint8_t *)malloc(mag_size);
+        extra_on     = slot_audio && extra_audio && extra_wf.mag && spectrum_init(&extra_spec, &extra_wf) &&
+                   ftx_subtract_init(block_size, n_tones,
+                                     protocol == FTX_PROTOCOL_FT8 ? FT8_SYMBOL_BT : FT4_SYMBOL_BT);
+        if (extra_on) {
+            extra_quit      = false;
+            extra_job       = false;
+            extra_busy      = false;
+            extra_found_n   = 0;
+            extra_thread_up = pthread_create(&extra_thread, NULL, extra_main, NULL) == 0;
+            extra_on        = extra_thread_up;
+        }
+        if (!extra_on) LV_LOG_WARN("FT8 worker: no memory for more passes, one pass only");
     }
 
     ftx_worker_reset();
@@ -226,26 +347,29 @@ error_cleanup:
  * worker (partial allocations are skipped via NULL checks).
  */
 void ftx_worker_free() {
+    if (extra_thread_up) {
+        pthread_mutex_lock(&extra_mux);
+        extra_quit = true;
+        pthread_cond_signal(&extra_cv);
+        pthread_mutex_unlock(&extra_mux);
+        pthread_join(extra_thread, NULL);
+        extra_thread_up = false;
+    }
+    ftx_subtract_free();
+    free(slot_audio);
+    slot_audio = NULL;
+    free(extra_audio);
+    extra_audio = NULL;
+    free(extra_wf.mag);
+    extra_wf.mag = NULL;
+    spectrum_free(&extra_spec);
+    extra_on   = false;
+    forget_slot();              /* the next init's reset mustn't submit this one */
     if (wf.mag) {
         free(wf.mag);
         wf.mag = NULL;
     }
-    if (frame_window) {
-        windowf_destroy(frame_window);
-        frame_window = NULL;
-    }
-    if (fft) {
-        fft_destroy_plan(fft);
-        fft = NULL;
-    }
-    if (time_buf) {
-        free(time_buf);
-        time_buf = NULL;
-    }
-    if (freq_buf) {
-        free(freq_buf);
-        freq_buf = NULL;
-    }
+    spectrum_free(&rx_spec);
     if (rx_window) {
         free(rx_window);
         rx_window = NULL;
@@ -255,23 +379,59 @@ void ftx_worker_free() {
 /**
  * Reset worker
  */
-void ftx_worker_reset() {
-    /* Once a slot: a reset follows the one at a full waterfall at the boundary */
-    if (wf.num_blocks > 0) ftx_call_table_age(10);
-    remember_own_call();
-    wf.num_blocks = 0;
-    num_candidates = 0;
+static void forget_slot(void) {
+    slot_len = 0;
+    heard.n  = 0;
     // Initialize hash table pointers
     for (int i = 0; i < MAX_DECODED_MESSAGES; ++i) {
         decoded_hashtable[i] = NULL;
     }
 }
 
+/* The slot just ended goes to the passes: its audio by swapping buffers, its
+ * decodes copied. If they're still on the last one this slot goes without. */
+static void extra_submit(void) {
+    pthread_mutex_lock(&extra_mux);
+    if (extra_job || extra_busy) {
+        pthread_mutex_unlock(&extra_mux);
+        LV_LOG_USER("FT8/FT4 extra passes: still busy, this slot skipped");
+        return;
+    }
+    float *t    = extra_audio;
+    extra_audio = slot_audio;
+    slot_audio  = t;
+    extra_len   = slot_len;
+    extra_heard = heard;
+    memcpy(extra_decoded, decoded, sizeof(decoded));
+    for (int i = 0; i < MAX_DECODED_MESSAGES; i++)
+        extra_table[i] = decoded_hashtable[i] ? &extra_decoded[decoded_hashtable[i] - decoded] : NULL;
+    extra_found_n = 0;
+    extra_job     = true;
+    pthread_cond_signal(&extra_cv);
+    pthread_mutex_unlock(&extra_mux);
+}
+
+void ftx_worker_reset() {
+    /* Once a slot: a reset follows the one at a full waterfall at the boundary */
+    if (wf.num_blocks > 0) {
+        pthread_mutex_lock(&hash_mux);
+        ftx_call_table_age(10);
+        pthread_mutex_unlock(&hash_mux);
+    }
+    remember_own_call();
+    wf.num_blocks = 0;
+    num_candidates = 0;
+    if (extra_on && slot_len >= wf.max_blocks * block_size) extra_submit();
+    forget_slot();
+}
+
 bool ftx_worker_generate_tx_samples(const char *text, const uint16_t signal_freq, const uint32_t sample_rate,
                                     int16_t **samples, uint32_t *n_samples) {
     ftx_message_t msg;
     ftx_message_init(&msg);
+    pthread_mutex_lock(&hash_mux);
     ftx_message_rc_t rc = ftx_encode_text(&msg, &ftx_call_table_if, text);
+    pthread_mutex_unlock(&hash_mux);
 
     if (rc != FTX_MESSAGE_RC_OK) {
         LV_LOG_ERROR("Cannot parse message %i", rc);
@@ -301,6 +461,8 @@ bool ftx_worker_generate_tx_samples(const char *text, const uint16_t signal_freq
     return true;
 }
 
+static void spectrum_block(spectrum_t *sp, const float *samples);
+
 void ftx_worker_put_rx_samples(float *samples, uint32_t n_samples) {
     if (wf.num_blocks >= wf.max_blocks) {
         LV_LOG_ERROR("FT8 wf is full");
@@ -312,26 +474,36 @@ void ftx_worker_put_rx_samples(float *samples, uint32_t n_samples) {
         return;
     }
 
+    if (extra_on && slot_len + (int)n_samples <= slot_cap) {
+        memcpy(slot_audio + slot_len, samples, n_samples * sizeof(float));
+        slot_len += n_samples;
+    }
+    spectrum_block(&rx_spec, samples);
+}
+
+/* One block (a symbol) of audio into the spectrum the decoder searches. */
+static void spectrum_block(spectrum_t *sp, const float *samples) {
+    ftx_waterfall_t *w = sp->wf;
     float *frame_ptr;
-    int    offset    = wf.num_blocks * wf.block_stride;
+    int    offset    = w->num_blocks * w->block_stride;
     int    frame_pos = 0;
 
-    for (int time_sub = 0; time_sub < wf.time_osr; time_sub++) {
-        windowf_write(frame_window, &samples[frame_pos], subblock_size);
+    for (int time_sub = 0; time_sub < w->time_osr; time_sub++) {
+        windowf_write(sp->window, (float *)&samples[frame_pos], subblock_size);
         frame_pos += subblock_size;
 
-        windowf_read(frame_window, &frame_ptr);
+        windowf_read(sp->window, &frame_ptr);
 
         for (size_t i = 0; i < nfft; i++) {
-            time_buf[i] = rx_window[i] * frame_ptr[i];
+            sp->time_buf[i] = rx_window[i] * frame_ptr[i];
         }
 
-        fft_execute(fft);
+        fft_execute(sp->fft);
 
-        for (int freq_sub = 0; freq_sub < wf.freq_osr; freq_sub++)
-            for (int bin = 0; bin < wf.num_bins; bin++) {
-                int           src_bin = (bin * wf.freq_osr) + freq_sub;
-                complex float freq = freq_buf[src_bin];
+        for (int freq_sub = 0; freq_sub < w->freq_osr; freq_sub++)
+            for (int bin = 0; bin < w->num_bins; bin++) {
+                int           src_bin = (bin * w->freq_osr) + freq_sub;
+                complex float freq = sp->freq_buf[src_bin];
                 float         mag2 = crealf(freq * conjf(freq));
                 float         db = 10.0f * log10f(mag2);
                 int           scaled = (int16_t)(db * 2.0f + 240.0f);
@@ -342,11 +514,11 @@ void ftx_worker_put_rx_samples(float *samples, uint32_t n_samples) {
                     scaled = 255;
                 }
 
-                wf.mag[offset] = scaled;
+                w->mag[offset] = scaled;
                 offset++;
             }
     }
-    wf.num_blocks++;
+    w->num_blocks++;
 }
 
 void ftx_worker_decode(decoded_msg_cb msg_cb, bool last, void *user_data) {
@@ -355,12 +527,12 @@ void ftx_worker_decode(decoded_msg_cb msg_cb, bool last, void *user_data) {
             num_candidates = ftx_find_candidates(&wf, MAX_CANDIDATES, candidate_list, ft8lib_min_score);
         } else if (last) {
             // Last decoding
-            decode_messages(&wf, &num_candidates, candidate_list, decoded, decoded_hashtable, LDPC_ITERATIONS, msg_cb,
-                            user_data);
+            decode_messages(&wf, &num_candidates, candidate_list, decoded, decoded_hashtable, LDPC_ITERATIONS,
+                            extra_on ? &heard : NULL, false, msg_cb, user_data);
         } else if (wf.num_blocks % DECODE_BLOCK_STRIDE == 0) {
             // incremental decoding
             decode_messages(&wf, &num_candidates, candidate_list, decoded, decoded_hashtable, EARLY_LDPC_ITERATIONS,
-                            msg_cb, user_data);
+                            extra_on ? &heard : NULL, false, msg_cb, user_data);
         }
     }
 }
@@ -375,7 +547,7 @@ bool ftx_worker_is_full() {
 
 static void decode_messages(const ftx_waterfall_t *wf, int *num_candidates, ftx_candidate_t *candidate_list,
                             ftx_message_t *decoded, ftx_message_t **decoded_hashtable, int ldpc_iterations,
-                            decoded_msg_cb msg_cb, void *user_data) {
+                            heard_list_t *heard_list, bool retry, decoded_msg_cb msg_cb, void *user_data) {
     // Go over candidates and attempt to decode messages
 
     if (!num_candidates || *num_candidates <= 0) return;
@@ -387,6 +559,8 @@ static void decode_messages(const ftx_waterfall_t *wf, int *num_candidates, ftx_
     int to_delete_size = 0;
 
     for (int idx = 0; idx < *num_candidates; ++idx) {
+        if (retry && extra_stop()) break; /* the extra passes' time, or the window closing */
+
         const ftx_candidate_t *cand = &candidate_list[idx];
 
         // Skip candidates, that are not fully received
@@ -398,7 +572,9 @@ static void decode_messages(const ftx_waterfall_t *wf, int *num_candidates, ftx_
 
         ftx_message_t       message;
         ftx_decode_status_t status;
-        if (!ftx_decode_candidate(wf, cand, ldpc_iterations, &message, &status)) {
+        /* The strongest candidates first: the extra passes' retries go as far as the time allows */
+        if (!ftx_decode_candidate(wf, cand, ldpc_iterations, &message, &status) &&
+            !(retry && idx < RETRY_CANDIDATES && ftx_decode_retry(wf, cand, ldpc_iterations, &message))) {
             if (status.ldpc_errors > 0) {
                 LV_LOG_INFO("LDPC decode: %d errors", status.ldpc_errors);
             } else if (status.crc_calculated != status.crc_extracted) {
@@ -436,15 +612,25 @@ static void decode_messages(const ftx_waterfall_t *wf, int *num_candidates, ftx_
             decoded_hashtable[idx_hash] = &decoded[idx_hash];
 
             char             text[FTX_CONTEST_TEXT_LEN];
+            pthread_mutex_lock(&hash_mux);
             ftx_message_rc_t unpack_status = ftx_message_decode(&message, &ftx_call_table_if, text);
             /* Contest and DXpedition messages ft8_lib can't unpack */
             if (unpack_status != FTX_MESSAGE_RC_OK && ftx_contest_decode(&message, &ftx_call_table_if, text, sizeof(text)))
                 unpack_status = FTX_MESSAGE_RC_OK;
+            pthread_mutex_unlock(&hash_mux);
             if (unpack_status != FTX_MESSAGE_RC_OK) {
                 LV_LOG_INFO("Error [%d] while unpacking!", (int)unpack_status);
             } else {
                 int snr = get_message_snr(wf, cand, &message);
                 msg_cb(text, snr, freq_hz, time_sec, user_data);
+            }
+            if (heard_list && heard_list->n < MAX_DECODED_MESSAGES) { /* to take out for the next pass */
+                heard_sig_t *h = &heard_list->sig[heard_list->n++];
+                if (wf->protocol == FTX_PROTOCOL_FT8) ft8_encode(message.payload, h->tones);
+                else ft4_encode(message.payload, h->tones);
+                h->freq_hz    = freq_hz;
+                h->time_sec   = time_sec;
+                h->subtracted = false;
             }
         }
     }
@@ -462,4 +648,126 @@ static int get_message_snr(const ftx_waterfall_t *wf, const ftx_candidate_t *can
         ft8_encode(msg->payload, tones);
     }
     return ftx_get_snr(wf, candidate, tones, n_tones);
+}
+
+void ftx_worker_set_realtime(bool on) {
+    extra_realtime = on;
+}
+
+/* Its time is up, or the window is closing. */
+static bool extra_stop(void) {
+    pthread_mutex_lock(&extra_mux);
+    bool quit = extra_quit;
+    pthread_mutex_unlock(&extra_mux);
+    if (quit) return true;
+    if (!extra_realtime) return false;
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (now.tv_sec - extra_started.tv_sec) + (now.tv_nsec - extra_started.tv_nsec) / 1e9f >=
+           slot_secs * EXTRA_BUDGET;
+}
+
+/* Their finds wait for the audio thread, which owns what happens next. */
+static void extra_found_cb(const char *text, int snr, float freq_hz, float time_sec, void *user_data) {
+    (void)user_data;
+    pthread_mutex_lock(&extra_mux);
+    if (extra_found_n < MAX_DECODED_MESSAGES) {
+        extra_found_t *f = &extra_found[extra_found_n++];
+        snprintf(f->text, sizeof(f->text), "%s", text);
+        f->snr      = snr;
+        f->freq_hz  = freq_hz;
+        f->time_sec = time_sec;
+    }
+    pthread_mutex_unlock(&extra_mux);
+}
+
+static void extra_passes_run(void) {
+    for (int pass = 0; pass < EXTRA_PASSES; pass++) {
+        int done = 0;
+        for (int i = 0; i < extra_heard.n; i++) {
+            heard_sig_t *h = &extra_heard.sig[i];
+            if (h->subtracted) continue;
+            if (extra_stop()) return;
+            /* ft8_lib's time is that of the spectrum frame, two symbols long: the
+             * signal starts a symbol before it (fitted within a symbol by ftx_subtract) */
+            ftx_subtract(extra_audio, extra_len, rx_rate, h->tones, h->freq_hz,
+                         (int)lroundf(h->time_sec * rx_rate) - block_size);
+            h->subtracted = true;
+            done++;
+        }
+        if ((!done && pass > 0) || extra_stop()) return;
+
+        /* The spectrum again, from what's left, and a fresh search */
+        int before = extra_heard.n;
+        windowf_reset(extra_spec.window);
+        extra_wf.num_blocks = 0;
+        for (int b = 0; b + block_size <= extra_len && extra_wf.num_blocks < extra_wf.max_blocks; b += block_size)
+            spectrum_block(&extra_spec, extra_audio + b);
+        extra_num_candidates = ftx_find_candidates(&extra_wf, MAX_CANDIDATES, extra_candidates, ft8lib_min_score);
+        if (extra_stop()) return;
+        decode_messages(&extra_wf, &extra_num_candidates, extra_candidates, extra_decoded, extra_table, LDPC_ITERATIONS,
+                        &extra_heard, true, extra_found_cb, NULL);
+        if (extra_heard.n == before) return; /* nothing new: no more passes */
+    }
+}
+
+/* As JS8's decode threads (js8/cpu_fence): off the last core, which is left
+ * for the GUI thread, and below the rest in priority. */
+static void extra_fence(void) {
+    setpriority(PRIO_PROCESS, (id_t)syscall(SYS_gettid), EXTRA_NICE);
+    long cores = sysconf(_SC_NPROCESSORS_ONLN);
+    if (cores < 3) return;
+    cpu_set_t set;
+    CPU_ZERO(&set);
+    for (long c = 0; c < cores - 1; c++) CPU_SET(c, &set);
+    pthread_setaffinity_np(pthread_self(), sizeof(set), &set);
+}
+
+static void *extra_main(void *arg) {
+    (void)arg;
+    pthread_setname_np(pthread_self(), "ftx-extra");
+    extra_fence();
+    for (;;) {
+        pthread_mutex_lock(&extra_mux);
+        while (!extra_job && !extra_quit) pthread_cond_wait(&extra_cv, &extra_mux);
+        if (extra_quit) {
+            pthread_mutex_unlock(&extra_mux);
+            return NULL;
+        }
+        extra_job  = false;
+        extra_busy = true;
+        pthread_mutex_unlock(&extra_mux);
+
+        int before = extra_heard.n;
+        clock_gettime(CLOCK_MONOTONIC, &extra_started);
+        extra_passes_run();
+        struct timespec t1;
+        clock_gettime(CLOCK_MONOTONIC, &t1);
+        /* Each slot, in the app log: what they found and how long they took */
+        LV_LOG_USER("FT8/FT4 extra passes: %d more decoded (of %d), %ld ms%s", extra_heard.n - before, extra_heard.n,
+                    (long)((t1.tv_sec - extra_started.tv_sec) * 1000 + (t1.tv_nsec - extra_started.tv_nsec) / 1000000),
+                    extra_stop() ? ", stopped at the limit" : "");
+
+        pthread_mutex_lock(&extra_mux);
+        extra_busy = false;
+        pthread_mutex_unlock(&extra_mux);
+    }
+}
+
+void ftx_worker_decode_more(decoded_msg_cb msg_cb, void *user_data) {
+    if (!extra_on) return;
+    extra_found_t found[MAX_DECODED_MESSAGES];
+    pthread_mutex_lock(&extra_mux);
+    int n = extra_found_n;
+    memcpy(found, extra_found, sizeof(found[0]) * n);
+    extra_found_n = 0;
+    pthread_mutex_unlock(&extra_mux);
+    for (int i = 0; i < n; i++) msg_cb(found[i].text, found[i].snr, found[i].freq_hz, found[i].time_sec, user_data);
+}
+
+bool ftx_worker_extra_busy(void) {
+    pthread_mutex_lock(&extra_mux);
+    bool busy = extra_job || extra_busy;
+    pthread_mutex_unlock(&extra_mux);
+    return busy;
 }

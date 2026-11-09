@@ -35,6 +35,18 @@ void ftx_worker_reset();
  */
 void ftx_worker_set_own_call(const char *call);
 
+/// @brief What the extra decoding passes (FT8/FT4, as WSJT-X) have found so far
+/// in the slot just ended: what was decoded is taken out of its audio and the
+/// rest searched again, on a thread of their own. Call often from the audio
+/// thread; nothing to do for FT2.
+void ftx_worker_decode_more(decoded_msg_cb msg_cb, void *user_data);
+
+/// @brief Whether the extra passes are still working (PC tests on recordings)
+bool ftx_worker_extra_busy(void);
+
+/// @brief Off: the extra decoding passes have no time limit (PC tests on recordings)
+void ftx_worker_set_realtime(bool on);
+
 /// @brief Generate audio samples for TX
 /// @param[in] text message to send
 /// @param[in] signal_freq base signal frequency
