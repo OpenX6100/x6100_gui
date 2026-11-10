@@ -17,6 +17,8 @@ Output (CSV, one record per line, t = Unix time on the radio):
   P,t,pid,name,cpu%        another process using >= 2 %
   L,t,text                 a new line in the GUI's log (filtered)
   K,t,zone,type,temp_mC    temperature, once a minute
+  M,t,rss_kB               the GUI's memory in use (VmRSS): a steady climb over
+                           hours is a leak
 Every 10 s a one-line summary goes to now.txt next to the output.
 """
 
@@ -257,6 +259,9 @@ def main():
         gui_main = 0.0
         top = ("-", 0.0)
         if pid:
+            m = re.search(r"VmRSS:\s*(\d+)", read("/proc/%d/status" % pid) or "")
+            if m:
+                out.write("M,%.2f,%s\n" % (t, m.group(1)))
             th = thread_sample(pid)
             if th is None:
                 pid = None

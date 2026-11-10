@@ -217,7 +217,7 @@ def report(d=None):
     header = [r for r in rows if r[0].startswith("#")]
     interval = float(re.search(r"interval ([\d.]+)", ",".join(header[0])).group(1)) if header else 1.0
 
-    S, C, H, P, L, K, N = [], [], {}, {}, [], [], {}
+    S, C, H, P, L, K, N, M = [], [], {}, {}, [], [], {}, []
     for r in rows:
         k = r[0]
         if k == "S":
@@ -237,6 +237,8 @@ def report(d=None):
             L.append((float(r[1]), ",".join(r[2:])))
         elif k == "K":
             K.append((float(r[1]), r[3], int(r[4])))
+        elif k == "M":
+            M.append((float(r[1]), int(r[2]) / 1024.0))
     if not C:
         sys.exit("no samples in " + d)
 
@@ -267,6 +269,15 @@ def report(d=None):
     mem = [int(c[4]) for c in C if c[4].lstrip("-").isdigit()]
     if mem:
         w("  memory available: %d..%d MB" % (min(mem), max(mem)))
+    if len(M) > 1:
+        # least-squares slope: a steady climb over a long run is a leak
+        mt = statistics.mean(t for t, _ in M)
+        mm = statistics.mean(v for _, v in M)
+        var = sum((t - mt) ** 2 for t, _ in M)
+        slope = sum((t - mt) * (v - mm) for t, v in M) / var * 3600 if var else 0.0
+        w("  GUI memory (RSS): %.1f MB at start, %.1f at end, max %.1f; trend %+.2f MB/hour%s"
+          % (M[0][1], M[-1][1], max(v for _, v in M), slope,
+             " (a leak? run longer to be sure)" if slope > 1 and t1 - t0 > 1800 else ""))
     if K:
         temps = {}
         for t, typ, v in K:
