@@ -137,15 +137,25 @@ Claude Code, the `/new-app` skill walks through it.
 - **The image:** Buildroot builds it, locally (README, *Building*) or on
   GitHub with *Build image* (about an hour). There is no quick way to run
   the whole GUI on a PC.
-- **Quick checks (seconds):** `python3 tools/checks/check_app_cases.py`,
-  `python3 tools/checks/check_build_list.py`. CI runs both on every PR
-  (*Merge checks*).
+- **Quick checks (seconds),** all in `tools/checks/`, all run by CI on every
+  PR (*Merge checks*), all runnable on a PC:
+  - `check_app_cases.py`: every app's window case ends in its `break;`
+    (and a warning when an app doesn't announce its window for the voice
+    mode, which tells a blind operator what opened);
+  - `check_build_list.py`: every source file is in the build list;
+  - `check_tests_in_ci.py`: every unit test is run by CI;
+  - `check_ratchets.py`: risky patterns only get rarer, file by file
+    (`ratchets.json`): i2c and `/dev/rtc1` only where they are today,
+    no new colours typed into the code outside `src/styles.c`. Raising a
+    number there is the reviewers' decision: say why in the PR.
 - **Compile check for ARM:** `tools/radio/x6100-syncheck src/file.c ...`
   with a local Buildroot build or the matching toolchain (see the file).
-- **Unit tests** (Catch2, on a PC, as CI does):
-  `cmake -B build_test -DENABLE_TESTING=YES && cmake --build build_test -j --target test_js8 test_js8_db test_tx_level`,
-  then run `build_test/tests/<test>`. `./run_tests.sh` builds and runs them
-  all. Catch2 splits test names at commas: escape `\,`.
+- **Unit tests** (Catch2, on a PC): `./run_tests.sh` builds and runs them
+  all; CI (*Unit tests*) runs all of them in two jobs, because JS8 needs
+  Ubuntu 24.04's Boost and the others need 22.04's libgpiod 1.6 (plus
+  SQLite and liquid-dsp at the image's versions, built in the job). A new
+  test goes in `tests/CMakeLists.txt` **and** `.github/workflows/tests.yml`.
+  Catch2 splits test names at commas: escape `\,`.
 - **A fresh checkout** needs `git submodule update --init` (LVGL, its
   drivers).
 - **Never say "done" without checking**, and say where each claim comes

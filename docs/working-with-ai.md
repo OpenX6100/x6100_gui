@@ -124,6 +124,12 @@ things later; **Merge checks** now catches both on every PR:
   (`tx_level.c`, `tx_player.c`, #311/#312), and only the full image build
   showed it, a week later.
 
+The same goes for tests: until November, CI ran only 3 of the 11 unit
+tests. The first run of the other eight found one that had been out of date
+for a month (the FT8 protocol setting gained FT2). Now every test runs on
+every PR, and a check fails if a new one is left out. Tests that don't run
+protect nothing.
+
 ## Plain words
 
 If you aren't a programmer, say so to the AI once and ask for plain words.
