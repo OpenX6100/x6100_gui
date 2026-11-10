@@ -60,7 +60,20 @@ jobs:
         submodules: true
 
     - name: Packages
-      run: sudo apt-get update && sudo apt-get install -y cmake g++ libsqlite3-dev libgpiod-dev libliquid-dev pkg-config
+      run: sudo apt-get update && sudo apt-get install -y cmake g++ libgpiod-dev pkg-config autoconf automake
+
+    # SQLite and liquid-dsp as the image has them (AetherX6100Buildroot's
+    # buildroot/package/sqlite and liquid-dsp): 22.04's own are too old
+    # (SQLite 3.37 has no RIGHT JOIN, which cfg's band query uses; liquid-dsp
+    # 1.3 lacks LIQUID_OK and liquid_hann, which the CW decoder uses).
+    - name: SQLite 3.40.1 and liquid-dsp 1.4.0
+      run: |
+        cd /tmp
+        curl -fsSL https://www.sqlite.org/2022/sqlite-autoconf-3400100.tar.gz | tar xz
+        (cd sqlite-autoconf-3400100 && ./configure -q --prefix=/usr/local && make -s -j"$(nproc)" && sudo make -s install)
+        curl -fsSL https://github.com/jgaeddert/liquid-dsp/archive/refs/tags/v1.4.0.tar.gz | tar xz
+        (cd liquid-dsp-1.4.0 && ./bootstrap.sh && ./configure -q --prefix=/usr/local && make -s -j"$(nproc)" && sudo make -s install)
+        sudo ldconfig
 
     # ft8lib as the image has it: AetherX6100Buildroot's package/ft8lib
     # (keep the commit in step with its FT8LIB_VERSION).
