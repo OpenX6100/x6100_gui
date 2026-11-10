@@ -62,10 +62,25 @@ jobs:
     - name: Packages
       run: sudo apt-get update && sudo apt-get install -y cmake g++ libsqlite3-dev libgpiod-dev libliquid-dev pkg-config
 
+    # ft8lib as the image has it: AetherX6100Buildroot's package/ft8lib
+    # (keep the commit in step with its FT8LIB_VERSION).
+    - name: ft8lib
+      run: |
+        git clone -q https://github.com/gdyuldin/ft8_lib /tmp/ft8_lib
+        git -C /tmp/ft8_lib checkout -q 73b0db861dc41c7ca9f3dedc73ee148daa06dd0e
+        make -C /tmp/ft8_lib lib
+        sudo mkdir -p /usr/local/include/ft8lib
+        sudo install -m 0644 /tmp/ft8_lib/ft8/*.h /usr/local/include/ft8lib/
+        sudo install -m 0755 /tmp/ft8_lib/.build/libft8.so /usr/local/lib/
+        sudo ldconfig
+
     - name: Build the tests (ASan/UBSan)
       run: |
         cmake -B build_test -DENABLE_TESTING=YES
-        cmake --build build_test -j"$(nproc)" --target test_qth test_itu_region test_adif_rec test_digi_txq test_ft8_qso test_civ test_cfg test_cw_decoder
+        # -k: every test that builds still runs, and the log shows every failure
+        cmake --build build_test -j"$(nproc)" --target test_qth test_itu_region test_adif_rec test_digi_txq test_ft8_qso test_civ test_cfg test_cw_decoder -- -k || echo "::error::some tests didn't build (above)"
 
     - name: Tests
-      run: ctest --test-dir build_test --output-on-failure -R '^(test_qth|test_itu_region|test_adif_rec|test_digi_txq|test_ft8_qso|test_civ|test_cfg|test_cw_decoder)$'
+      if: always()
+      run: |
+        ctest --test-dir build_test --output-on-failure -R '^(test_qth|test_itu_region|test_adif_rec|test_digi_txq|test_ft8_qso|test_civ|test_cfg|test_cw_decoder)$'
