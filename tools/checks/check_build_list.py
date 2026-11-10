@@ -7,18 +7,17 @@ resolves a conflict there with "keep ours" can drop another PR's files
 file still works, so only the link fails, and the link happens only in the
 full image build, an hour later.
 
-  tools/checks/check_build_list.py [--base REF]
+  tools/checks/check_build_list.py
 
 Checks that every .c/.cpp file under src/ (outside the folders with their own
 CMakeLists.txt) is listed in src/CMakeLists.txt, and every listed file
-exists. With --base (a git ref, e.g. the PR's target branch), also lists
-files the base builds and this tree no longer does. Exits 1 on a problem.
+exists: a file a merge dropped from the list is still on disk, so it shows
+up here. Exits 1 on a problem.
 """
 
 import glob
 import os
 import re
-import subprocess
 import sys
 
 CMAKE = "src/CMakeLists.txt"
@@ -51,13 +50,8 @@ def on_disk():
 
 
 def main():
-    args = sys.argv[1:]
-    base = None
-    if args[:1] == ["--base"] and len(args) > 1:
-        base = args[1]
-    elif args:
+    if sys.argv[1:]:
         sys.exit(__doc__)
-
     now = listed(open(CMAKE, encoding="utf-8").read())
     files = on_disk()
     problems = []
@@ -66,18 +60,11 @@ def main():
                         f"(or to NOT_BUILT in {sys.argv[0]} with a reason)")
     for f in sorted(now - files):
         problems.append(f"{CMAKE} lists {f}, which doesn't exist")
-    if base:
-        old = subprocess.run(["git", "show", f"{base}:{CMAKE}"], capture_output=True, text=True)
-        if old.returncode:
-            sys.exit(f"git show {base}:{CMAKE} failed: {old.stderr.strip()}")
-        for f in sorted(listed(old.stdout) - now):
-            if f in files:
-                problems.append(f"{f} is built on {base} but dropped here (a merge that kept only one side?)")
     for p in problems:
         print(p)
     if problems:
         return 1
-    print(f"{CMAKE}: all {len(files - NOT_BUILT)} source files listed" + (f", nothing dropped since {base}" if base else ""))
+    print(f"{CMAKE}: all {len(files - NOT_BUILT)} source files listed")
     return 0
 
 
