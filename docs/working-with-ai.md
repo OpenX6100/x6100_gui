@@ -30,7 +30,7 @@ written.** AI code gets the same review as anyone's.
    options on a real screenshot of your radio, at the real size (the screen
    is 5", so marks bigger and thicker than on a desktop). Picking from
    pictures is quick; changing finished code is slow.
-3. **A branch per change**, with a name without `/` (e.g. `tx-meter-led`).
+3. **A branch per change**, with a plain name (e.g. `tx-meter-led`).
 4. **A test image** from your branch: Actions > *Build image* > Run workflow,
    about an hour. The image stays on the run's page for 30 days.
 5. **Test on the radio.** You're the tester: try it, tell the AI what you saw,
