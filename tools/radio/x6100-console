@@ -1,0 +1,271 @@
+#!/usr/bin/env python3
+"""Talk to the Xiegu X6100's Linux console over its USB-C serial port.
+
+  x6100-console ports            list candidate serial ports
+  x6100-console probe            find which port is the console (sends Enter)
+  x6100-console daemon [PORT]    hold the port (default: the radio's console,
+                                 found by its USB id): log everything,
+                                 accept commands
+  x6100-console cmd 'CMD' [SEC]  run CMD on the radio, print its output
+  x6100-console send 'TEXT'      type TEXT + Enter without waiting
+  x6100-console tail [N]         last N lines of the console log
+  x6100-console stop             stop the daemon
+
+cmd and send look at what the console showed last and refuse to type while
+the radio is booting or shows the stock Xiegu login or banner (a firmware
+flash: hands off). cmd also refuses at the login or password prompt; log in
+with send. `cmd --force` / `send --force` type anyway.
+
+The daemon owns the port so the console can be logged continuously while
+commands are sent; for an interactive session stop it and use
+`picocom -b 115200 PORT`. Its log is rotated (console.log.1) when the daemon
+starts with it over 4 MB.
+"""
+
+import glob
+import os
+import re
+import sys
+import time
+import uuid
+
+import serial
+
+STATE = os.environ.get("X6100_CONSOLE_STATE") or os.path.expanduser("~/.cache/x6100-console")
+LOG = os.path.join(STATE, "console.log")
+FIFO = os.path.join(STATE, "cmd.fifo")
+PIDF = os.path.join(STATE, "daemon.pid")
+BAUD = 115200
+LOG_ROTATE = 4 * 1024 * 1024  # bytes: console.log -> console.log.1 when the daemon starts
+
+# What the console shows (seen in its log): our shell prompt
+# "[root@X6100:/root]# ", our login "X6100 login:" and "Password:", the stock
+# Xiegu firmware's "XIEGU-x6100 login:" and "Welcome to XIEGU X6100!", a boot.
+SHELL_RE = re.compile(r"(\[root@[^\]]*\][#$]|^[^\n]*[#$]) ?$", re.M)
+STOCK_RE = re.compile(r"XIEGU-x6100 login:|Welcome to XIEGU X6100")
+BOOT_RE = re.compile(r"U-Boot|Starting kernel|Booting Linux")
+LOGIN_RE = re.compile(r"(?<!XIEGU-x6100 )(?<!XIEGU-)\bX6100 login:|Password:")
+
+
+def ports():
+    out = []
+    for p in sorted(glob.glob("/dev/ttyUSB*") + glob.glob("/dev/ttyACM*")):
+        name = os.path.basename(p)
+        dev = os.path.realpath(f"/sys/class/tty/{name}/device")
+        vid = pid = iface = ""
+        d = dev
+        for _ in range(6):
+            if os.path.exists(os.path.join(d, "idVendor")):
+                vid = open(os.path.join(d, "idVendor")).read().strip()
+                pid = open(os.path.join(d, "idProduct")).read().strip()
+                break
+            if not iface and os.path.exists(os.path.join(d, "bInterfaceNumber")):
+                iface = open(os.path.join(d, "bInterfaceNumber")).read().strip()
+            d = os.path.dirname(d)
+        out.append((p, vid, pid, iface))
+    return out
+
+
+def probe():
+    for p, vid, pid, iface in ports():
+        try:
+            s = serial.Serial(p, BAUD, timeout=0.3)
+        except Exception as e:
+            print(f"{p} {vid}:{pid} if{iface}: can't open ({e})")
+            continue
+        s.reset_input_buffer()
+        s.write(b"\r\n")
+        time.sleep(1.0)
+        data = s.read(4096)
+        s.close()
+        txt = data.decode("utf-8", "replace").strip().replace("\r", "")
+        looks = any(k in txt for k in ("login:", "# ", "$ ", "Password", "~#"))
+        print(f"{p} {vid}:{pid} if{iface}: {'CONSOLE? ' if looks else ''}{txt[-120:]!r}")
+
+
+# The radio's DEV USB-C port is a WCH CH342 dual serial: interface 00 is the
+# console, 02 is CAT. Usually ttyACM0/ttyACM1, but another USB serial device
+# plugged in first (a phone) moves them up.
+RADIO_USB = ("1a86", "55d2")
+
+
+def find_console():
+    for p, vid, pid, iface in ports():
+        if (vid, pid) == RADIO_USB and iface == "00":
+            return p
+    sys.exit("no X6100 found on USB (DEV port, CH342 1a86:55d2): give the port, e.g. "
+             "x6100-console daemon /dev/ttyACM0")
+
+
+def daemon_pid():
+    """The running daemon's pid, or None (a daemon.pid left by one that died
+    is removed)."""
+    try:
+        pid = int(open(PIDF).read())
+        os.kill(pid, 0)
+        return pid
+    except (OSError, ValueError):
+        if os.path.exists(PIDF):
+            os.remove(PIDF)
+        return None
+
+
+def daemon(port):
+    os.makedirs(STATE, exist_ok=True)
+    if daemon_pid():
+        sys.exit(f"a daemon is already running (pid {daemon_pid()}): x6100-console stop")
+    if not os.path.exists(FIFO):
+        os.mkfifo(FIFO)
+    if log_size() > LOG_ROTATE:
+        os.replace(LOG, LOG + ".1")
+    with open(PIDF, "w") as f:
+        f.write(str(os.getpid()))
+    s = serial.Serial(port, BAUD, timeout=0.05)
+    fd = os.open(FIFO, os.O_RDONLY | os.O_NONBLOCK)
+    log = open(LOG, "ab", buffering=0)
+    log.write(f"\n==== daemon on {port} {time.strftime('%F %T')} ====\n".encode())
+    while True:
+        try:
+            data = s.read(4096)
+        except serial.SerialException:
+            log.write(b"\n==== port lost; retrying ====\n")
+            s.close()
+            while True:
+                time.sleep(1)
+                try:
+                    s = serial.Serial(port, BAUD, timeout=0.05)
+                    log.write(b"==== port back ====\n")
+                    break
+                except Exception:
+                    pass
+            continue
+        if data:
+            log.write(data)
+        try:
+            cmd = os.read(fd, 65536)
+        except BlockingIOError:
+            cmd = b""
+        if cmd:
+            s.write(cmd)
+
+
+def log_size():
+    return os.path.getsize(LOG) if os.path.exists(LOG) else 0
+
+
+def write_fifo(data: bytes):
+    if not daemon_pid():
+        sys.exit("daemon not running: x6100-console daemon [PORT]")
+    try:
+        fd = os.open(FIFO, os.O_WRONLY | os.O_NONBLOCK)
+    except OSError:  # nobody reading the FIFO
+        sys.exit("daemon not running: x6100-console daemon [PORT]")
+    os.write(fd, data)
+    os.close(fd)
+
+
+def log_end(nbytes=8192):
+    """The last `nbytes` of the log, as text."""
+    if not os.path.exists(LOG):
+        return ""
+    with open(LOG, "rb") as f:
+        f.seek(max(0, log_size() - nbytes))
+        return f.read().decode("utf-8", "replace").replace("\r", "")
+
+
+def console_state():
+    """What the console showed last: shell, login (ours), stock, boot or
+    unknown."""
+    text, last, state = log_end(), -1, "unknown"
+    for name, rx in (("shell", SHELL_RE), ("login", LOGIN_RE), ("stock", STOCK_RE), ("boot", BOOT_RE)):
+        for m in rx.finditer(text):
+            if m.start() >= last:
+                last, state = m.start(), name
+    return state
+
+
+def guard(for_cmd, force):
+    """Refuse to type into the wrong thing (the hands-off rule for firmware
+    flashes, now enforced here)."""
+    if not daemon_pid():
+        sys.exit("daemon not running: x6100-console daemon [PORT]")
+    if force:
+        return
+    state = console_state()
+    if state == "stock":
+        sys.exit("the console shows the stock Xiegu login or banner (a firmware flash?): typing nothing. "
+                 "--force if you're sure")
+    if state == "boot":
+        sys.exit("the radio is booting: wait for the login prompt (x6100-console tail). --force if you're sure")
+    if state == "login" and for_cmd:
+        sys.exit("at the login or password prompt: log in with send first. --force if you're sure")
+
+
+def cmd(command, timeout, force=False):
+    guard(True, force)
+    mark = uuid.uuid4().hex[:8]
+    start = log_size()
+    # The marker is split so the echoed command line doesn't match it.
+    write_fifo(f"{command}; echo '__EN''D_{mark}__' $?\n".encode())
+    end = f"__END_{mark}__"
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        time.sleep(0.2)
+        with open(LOG, "rb") as f:
+            f.seek(start)
+            text = f.read().decode("utf-8", "replace").replace("\r", "")
+        if end in text:
+            body, _, rest = text.partition(end)
+            lines = body.split("\n")[1:]  # drop the echoed command
+            print("\n".join(lines).rstrip())
+            status = rest.split()[0] if rest.split() else "?"
+            if status != "0":
+                print(f"[exit {status}]")
+            return
+    with open(LOG, "rb") as f:
+        f.seek(start)
+        print(f.read().decode("utf-8", "replace").replace("\r", ""))
+    print(f"[no end marker after {timeout}s]")
+
+
+def main():
+    a = sys.argv[1:]
+    if not a or a[0] in ("-h", "--help"):
+        print(__doc__)
+    elif a[0] == "ports":
+        for p in ports():
+            print(*p)
+    elif a[0] == "probe":
+        probe()
+    elif a[0] == "daemon":
+        daemon(a[1] if len(a) > 1 else find_console())
+    elif a[0] in ("cmd", "send"):
+        force = "--force" in a[1:]
+        rest = [x for x in a[1:] if x != "--force"]
+        if not rest:
+            sys.exit(__doc__)
+        if a[0] == "cmd":
+            cmd(rest[0], float(rest[1]) if len(rest) > 1 else 10, force)
+        else:
+            guard(False, force)
+            write_fifo((rest[0] + "\n").encode())
+    elif a[0] == "tail":
+        n = int(a[1]) if len(a) > 1 else 40
+        # From the end: the log grows to megabytes (screenshots add base64).
+        text = log_end(max(8192, n * 400))
+        print("\n".join(text.rstrip("\n").split("\n")[-n:]))
+    elif a[0] == "stop":
+        pid = daemon_pid()
+        if pid:
+            try:
+                os.kill(pid, 15)
+            except ProcessLookupError:
+                pass
+        if os.path.exists(PIDF):
+            os.remove(PIDF)
+    else:
+        sys.exit(__doc__)
+
+
+if __name__ == "__main__":
+    main()
