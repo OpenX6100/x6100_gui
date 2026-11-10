@@ -8,7 +8,13 @@ as well (two windows at once). The compiler doesn't warn about it.
   tools/checks/check_app_cases.py [FILE]    (default src/main_screen.c)
 
 Prints each case that runs into the next one and exits 1, or exits 0.
+
+It also warns (never fails) about an app case that doesn't announce its
+window with voice_say_text_fmt(): with the radio's voice mode, that is how
+a blind operator knows which window opened.
 """
+
+import os
 
 import re
 import sys
@@ -25,7 +31,7 @@ def strip_comments(text):
 
 def check(path):
     lines = strip_comments(open(path, encoding="utf-8").read()).split("\n")
-    problems = []
+    problems, warnings = [], []
     depth = 0
     block = None  # the open ACTION_APP_* case: name, line, depth, has code, ended
 
@@ -33,6 +39,9 @@ def check(path):
         if block and block["code"] and not block["ended"]:
             problems.append(f"{path}:{block['line']}: case {block['name']} runs into the next "
                             f"case (line {next_line}): its `break;` is missing")
+        if block and block["code"] and not block["voice"]:
+            warnings.append((block["line"], f"case {block['name']} opens a window without "
+                             "voice_say_text_fmt(\"... window\") for the voice mode"))
 
     for n, line in enumerate(lines, 1):
         s = line.strip()
@@ -42,26 +51,34 @@ def check(path):
             close(n)
             m = APP.match(line)
             block = {"name": m.group(1), "line": n, "depth": depth, "code": False,
-                     "ended": False} if m else None
+                     "ended": False, "voice": False} if m else None
             continue
         depth += s.count("{") - s.count("}")
         if block is None:
             continue
         if depth < block["depth"]:
+            close(n)
             block = None  # the end of the switch: nothing runs into anything
             continue
         if not s or s in ("{", "}"):
             continue
+        if "voice_say_text" in s or "main_screen_start_app(" in s:
+            block["voice"] = True  # the app's own case (in main_screen_start_app) speaks
         if depth == block["depth"] and END.match(s):
             block["code"] = block["ended"] = True
         else:
             block["code"], block["ended"] = True, False
-    return problems
+    return problems, warnings
 
 
 def main():
     path = sys.argv[1] if len(sys.argv) > 1 else "src/main_screen.c"
-    problems = check(path)
+    problems, warnings = check(path)
+    for line, w in warnings:
+        if os.environ.get("GITHUB_ACTIONS"):
+            print(f"::warning file={path},line={line},title=Voice mode::{w}")
+        else:
+            print(f"warning: {path}:{line}: {w}")
     for p in problems:
         print(p)
     if problems:
