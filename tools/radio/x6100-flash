@@ -7,8 +7,8 @@
 #   x6100-flash FILE.img
 #
 # Steps: checks the image's own partition table (BOOT + rootfs ending where
-# the card's DATA starts), finds the card (a USB or removable disk with BOOT
-# and DATA on it; never a guessed /dev/sdX), backs up DATA, asks, writes the
+# the card's DATA starts), finds the card (a USB, SD-slot or removable disk
+# with BOOT and DATA on it; never a guessed /dev/sdX), backs up DATA, asks, writes the
 # image, puts the DATA partition back in the table, checks DATA matches the
 # backup and powers the card off. Asks for your sudo password for the write.
 #
@@ -88,16 +88,21 @@ echo "image layout: BOOT + rootfs, ending at sector $IMG_END"
 # --- the card --------------------------------------------------------------------
 say "Looking for the card"
 CARDS=()
-while read -r name tran rm; do
-    [ "$tran" = usb ] || [ "$rm" = 1 ] || continue
+while read -r line; do
+    # lsblk -P: KEY="value" pairs, so an empty TRAN doesn't shift the fields
+    name=$(sed -n 's/.*NAME="\([^"]*\)".*/\1/p' <<<"$line")
+    tran=$(sed -n 's/.*TRAN="\([^"]*\)".*/\1/p' <<<"$line")
+    rm=$(sed -n 's/.*RM="\([^"]*\)".*/\1/p' <<<"$line")
+    # a USB reader, a built-in SD slot (mmc), or anything removable
+    [ "$tran" = usb ] || [ "$tran" = mmc ] || [ "$rm" = 1 ] || [[ "$name" == mmcblk* ]] || continue
     labels=$(lsblk -nlo LABEL "/dev/$name" | tr '\n' ' ')
     [[ " $labels " == *" BOOT "* && " $labels " == *" DATA "* ]] || continue
     if [ -n "${X6100_CARD_SERIAL:-}" ]; then
         [ "$(lsblk -dno SERIAL "/dev/$name" | tr -d ' ')" = "$X6100_CARD_SERIAL" ] || continue
     fi
     CARDS+=("$name")
-done < <(lsblk -dnlo NAME,TRAN,RM -e 7)
-[ ${#CARDS[@]} -gt 0 ] || die "No X6100 card found (a USB/removable disk with BOOT and DATA). Is it in the reader?"
+done < <(lsblk -dnP -o NAME,TRAN,RM -e 7)
+[ ${#CARDS[@]} -gt 0 ] || die "No X6100 card found (a USB, SD-slot or removable disk with BOOT and DATA). Is it in the reader?"
 [ ${#CARDS[@]} = 1 ] || die "More than one X6100 card (${CARDS[*]}): set X6100_CARD_SERIAL to pick one."
 DEV=/dev/${CARDS[0]}
 P3=$(lsblk -nlo NAME,LABEL "$DEV" | awk '$2 == "DATA" {print $1}')
@@ -141,10 +146,11 @@ say "Checking DATA against the backup"
 udisksctl mount -b "/dev/$P3" >/dev/null 2>&1 || true
 DATA=$(lsblk -no MOUNTPOINT "/dev/$P3" | head -1)
 [ -n "$DATA" ] || die "DATA didn't come back; your files are in $BACKUP."
-if diff -rq "$BACKUP" "$DATA"; then echo "DATA is identical to the backup."; else
-    echo "*** DATA differs from the backup (above). Your files are safe in $BACKUP."; fi
+SAME=1
+if diff -rq "$BACKUP" "$DATA"; then echo "DATA is identical to the backup."; else SAME=0; fi
 
 sync
 for p in $(lsblk -nlo NAME "$DEV" | tail -n +2); do udisksctl unmount -b "/dev/$p" >/dev/null 2>&1 || true; done
-udisksctl power-off -b "$DEV"
+udisksctl power-off -b "$DEV" || true
+[ $SAME = 1 ] || die "The image is written, but DATA differs from the backup (above). Your files are safe in $BACKUP: copy them back before using the card."
 say "Done. Safe to take the card out and put it in the radio. Backup: $BACKUP"
