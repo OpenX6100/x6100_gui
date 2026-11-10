@@ -13,8 +13,11 @@
 
 cmd and send look at what the console showed last and refuse to type while
 the radio is booting or shows the stock Xiegu login or banner (a firmware
-flash: hands off). cmd also refuses at the login or password prompt; log in
-with send. `cmd --force` / `send --force` type anyway.
+flash: hands off). They also refuse right after the daemon started or the
+port came back, until the radio prints a prompt again: what it showed while
+nobody was listening is unknown (it may have rebooted). cmd also refuses at
+the login or password prompt; log in with send. `cmd --force` /
+`send --force` type anyway, only with the person's OK.
 
 The daemon owns the port so the console can be logged continuously while
 commands are sent; for an interactive session stop it and use
@@ -45,6 +48,8 @@ SHELL_RE = re.compile(r"(\[root@[^\]]*\][#$]|^[^\n]*[#$]) ?$", re.M)
 STOCK_RE = re.compile(r"XIEGU-x6100 login:|Welcome to XIEGU X6100")
 BOOT_RE = re.compile(r"U-Boot|Starting kernel|Booting Linux")
 LOGIN_RE = re.compile(r"(?<!XIEGU-x6100 )(?<!XIEGU-)\bX6100 login:|Password:")
+# The daemon's own lines: after them, what the radio shows is unknown.
+GAP_RE = re.compile(r"==== (daemon on|port lost|port back)")
 
 
 def ports():
@@ -174,10 +179,11 @@ def log_end(nbytes=8192):
 
 
 def console_state():
-    """What the console showed last: shell, login (ours), stock, boot or
-    unknown."""
+    """What the console showed last: shell, login (ours), stock, boot, gap
+    (the daemon started or the port came back since) or unknown."""
     text, last, state = log_end(), -1, "unknown"
-    for name, rx in (("shell", SHELL_RE), ("login", LOGIN_RE), ("stock", STOCK_RE), ("boot", BOOT_RE)):
+    for name, rx in (("shell", SHELL_RE), ("login", LOGIN_RE), ("stock", STOCK_RE), ("boot", BOOT_RE),
+                     ("gap", GAP_RE)):
         for m in rx.finditer(text):
             if m.start() >= last:
                 last, state = m.start(), name
@@ -197,6 +203,10 @@ def guard(for_cmd, force):
                  "--force if you're sure")
     if state == "boot":
         sys.exit("the radio is booting: wait for the login prompt (x6100-console tail). --force if you're sure")
+    if state == "gap":
+        sys.exit("the daemon just started or the port came back: the radio may have rebooted or be "
+                 "flashing. Look at it (x6100-console tail, the screen) and ask the person; "
+                 "`send '' --force` shows the prompt once they say it's safe")
     if state == "login" and for_cmd:
         sys.exit("at the login or password prompt: log in with send first. --force if you're sure")
 
