@@ -27,7 +27,11 @@ behind it.
 2. `x6100-console daemon &` (it finds the radio by its USB id, usually
    `/dev/ttyACM0`; the second port is CAT). The daemon lives as long as the
    terminal or AI session that started it.
-3. `x6100-console tail`: at `X6100 login:` log in with `x6100-console send root`
+3. Look at the radio: if it's on its normal screen (not booting, not
+   flashing), `x6100-console send '' --force` once. Right after the daemon
+   starts, the tool won't type until the radio shows a prompt, since it
+   can't know what happened while nobody was listening.
+   `x6100-console tail`: at `X6100 login:` log in with `x6100-console send root`
    and `x6100-console send <password>` (the image's root password).
 4. `x6100-console cmd 'tail /tmp/x6100_log.txt'`: the GUI's log, live.
 
@@ -43,5 +47,5 @@ behind it.
   `hwclock -w -u -f /dev/rtc1`, never in a loop: rtc1 is on i2c-0, the GUI's
   bus to the base board.
 - A GUI crash: *Build image* also keeps `x6100_gui-unstripped.<branch>`, the
-  same program with its debug symbols, for reading a core dump with the
-  toolchain's gdb or addr2line.
+  same program before stripping. It is a Release build: it has function
+  names (gdb's backtrace, `addr2line -f`), not source lines or variables.
