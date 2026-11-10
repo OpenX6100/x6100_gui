@@ -2,9 +2,10 @@
 """Ratchets: risky patterns may only get rarer.
 
 Each ratchet counts one pattern per file in src/ (comments left out) and
-compares with tools/checks/ratchets.json. A count may go down (then lower
-the number there, or run --update), never up, and a file not listed must
-have none. Old code is left alone; new code can't add more.
+compares with tools/checks/ratchets.json. A count may go down, never up,
+and a file not listed must have none. Old code is left alone; new code
+can't add more. When a count goes down, the json must go down with it
+(run --update), or the freed room could quietly be filled again later.
 
   tools/checks/check_ratchets.py            check (exit 1 if any count grew)
   tools/checks/check_ratchets.py --update   write today's counts to the json
@@ -26,6 +27,8 @@ RATCHETS = {
         "why": "i2c-0 is the GUI's control bus to the base board; a loop on it once "
                "glitched an amplifier's band voltage (AGENTS.md, safety rule 2). The battery "
                "clock /dev/rtc1 is on it. Write it once, from the places that already do.",
+        # It limits where the bus is touched, not how often: a timer that calls an
+        # existing writer over and over still needs a reviewer to catch it.
         "pattern": r"/dev/rtc1|/dev/i2c|\bI2C_SLAVE\b|\bi2c_smbus_\w+|\bI2C_RDWR\b",
     },
     "colours": {
@@ -37,9 +40,8 @@ RATCHETS = {
 }
 
 
-def strip_comments(text):
-    text = re.sub(r"/\*.*?\*/", lambda m: "\n" * m.group(0).count("\n"), text, flags=re.S)
-    return re.sub(r"//[^\n]*", "", text)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from csource import strip_comments  # noqa: E402
 
 
 def counts():
@@ -81,8 +83,9 @@ def main():
     for g in grew:
         print(g)
     for f in fell:
-        print(f"good: {f} (lower it in tools/checks/ratchets.json, or --update)")
-    if grew:
+        print(f"good: {f}: now lower it in tools/checks/ratchets.json "
+              f"(tools/checks/check_ratchets.py --update) in this PR")
+    if grew or fell:
         return 1
     print("ratchets: " + ", ".join(f"{name} {sum(now[name].values())} in {len(now[name])} files"
                                     for name in RATCHETS) + ", none grew")

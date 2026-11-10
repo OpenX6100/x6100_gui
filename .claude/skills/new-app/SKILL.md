@@ -49,7 +49,7 @@ Then check:
 
 ```sh
 python3 tools/checks/check_app_cases.py
-python3 tools/checks/check_build_list.py --base upstream/main   # or origin/main
+python3 tools/checks/check_build_list.py
 tools/radio/x6100-syncheck src/main_screen.c src/buttons.cpp src/dialog_<name>.c   # if set up
 ```
 

@@ -73,8 +73,8 @@ will find it.
 
 ## How a change gets in
 
-1. **A branch per change**, with a plain name **without `/`** (*Build
-   image* names its downloads after the branch). One topic per branch.
+1. **A branch per change**, with a plain name (*Build image* names its
+   downloads after the branch). One topic per branch.
 2. **A test image** from the branch: Actions > *Build image* > Run workflow
    (about an hour; `buildroot_ref` picks an open Buildroot PR's branch to
    test with). The image and the unstripped GUI stay on the run's page for
@@ -118,7 +118,7 @@ Claude Code, the `/new-app` skill walks through it.
 
 - **Check every merge, not only the conflicts.** After a merge that brings
   in an app, run `tools/checks/check_app_cases.py` and
-  `tools/checks/check_build_list.py --base <the other side>`. A compile
+  `tools/checks/check_build_list.py`. A compile
   check doesn't link, so a dropped file in the build list shows up only
   in the image build (`tx_level.c` and `tx_player.c` were lost that way,
   #311/#312).
@@ -214,8 +214,9 @@ rename).
 
 ## Reading a GUI crash
 
-*Build image* keeps `x6100_gui-unstripped.<branch>`, the same program with
-its symbols. With a core dump from the radio (`prlimit --pid $(pidof
+*Build image* keeps `x6100_gui-unstripped.<branch>`, the same program before
+stripping. It is a Release build, so it gives function names, not source
+lines or variables. With a core dump from the radio (`prlimit --pid $(pidof
 x6100_gui) --core=unlimited:unlimited` and a `core_pattern` into `/tmp`,
 which is RAM), read it with the toolchain's `gdb`, or resolve return
 addresses with `addr2line` on the unstripped GUI (it is position

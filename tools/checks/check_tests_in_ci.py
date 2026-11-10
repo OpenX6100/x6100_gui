@@ -9,7 +9,9 @@ in that state.
 
   tools/checks/check_tests_in_ci.py
 
-Lists each add_test(NAME ...) that tests.yml never mentions; exit 1 if any.
+Lists each add_test(NAME ...) that no step of tests.yml runs (a `ctest`
+line or a direct `build_test/tests/...` call: building it, or naming it in a
+comment, doesn't count); exit 1 if any.
 """
 
 import glob
@@ -24,10 +26,16 @@ def main():
     for p in glob.glob("tests/**/CMakeLists.txt", recursive=True):
         text = re.sub(r"#.*", "", open(p, encoding="utf-8").read())
         names |= set(re.findall(r"add_test\s*\(\s*NAME\s+([\w-]+)", text))
-    ci = open(WORKFLOW, encoding="utf-8").read()
-    missing = sorted(n for n in names if not re.search(rf"(?<![\w-]){re.escape(n)}(?![\w-])", ci))
+    runs = []
+    for line in open(WORKFLOW, encoding="utf-8"):
+        if line.lstrip().startswith("#"):
+            continue
+        if "ctest" in line or "build_test/tests/" in line:
+            runs.append(line)
+    ran = "\n".join(runs)
+    missing = sorted(n for n in names if not re.search(rf"(?<![\w-]){re.escape(n)}(?![\w-])", ran))
     for n in missing:
-        print(f"{n} is registered in tests/ but {WORKFLOW} never builds or runs it")
+        print(f"{n} is registered in tests/ but no step of {WORKFLOW} runs it (ctest -R or build_test/tests/{n})")
     if missing:
         return 1
     print(f"all {len(names)} unit tests are run by {WORKFLOW}")
