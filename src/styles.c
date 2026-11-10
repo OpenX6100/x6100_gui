@@ -262,8 +262,9 @@ void styles_init(themes_t theme) {
     lv_style_set_bg_img_opa(&style.tx_info, LV_OPA_COVER);
     lv_style_set_bg_opa(&style.tx_info, LV_OPA_0);
     lv_style_set_width(&style.tx_info, METER_WIDTH);
-    lv_style_set_height(&style.tx_info, TOP_BLOCK_BIG_HEIGHT);
-    lv_style_set_pad_all(&style.tx_info, 10);
+    lv_style_set_height(&style.tx_info, TOP_BLOCK_SMALL_HEIGHT);
+    lv_style_set_pad_hor(&style.tx_info, 10);
+    lv_style_set_pad_ver(&style.tx_info, 6);
 
     /* CW tune */
     lv_style_init(&style.cw_tune);
