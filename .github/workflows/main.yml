@@ -1,6 +1,14 @@
 name: Build image
+# On a tag: the release. Started by hand on any branch: a test image to try on
+# a radio before the PR (Actions > Build image > Run workflow), kept for 30
+# days as a download on the run's page. Branch names without "/": the
+# downloads are named after the branch.
 on:
   workflow_dispatch:
+    inputs:
+      buildroot_ref:
+        description: AetherX6100Buildroot branch, tag or commit (to test with an open Buildroot PR; a release uses master)
+        default: master
   push:
     # Pattern matched against refs/tags
     tags:
@@ -46,7 +54,16 @@ jobs:
       with:
         submodules: true
         repository: OpenX6100/AetherX6100Buildroot
+        ref: ${{ inputs.buildroot_ref || 'master' }}
         path: AetherX6100Buildroot
+
+    - name: Check buildroot ref
+      run: |
+        ref="${{ inputs.buildroot_ref || 'master' }}"
+        echo "Buildroot: $ref = $(git -C AetherX6100Buildroot rev-parse HEAD)" | tee -a "$GITHUB_STEP_SUMMARY"
+        if [[ "${{ github.ref }}" == refs/tags/* && "$ref" != master ]]; then
+          echo "A release must be built on Buildroot master, not $ref"; exit 1
+        fi
 
     - name: Patch GUI mk
       run: |
@@ -91,12 +108,33 @@ jobs:
         mv sdcard.img sdcard.${{ github.ref_name }}.img
         zip sdcard.${{ github.ref_name }}.img.zip sdcard.${{ github.ref_name }}.img
 
-    # Upload image
-    # - name: 'Upload image'
-    #   uses: actions/upload-artifact@v4
-    #   with:
-    #     name: sdcard.${{ github.ref_name }}.img
-    #     path: AetherX6100Buildroot/build/images/sdcard.${{ github.ref_name }}.img
+    # Always keep the image as a download on the run's page: a branch run has
+    # no release to attach it to, and on a tag it survives a failed Release.
+    - name: Upload image
+      uses: actions/upload-artifact@v4
+      with:
+        name: sdcard.${{ github.ref_name }}.img.zip
+        path: AetherX6100Buildroot/build/images/sdcard.${{ github.ref_name }}.img.zip
+        retention-days: 30
+
+    # The GUI program before Buildroot strips it, for reading a core dump from
+    # the radio (the image's copy has no symbols). Same build, so its code is
+    # byte for byte the image's.
+    - name: Find unstripped GUI
+      if: always()
+      continue-on-error: true
+      run: |
+        f=$(find AetherX6100Buildroot/build/build -path '*x6100*gui*' -name x6100_gui -type f -perm -u+x | head -1)
+        echo "unstripped: $f"; file "$f"
+        mkdir -p unstripped && cp "$f" unstripped/x6100_gui
+    - name: Upload unstripped GUI
+      uses: actions/upload-artifact@v4
+      if: always()
+      continue-on-error: true
+      with:
+        name: x6100_gui-unstripped.${{ github.ref_name }}
+        path: unstripped/x6100_gui
+        retention-days: 30
 
     # Create release
     - name: Release
