@@ -69,9 +69,15 @@ jobs:
     - name: SQLite 3.40.1 and liquid-dsp 1.4.0
       run: |
         cd /tmp
-        curl -fsSL https://www.sqlite.org/2022/sqlite-autoconf-3400100.tar.gz | tar xz
+        # sha256 as in Buildroot's sqlite.hash and liquid-dsp.hash
+        curl -fsSL -o sqlite.tgz https://www.sqlite.org/2022/sqlite-autoconf-3400100.tar.gz
+        curl -fsSL -o liquid.tgz https://github.com/jgaeddert/liquid-dsp/archive/refs/tags/v1.4.0.tar.gz
+        sha256sum -c - <<'SUMS'
+        2c5dea207fa508d765af1ef620b637dcb06572afa6f01f0815bd5bbf864b33d9  sqlite.tgz
+        66f38d509aa8f6207d2035bae5ee081a3d9df0f2cab516bc2118b5b1c6ce3333  liquid.tgz
+        SUMS
+        tar xzf sqlite.tgz && tar xzf liquid.tgz
         (cd sqlite-autoconf-3400100 && ./configure -q --prefix=/usr/local && make -s -j"$(nproc)" && sudo make -s install)
-        curl -fsSL https://github.com/jgaeddert/liquid-dsp/archive/refs/tags/v1.4.0.tar.gz | tar xz
         (cd liquid-dsp-1.4.0 && ./bootstrap.sh && ./configure -q --prefix=/usr/local && make -s -j"$(nproc)" && sudo make -s install)
         sudo ldconfig
 
