@@ -15,7 +15,7 @@ behind it.
 |---|---|
 | `x6100-console` | Holds the radio's Linux console (a background `daemon` logs everything), runs commands (`cmd 'ls /mnt' 10`), types text (`send root`), shows the log (`tail`). **Refuses to type while the radio boots or shows the stock Xiegu login** (a firmware flash: hands off). Needs `pyserial`. |
 | `x6100-screenshot` | The radio's screen as a PNG in ~/Pictures, over the console (~40 s). Needs ImageMagick. |
-| `x6100-cpulog` | Copies a small logger to the radio's RAM and records each core and each GUI thread once a second: `check`, `start [MIN]`, `mark "the waterfall stuttered"`, `stop`, `fetch` (prints a report). Reads /proc and /sys only, never i2c. |
+| `x6100-cpulog` | Copies a small logger to the radio's RAM and records each core, each GUI thread and the GUI's memory once a second (a climb over hours is a leak): `check`, `start [MIN]`, `mark "the waterfall stuttered"`, `stop`, `fetch` (prints a report). Reads /proc and /sys only, never i2c. |
 | `x6100-flash` | Writes an image (a *Build image* run id, an `.img.zip` or an `.img`) to the SD card in a USB reader: backs up DATA first, keeps the DATA partition, checks it afterwards. Finds the card by its BOOT and DATA labels on a USB/removable disk and asks before writing. |
 | `x6100-syncheck` | Checks that GUI files compile for the radio in seconds (ARM GCC 12, syntax only), with a local Buildroot build or a matching toolchain. Some files need more headers than a toolchain alone has (`main.c`, `dialog_js8.c`); the image build is the real check for those. |
 | `70-x6100-serial.rules` | udev rule so your user can open the radio's serial ports. |
