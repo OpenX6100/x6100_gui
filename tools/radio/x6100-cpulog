@@ -1,0 +1,391 @@
+#!/usr/bin/env python3
+"""CPU logging on the X6100 over the USB console (x6100-console daemon must
+be running and logged in). Read-only on the radio: /proc and /sys, never i2c.
+
+  x6100-cpulog check            one-off look: cores, CPU speed setting,
+                                temperature, the GUI's threads and their CPU
+                                time so far, warnings already in the app log
+  x6100-cpulog start [MIN] [S]  copy the logger to the radio and start it for
+                                MIN minutes (60), one sample every S s (1)
+  x6100-cpulog mark [NOTE]      "the waterfall lagged now" (radio's clock)
+  x6100-cpulog status           the logger's latest 10-second summary
+  x6100-cpulog stop             stop it (it also stops by itself)
+  x6100-cpulog fetch            copy the results here and print the report
+  x6100-cpulog report [DIR]     the report again (default: the newest run)
+
+Results: ~/x6100-cpulog/<start time>/ (X6100_CPULOG_RESULTS to change) (cpulog.csv, marks.txt,
+report.txt). On the radio everything lives in /tmp/cpulog (RAM: gone at
+power-off, so fetch first).
+"""
+
+import base64
+import gzip
+import hashlib
+import os
+import re
+import statistics
+import subprocess
+import sys
+import time
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+RADIO_PY = os.path.join(HERE, "x6100-cpulog-radio.py")
+CONSOLE = os.path.join(HERE, "x6100-console")
+RESULTS = os.environ.get("X6100_CPULOG_RESULTS") or os.path.expanduser("~/x6100-cpulog")
+RDIR = os.environ.get("X6100_CPULOG_RDIR", "/tmp/cpulog")  # tests use another
+
+
+def console(command, timeout=15):
+    for attempt in range(6):
+        r = subprocess.run([CONSOLE, "cmd", command, str(timeout)], capture_output=True, text=True)
+        # Right after a command its end marker is in but the prompt isn't
+        # back yet, so the console's guard still sees the login prompt from
+        # earlier: wait for the prompt.
+        if r.returncode and "login or password prompt" in (r.stderr + r.stdout) and attempt < 5:
+            time.sleep(0.5)
+            continue
+        break
+    if r.returncode:
+        sys.exit((r.stderr or r.stdout).strip())
+    if "[no end marker" in r.stdout:
+        sys.exit("the radio didn't answer:\n" + r.stdout[-800:])
+    return r.stdout
+
+
+def python_on_radio():
+    out = console("command -v python3 || command -v python")
+    m = re.search(r"(/\S*/python3?)\s*$", out, re.M)
+    if m:
+        return m.group(1)
+    sys.exit("no python on the radio:\n" + out)
+
+
+# ---- check -----------------------------------------------------------------
+
+CHECK = [  # one console line each: busybox's line editing takes ~1 KB
+    "echo '== system'; uname -a; cat /proc/loadavg; uptime; grep -E 'Hardware|model name' /proc/cpuinfo | sort | uniq -c",
+    "echo '== cpufreq'; for p in /sys/devices/system/cpu/cpufreq/policy*; do echo \"$p cpus=$(cat $p/affected_cpus) "
+    "gov=$(cat $p/scaling_governor) cur=$(cat $p/scaling_cur_freq) min=$(cat $p/scaling_min_freq) "
+    "max=$(cat $p/scaling_max_freq) avail=$(cat $p/scaling_available_frequencies 2>/dev/null)\"; done",
+    # temperature only from sensors that aren't on an i2c bus
+    "echo '== thermal'; for z in /sys/class/thermal/thermal_zone*; do d=$(readlink -f $z/device); "
+    "case \"$d\" in *i2c*) t=skipped-i2c;; *) t=$(cat $z/temp);; esac; echo \"$z type=$(cat $z/type) temp=$t dev=$d\"; done",
+    "echo '== memory'; free; echo '== schedstat'; cat /proc/self/schedstat 2>&1",
+    "echo '== gui'; P=$(pidof x6100_gui); echo \"pid $P\"; cat /proc/$P/stat; head -1 /proc/stat",
+    "echo '== threads'; for t in /proc/$(pidof x6100_gui)/task/*; do cat $t/stat; done",
+    "echo '== top'; top -b -n 1 | head -20",
+    "echo '== applog'; ls -la /tmp/x6100_log.txt; wc -l < /tmp/x6100_log.txt; "
+    "echo \"events/decodes lost lines: $(grep -ciE 'events lost|decodes lost' /tmp/x6100_log.txt)\"; "
+    "grep -iE 'lost|is full|fail|error|gap|realign|assert' /tmp/x6100_log.txt | tail -30",
+    "echo '== app_logs'; ls -la /mnt/app_logs 2>/dev/null | tail -5",
+]
+
+
+def check():
+    out = "\n".join(console(c, 30) for c in CHECK)
+    os.makedirs(RESULTS, exist_ok=True)
+    path = os.path.join(RESULTS, "check-%s.txt" % time.strftime("%Y-%m-%d-%H%M%S"))
+    with open(path, "w") as f:
+        f.write(out + "\n\n" + thread_totals(out) + "\n")
+    print(out)
+    print()
+    print(thread_totals(out))
+    print("\nsaved", path)
+
+
+def thread_totals(out):
+    """CPU time per GUI thread since the app started, from /proc/<pid>/task/*/stat."""
+    try:
+        hz = 100
+        pid = int(re.search(r"^pid (\d+)", out, re.M).group(1))
+        lines = out.split("== threads", 1)[1].split("== top", 1)[0].strip().splitlines()
+        rows = []
+        for l in lines:
+            if "(" not in l:
+                continue
+            tid = int(l.split()[0])
+            name = l[l.index("(") + 1:l.rindex(")")]
+            f = l[l.rindex(")") + 2:].split()
+            rows.append((int(f[11]) + int(f[12]), tid, "main (GUI)" if tid == pid else name, int(f[16]), int(f[36])))
+        rows.sort(reverse=True)
+        total = sum(r[0] for r in rows) or 1
+        s = ["GUI threads by CPU time since the app started (%d threads):" % len(rows),
+             "  %-8s %-16s %9s %7s %5s %5s" % ("tid", "name", "cpu s", "share", "nice", "core")]
+        for ticks, tid, name, nice, core in rows[:15]:
+            s.append("  %-8d %-16s %9.1f %6.1f%% %5d %5d" % (tid, name, ticks / hz, 100.0 * ticks / total, nice, core))
+        return "\n".join(s)
+    except Exception as e:  # the report is a convenience; the raw output is saved
+        return "(thread table not parsed: %s)" % e
+
+
+# ---- start / mark / status / stop -----------------------------------------
+
+def start(minutes, interval):
+    py = python_on_radio()
+    running = console("cat %s/pid 2>/dev/null && kill -0 $(cat %s/pid) 2>/dev/null && echo RUNNING" % (RDIR, RDIR))
+    if "RUNNING" in running:
+        sys.exit("the logger is already running on the radio (x6100-cpulog stop, or fetch)")
+    data = open(RADIO_PY, "rb").read()
+    blob = base64.b64encode(gzip.compress(data, 9)).decode()
+    console("mkdir -p %s && rm -f %s/up.b64 %s/cpulog.csv %s/now.txt %s/marks.txt" % ((RDIR,) * 5))
+    for i in range(0, len(blob), 600):  # busybox line editing takes ~1 KB lines
+        console("echo %s >> %s/up.b64" % (blob[i:i + 600], RDIR))
+    out = console("base64 -d %s/up.b64 | gunzip > %s/cpulog.py && md5sum %s/cpulog.py" % (RDIR, RDIR, RDIR))
+    if hashlib.md5(data).hexdigest() not in out:
+        sys.exit("copy to the radio failed:\n" + out)
+    console("(%s %s/cpulog.py --dir %s --minutes %g --interval %g > %s/run.txt 2>&1 &)"
+            % (py, RDIR, RDIR, minutes, interval, RDIR))
+    time.sleep(3)
+    print(console("cat %s/run.txt; head -3 %s/cpulog.csv; echo pid $(cat %s/pid)" % (RDIR, RDIR, RDIR)))
+    print("logging for %g min, every %g s. x6100-cpulog mark when the waterfall lags; fetch at the end."
+          % (minutes, interval))
+
+
+def mark(note):
+    note = re.sub(r"[^A-Za-z0-9 .,:=+-]", "", note or "lag")[:80]
+    out = console("echo \"$(date +%%s) %s\" >> %s/marks.txt && tail -1 %s/marks.txt" % (note, RDIR, RDIR))
+    print(out.strip())
+
+
+def status():
+    print(console("cat %s/now.txt 2>/dev/null; kill -0 $(cat %s/pid) 2>/dev/null && echo running || echo 'not running'; "
+                  "ls -la %s/cpulog.csv; cat %s/run.txt" % ((RDIR,) * 4)).strip())
+
+
+def stop():
+    print(console("kill $(cat %s/pid) 2>/dev/null; sleep 2; tail -1 %s/cpulog.csv" % (RDIR, RDIR)).strip())
+
+
+# ---- fetch -----------------------------------------------------------------
+
+def fetch():
+    """Each file gzipped + base64 over the console (the radio's busybox tar
+    has no -z)."""
+    files = {}
+    for name in ("cpulog.csv", "marks.txt", "run.txt"):
+        out = console("[ -f %s/%s ] && gzip -c %s/%s > /tmp/cpulog-fetch.gz && wc -c < /tmp/cpulog-fetch.gz"
+                      % (RDIR, name, RDIR, name))
+        m = re.search(r"^\s*(\d+)\s*$", out, re.M)
+        if not m:
+            continue
+        size = int(m.group(1))
+        timeout = 30 + size * 1.4 / 9000  # the console carries ~11 KB/s
+        print("fetching %s: %d bytes gzipped (~%d s)..." % (name, size, timeout - 30))
+        b64 = console("base64 /tmp/cpulog-fetch.gz; rm /tmp/cpulog-fetch.gz", timeout)
+        raw = base64.b64decode("".join(l for l in b64.splitlines() if re.fullmatch(r"[A-Za-z0-9+/=]+", l)))
+        if len(raw) != size:
+            sys.exit("%s: got %d of %d bytes; try again" % (name, len(raw), size))
+        files[name] = gzip.decompress(raw)
+    if "cpulog.csv" not in files:
+        sys.exit("no cpulog.csv on the radio")
+    m = re.search(rb"start ([\d.]+)", files["cpulog.csv"])
+    name = time.strftime("%Y-%m-%d-%H%MZ", time.gmtime(float(m.group(1)))) if m else time.strftime("%Y-%m-%d-%H%M")
+    d = os.path.join(RESULTS, name)
+    os.makedirs(d, exist_ok=True)
+    for fname, data in files.items():
+        with open(os.path.join(d, fname), "wb") as f:
+            f.write(data)
+    report(d)
+
+
+# ---- report ----------------------------------------------------------------
+
+def hms(t):
+    return time.strftime("%H:%M:%S", time.gmtime(t))
+
+
+def pctl(v, p):
+    if not v:
+        return 0
+    v = sorted(v)
+    return v[min(len(v) - 1, int(p / 100.0 * len(v)))]
+
+
+def report(d=None):
+    if d is None:
+        runs = sorted(x for x in os.listdir(RESULTS) if os.path.isdir(os.path.join(RESULTS, x)))
+        if not runs:
+            sys.exit("no runs in " + RESULTS)
+        d = os.path.join(RESULTS, runs[-1])
+    rows = [l.rstrip("\n").split(",") for l in open(os.path.join(d, "cpulog.csv"))]
+    marks = []
+    if os.path.exists(os.path.join(d, "marks.txt")):
+        for l in open(os.path.join(d, "marks.txt")):
+            if l.strip():
+                t, _, note = l.strip().partition(" ")
+                marks.append((float(t), note))
+    header = [r for r in rows if r[0].startswith("#")]
+    interval = float(re.search(r"interval ([\d.]+)", ",".join(header[0])).group(1)) if header else 1.0
+
+    S, C, H, P, L, K, N = [], [], {}, {}, [], [], {}
+    for r in rows:
+        k = r[0]
+        if k == "S":
+            S.append((float(r[1]), float(r[2]), float(r[3])))
+        elif k == "C":
+            t = float(r[1])
+            n = len(r) - 6  # C, t, cores..., iow, load, mem, freq
+            cores = [float(x) for x in r[2:2 + n]]
+            C.append((t, cores, float(r[2 + n]), r[3 + n], r[4 + n], r[5 + n]))
+        elif k == "N":
+            N[int(r[2])] = r[3]
+        elif k == "H":
+            H.setdefault(float(r[1]), {})[int(r[2])] = (float(r[3]), int(r[4]), float(r[5]), int(r[6]))
+        elif k == "P":
+            P.setdefault(r[3], []).append((float(r[1]), float(r[4])))
+        elif k == "L":
+            L.append((float(r[1]), ",".join(r[2:])))
+        elif k == "K":
+            K.append((float(r[1]), r[3], int(r[4])))
+    if not C:
+        sys.exit("no samples in " + d)
+
+    out = []
+    w = out.append
+    t0, t1 = C[0][0], C[-1][0]
+    ncores = len(C[0][1])
+    w("Run %s: %s to %sZ (%.1f min), %d samples every %g s, %d cores" % (os.path.basename(d), hms(t0), hms(t1),
+      (t1 - t0) / 60, len(C), interval, ncores))
+    late = [s for s in S if s[1] > interval * 1000 * 1.5]
+    w("Logger: own CPU avg %.1f %%; samples late by > 50 %%: %d (the logger runs at nice 10, so late = cores busy)"
+      % (statistics.mean(s[2] for s in S) if S else 0, len(late)))
+
+    w("\nCores (busy %):         avg   p95   max")
+    for i in range(ncores):
+        v = [c[1][i] for c in C]
+        w("  core %d            %5.0f %5.0f %5.0f" % (i, statistics.mean(v), pctl(v, 95), max(v)))
+    tot = [sum(c[1]) for c in C]
+    w("  all (of %d00)      %5.0f %5.0f %5.0f" % (ncores, statistics.mean(tot), pctl(tot, 95), max(tot)))
+    w("  seconds with every core > 90 %%: %d;  with some core > 95 %%: %d"
+      % (sum(1 for c in C if min(c[1]) > 90), sum(1 for c in C if max(c[1]) > 95)))
+    iow = [c[2] for c in C]
+    w("  iowait avg %.1f %%, max %.0f %%" % (statistics.mean(iow), max(iow)))
+    fq = {}
+    for c in C:
+        fq[c[5]] = fq.get(c[5], 0) + 1
+    w("  CPU MHz: " + ", ".join("%s (%d%%)" % (f or "?", 100 * n // len(C)) for f, n in sorted(fq.items(), key=lambda x: -x[1])[:5]))
+    mem = [int(c[4]) for c in C if c[4].lstrip("-").isdigit()]
+    if mem:
+        w("  memory available: %d..%d MB" % (min(mem), max(mem)))
+    if K:
+        temps = {}
+        for t, typ, v in K:
+            temps.setdefault(typ, []).append(v / 1000.0)
+        w("  temperature: " + ", ".join("%s %.0f..%.0f C" % (k, min(v), max(v)) for k, v in temps.items()))
+
+    # threads
+    stats = {}
+    times = sorted(H)
+    for t in times:
+        for tid, (cpu, core, wait, nv) in H[t].items():
+            s = stats.setdefault(tid, {"cpu": [], "wait": 0.0, "nv": 0, "t": [], "cores": {}})
+            s["cpu"].append(cpu)
+            s["t"].append(t)
+            s["wait"] += wait
+            s["nv"] += nv
+            s["cores"][core] = s["cores"].get(core, 0) + 1
+    nsamp = len(C)
+    main_tid = next((tid for tid, n in N.items() if n == "main"), None)
+
+    def label(tid):
+        return "%s/%d" % (N.get(tid, "?"), tid)
+
+    w("\nGUI threads (cpu % of one core; wait = runnable but no free core, ms per s):")
+    w("  %-22s %6s %5s %5s %8s %8s %7s  %s" % ("thread", "avg", "p95", "max", "wait avg", "wait max", "preempt", "cores"))
+    order = sorted(stats, key=lambda tid: -sum(stats[tid]["cpu"]))
+    for tid in order[:12]:
+        s = stats[tid]
+        cpu_all = s["cpu"] + [0.0] * (nsamp - len(s["cpu"]))
+        waits = [H[t][tid][2] for t in s["t"]]
+        if sum(s["cpu"]) / nsamp < 0.3 and max(waits) < 20:
+            continue
+        w("  %-22s %6.1f %5.0f %5.0f %8.1f %8.0f %7d  %s" % (label(tid), statistics.mean(cpu_all), pctl(cpu_all, 95),
+          max(cpu_all), s["wait"] / nsamp, max(waits), s["nv"],
+          " ".join("%d:%d%%" % (c, 100 * n // len(s["t"])) for c, n in sorted(s["cores"].items()))))
+
+    # bursts: when in a 15 s cycle (FT8's, JS8's) a thread gets busy (decoders burst at slot ends)
+    w("\nBusy seconds (>= 50 %) by position in the 15 s FT8/JS8 cycle (radio clock, :00 :15 :30 :45 = slot start):")
+    for tid in order[:6]:
+        s = stats[tid]
+        busy = [t for t, c in zip(s["t"], s["cpu"]) if c >= 50]
+        if len(busy) < 3:
+            continue
+        hist = [0] * 15
+        for t in busy:
+            hist[int(t) % 15] += 1
+        w("  %-22s %s  (%d s busy)" % (label(tid), " ".join("%3d" % h for h in hist), len(busy)))
+    w("  %-22s %s" % ("second of cycle", " ".join("%3d" % i for i in range(15))))
+
+    # GUI main thread busy stretches = candidate waterfall lags
+    if main_tid in stats:
+        s = stats[main_tid]
+        w("\nGUI main thread (draws the screen) at >= 70 % (waterfall lags likely):")
+        runs, cur = [], None
+        for t, c in zip(s["t"], s["cpu"]):
+            if c >= 70:
+                if cur and t - cur[1] <= interval * 1.5:
+                    cur[1] = t
+                    cur[2] = max(cur[2], c)
+                else:
+                    cur = [t, t, c]
+                    runs.append(cur)
+        for a, b, c in runs[:40]:
+            w("  %s  %4.0f s  peak %3.0f %%   (cycle second %d)" % (hms(a), b - a + interval, c, int(a) % 15))
+        if not runs:
+            w("  none")
+        elif len(runs) > 40:
+            w("  ... %d more" % (len(runs) - 40))
+
+    if P:
+        w("\nOther processes (>= 2 % at times):")
+        for name, v in sorted(P.items(), key=lambda x: -sum(c for _, c in x[1]))[:8]:
+            w("  %-20s seen %4d s, avg when seen %4.0f %%, max %4.0f %%" % (name, len(v), statistics.mean(c for _, c in v),
+              max(c for _, c in v)))
+
+    w("\nApp log lines while logging: %d" % len(L))
+    for t, text in L[:40]:
+        w("  %s %s" % (hms(t), text[:150]))
+
+    if marks:
+        w("\nAround each mark (cores busy %, GUI main %, its wait ms, busiest other threads):")
+        for mt, note in marks:
+            w("  mark %s %s" % (hms(mt), note))
+            for c in C:
+                if mt - 8 <= c[0] <= mt + 3:
+                    h = H.get(c[0], {})
+                    gm = h.get(main_tid, (0, 0, 0, 0))
+                    others = sorted(((v[0], tid) for tid, v in h.items() if tid != main_tid), reverse=True)[:3]
+                    w("    %s  cores %s  main %3.0f%% wait %3.0f  %s" % (hms(c[0]), " ".join("%3.0f" % x for x in c[1]),
+                      gm[0], gm[2], "  ".join("%s %0.f%%" % (label(tid), v) for v, tid in others)))
+
+    text = "\n".join(out)
+    with open(os.path.join(d, "report.txt"), "w") as f:
+        f.write(text + "\n")
+    print(text)
+    print("\nsaved", os.path.join(d, "report.txt"))
+
+
+def main():
+    a = sys.argv[1:]
+    if not a or a[0] in ("-h", "--help"):
+        print(__doc__)
+    elif a[0] == "check":
+        check()
+    elif a[0] == "start":
+        start(float(a[1]) if len(a) > 1 else 60, float(a[2]) if len(a) > 2 else 1)
+    elif a[0] == "mark":
+        mark(" ".join(a[1:]))
+    elif a[0] == "status":
+        status()
+    elif a[0] == "stop":
+        stop()
+    elif a[0] == "fetch":
+        fetch()
+    elif a[0] == "report":
+        report(a[1] if len(a) > 1 else None)
+    else:
+        sys.exit(__doc__)
+
+
+if __name__ == "__main__":
+    main()
