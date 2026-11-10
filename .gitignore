@@ -56,3 +56,7 @@ images/*.png
 _build/
 build/
 build_test/
+
+# Personal AI notes (AGENTS.md, "Your own notes")
+CLAUDE.local.md
+AGENTS.local.md

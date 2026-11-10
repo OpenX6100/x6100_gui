@@ -58,6 +58,17 @@ cd buildroot
 Images built from this repository include JS8's engine, which changes their
 licence: see [License](#license).
 
+## Working on the code
+
+Pull requests are welcome, with or without an AI assistant. Before your
+first one, read [docs/working-with-ai.md](docs/working-with-ai.md) (how we
+work: options, mock-ups, test images, radio tests, reviews) and
+[AGENTS.md](AGENTS.md), the guide your AI tool reads by itself (the safety
+rules for a live radio, adding an app, merging). Test images: Actions >
+*Build image* > Run workflow on your branch. Tools for a test radio on a
+Linux PC (console, screenshots, flashing the card while keeping DATA) are in
+[tools/radio](tools/radio/README.md).
+
 ## License
 
 The GUI's own code is LGPL-2.1-or-later ([LICENSE](LICENSE)), and every file
