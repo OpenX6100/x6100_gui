@@ -11,9 +11,9 @@ others are ignored) into the compact binary file read by src/dsc/dsc_ships.c:
   index    count x 8 bytes, sorted by MMSI: u32 mmsi, u32 offset of the strings
   strings  name \\0 call sign \\0 ship type \\0   (ASCII only)
 
-All integers little endian.  Usage (once, from the x6100_gui folder):
+All integers little endian.  Usage (from the x6100_gui folder):
 
-  python3 src/dsc/make_ships_db.py vessels.csv rootfs/usr/share/x6100/dsc_ships.bin \
+  python3 src/dsc/make_ships_db.py vessels.csv ships.bin \
           [extra_ships.txt] [extra_special.txt] [extra_coast.txt]
 
 The optional extra lists only add MMSIs that vessels.csv
@@ -24,7 +24,9 @@ the same name.  Three formats, recognised by their content:
   special   211204590Jade Hochschule DH6000       (training / test sites)
   coast     002040100,AZR,Delgada,37.73,25.67     (ship type "Coast station")
 
-The result lives in rootfs/ like broadcast.csv and goes into every build.
+No ships file comes with the firmware: put ships.bin in /mnt/dsc/ on the
+SD card (see rootfs/usr/share/x6100/README-dsc.md), built from lists you
+may use.
 """
 
 import csv

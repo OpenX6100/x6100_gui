@@ -14,11 +14,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-/* the user's copy on the SD card first, then the one installed with the firmware */
-static const char *const paths[] = {
-    "/mnt/dsc/ships.bin",
-    "/usr/share/x6100/dsc_ships.bin",
-};
+/* the user's own file on the SD card: none comes with the firmware */
+#define SHIPS_PATH  "/mnt/dsc/ships.bin"
 
 #define HDR_LEN     16
 #define ENTRY_LEN   8
@@ -32,30 +29,29 @@ static uint32_t rd32(const uint8_t *p) { return p[0] | p[1] << 8 | p[2] << 16 | 
 int dsc_ships_open(void)
 {
     if (map) return (int)count;
-    for (size_t i = 0; i < sizeof(paths) / sizeof(paths[0]); ++i) {
-        int fd = open(paths[i], O_RDONLY);
-        if (fd < 0) continue;
-        struct stat st;
-        if (fstat(fd, &st) != 0 || st.st_size < HDR_LEN) { close(fd); continue; }
-        void *m = mmap(NULL, (size_t)st.st_size, PROT_READ, MAP_SHARED, fd, 0);
-        close(fd);
-        if (m == MAP_FAILED) continue;
-        const uint8_t *p = m;
-        uint32_t n = rd32(p + 8);
-        if (memcmp(p, "DSCS", 4) != 0 || rd32(p + 4) != 2 ||
-            (uint64_t)HDR_LEN + (uint64_t)n * ENTRY_LEN > (uint64_t)st.st_size) {
-            fprintf(stderr, "DSC: %s is not a valid ships database\n", paths[i]);
-            munmap(m, (size_t)st.st_size);
-            continue;
-        }
-        map = p;
-        map_len = (size_t)st.st_size;
-        count = n;
-        fprintf(stderr, "DSC: %u ships in %s\n", (unsigned)n, paths[i]);
-        return (int)count;
+    int fd = open(SHIPS_PATH, O_RDONLY);
+    if (fd < 0) {
+        fprintf(stderr, "DSC: no ships database (%s)\n", SHIPS_PATH);
+        return 0;
     }
-    fprintf(stderr, "DSC: no ships database (%s or %s)\n", paths[0], paths[1]);
-    return 0;
+    struct stat st;
+    if (fstat(fd, &st) != 0 || st.st_size < HDR_LEN) { close(fd); return 0; }
+    void *m = mmap(NULL, (size_t)st.st_size, PROT_READ, MAP_SHARED, fd, 0);
+    close(fd);
+    if (m == MAP_FAILED) return 0;
+    const uint8_t *p = m;
+    uint32_t n = rd32(p + 8);
+    if (memcmp(p, "DSCS", 4) != 0 || rd32(p + 4) != 2 ||
+        (uint64_t)HDR_LEN + (uint64_t)n * ENTRY_LEN > (uint64_t)st.st_size) {
+        fprintf(stderr, "DSC: %s is not a valid ships database\n", SHIPS_PATH);
+        munmap(m, (size_t)st.st_size);
+        return 0;
+    }
+    map = p;
+    map_len = (size_t)st.st_size;
+    count = n;
+    fprintf(stderr, "DSC: %u ships in %s\n", (unsigned)n, SHIPS_PATH);
+    return (int)count;
 }
 
 void dsc_ships_close(void)

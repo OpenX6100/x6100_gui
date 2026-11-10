@@ -1,24 +1,21 @@
-# dsc_ships.bin and dsc_flags.bin: the DSC data files
+# DSC: station names and flags
 
-Two files read by the DSC application. DSC works without them: a call
-then shows the MMSI and the country from its MID, without station names
-and flags.
+The DSC application is for listening only. It is not for navigation, nor
+for distress and safety watchkeeping.
 
-## dsc_ships.bin
+DSC works without any data file: a call shows the MMSI and the country
+from its MID. `dsc_flags.bin` below adds the flag of that country.
 
-- **What:** MMSI, name, call sign and type of 71,685 ships and 917 coast
-  stations, so a call shows who is calling. Read in place (`mmap`), not
-  loaded into memory.
-- **Origin:** the YaDDNet lists of ships
-  (http://www.yaddnet.org/pages/php/mmsi_shipname_ordered.php) and of
-  coast stations (http://www.yaddnet.org/pages/php/mmsi_coast.php; one
-  name with "+N sites" for an MMSI serving several sites), plus 27 DSC
-  training and test stations added by the author (Hany El Imam).
-- **Licence:** GPL-3.0-or-later, as YaDDNet. A data file read by the
-  LGPL DSC application, not linked into it.
-- **Format and how to rebuild it:** see `src/dsc/make_ships_db.py`.
-- **Your own copy:** `/mnt/dsc/ships.bin` on the SD card, if present, is
-  read instead of this one.
+## Station names: your own files
+
+No list of ship or coast station names comes with the firmware: we know of
+none whose terms allow it to be redistributed. You can add your own on the
+SD card, from lists you are allowed to use:
+
+- `/mnt/dsc/mmsi.txt`: one `MMSI;name` per line, read when DSC opens.
+- `/mnt/dsc/ships.bin`: MMSI, name, call sign and type, read in place
+  (`mmap`), for large lists. Built from a CSV with
+  `src/dsc/make_ships_db.py`, which describes the format.
 
 ## dsc_flags.bin
 
