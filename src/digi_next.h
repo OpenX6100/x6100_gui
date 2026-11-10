@@ -46,3 +46,7 @@ void digi_next_label(const digi_next_t *s, const char *dx, int count, digi_next_
 
 /* "CQ", "CQ TEST", "CQ DX": a CQ, which clears the QSO before it goes. */
 bool digi_next_is_cq(const char *name);
+
+/* A macro that calls CQ, by its name or by what it sends ("CQ TEST
+ * <MYCALL> ..."), so one named "Contest" or with a typo still counts. */
+bool digi_next_is_cq_macro(const char *name, const char *text);

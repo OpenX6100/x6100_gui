@@ -27,7 +27,18 @@ static bool is_step(const char *name)
 /* "CQ", and "CQ TEST", "CQ DX"...: any CQ starts a new QSO. */
 bool digi_next_is_cq(const char *name)
 {
-    return name != NULL && strncasecmp(name, "CQ", 2) == 0 && (name[2] == '\0' || name[2] == ' ');
+    if (name == NULL) {
+        return false;
+    }
+    while (*name == ' ') {
+        name++;
+    }
+    return strncasecmp(name, "CQ", 2) == 0 && (name[2] == '\0' || name[2] == ' ');
+}
+
+bool digi_next_is_cq_macro(const char *name, const char *text)
+{
+    return digi_next_is_cq(name) || digi_next_is_cq(text);
 }
 
 static int find(int count, digi_next_name_fn name, const char *want)

@@ -105,7 +105,7 @@ static void send_macro(int idx)
                         m->name);
     digi_qso_menu_sent(&qso_menu, m->name);     /* a 73 logs the QSO */
     digi_next_sent(&next_state, m->name, digi_qso_dx());
-    if (digi_next_is_cq(m->name)) {
+    if (digi_next_is_cq_macro(m->name, m->text)) {
         digi_qso_clear();               /* a CQ starts a new QSO */
     }
 }
