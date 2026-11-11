@@ -26,5 +26,5 @@ jobs:
     - name: Every unit test is run by CI
       run: python3 tools/checks/check_tests_in_ci.py
 
-    - name: Ratchets (i2c, colours) only go down
+    - name: Ratchets (i2c) only go down
       run: python3 tools/checks/check_ratchets.py

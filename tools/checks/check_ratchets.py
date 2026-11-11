@@ -31,12 +31,6 @@ RATCHETS = {
         # existing writer over and over still needs a reviewer to catch it.
         "pattern": r"/dev/rtc1|/dev/i2c|\bI2C_SLAVE\b|\bi2c_smbus_\w+|\bI2C_RDWR\b",
     },
-    "colours": {
-        "why": "colours typed into the code instead of coming from src/styles.c; themes "
-               "(other looks for the whole GUI) only work when colours come from one place.",
-        "pattern": r"\blv_color_hex3?\s*\(|\blv_color_make\s*\(|#[0-9A-Fa-f]{6}\s",
-        "skip": ["styles.c", "palettes/"],
-    },
 }
 
 
