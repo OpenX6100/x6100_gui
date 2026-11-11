@@ -75,7 +75,9 @@ An AI forgets everything between sessions; only files survive.
   you ask for a test, the AI should say which gear it needs switched on.
 - **Compare with the reference program.** For a mode that exists on the
   desktop, have the AI read the desktop program's source and copy what it
-  does, then compare the decoders with real recordings on the PC. On such
+  does, then compare the decoders with real recordings on the PC. Doing the
+  same thing is fine anywhere; code copied from WSJT-X or JS8Call (GPL-3.0)
+  can only go into a GPL-3.0 file, with credit. On such
   a bench the FT8 decoder went from about half of WSJT-X's decodes to most
   of them (#362-#371).
 - **Flicker is measurable:** a phone's slow-motion video of the screen,

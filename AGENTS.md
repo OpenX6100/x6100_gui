@@ -209,7 +209,9 @@ rename).
   commit SHAs to tools.
 - **Match the reference program.** For a mode that exists on the desktop
   (FT8 and WSJT-X, JS8 and JS8Call), read its source and do what it does;
-  compare decoders with real recordings on a PC.
+  compare decoders with real recordings on a PC. Doing the same thing is
+  fine anywhere, but code copied from those programs (GPL-3.0) can only go
+  into a GPL-3.0 file, with credit; never into an LGPL file.
 
 ## Reading a GUI crash
 
@@ -232,9 +234,10 @@ the last lines before a crash may be missing.
   reply), keep apart what they saw on the radio (quote it), what the code
   shows (say "from the code") and what is only a guess (say so, or leave
   it out). Show them the text before it is posted.
-- **Licences:** the GUI's own files are LGPL-2.1-or-later and keep their
-  licence; `third-party/js8core` is GPL-3.0, so the program as a whole is
-  GPL-3.0 (README, *License*). Code from elsewhere needs its licence and
+- **Licences:** most of the GUI's own files are LGPL-2.1-or-later, several
+  apps are GPL-3.0-or-later (WSPR, Olivia, JTTY, JS8, ...); every file keeps
+  its licence. `third-party/js8core` is GPL-3.0, so the program as a whole
+  is GPL-3.0 (README, *License*). Code from elsewhere needs its licence and
   credit; never paste code whose licence you don't know.
 
 ## Skills (Claude Code)
