@@ -42,21 +42,30 @@ static lv_obj_t     *obj;
 static lv_obj_t     *pwr_label;
 static lv_obj_t     *vswr_label;
 static lv_obj_t     *alc_label;
-static lv_obj_t     *leds;
 
-/* Three LED rows, PWR / SWR / ALC, in the small top bar's height, so the
- * box never hangs over the spectrum or an app's waterfall. */
-#define ROWS        3
-#define ROW_H       14
-#define ROW_STEP    22
-#define NAME_W      44
-#define VALUE_W     70
-#define SEG_W       4
-#define SEG_GAP     2
+/* One thick PWR bar with its 0-10 W scale and a peak tick, SWR and ALC as
+ * thin bars below, green / amber / red by where each segment sits. The box
+ * takes the meter and frequency boxes' width (the dial hides during TX),
+ * in the small top bar's height, so it never hangs over the spectrum or an
+ * app's waterfall. Bar positions are in the box's content area (620 x 58). */
+#define ROWS        3       /* PWR, SWR, ALC */
+#define PEAK_HOLD_MS 1000
+
+static const struct {
+    lv_coord_t x, y, w, h;  /* the bar */
+    lv_coord_t seg, gap;    /* one LED segment, the gap after it */
+} bar_geo[ROWS] = {
+    { 50, 14, 480, 22, 6, 2 },
+    { 42, 43, 198, 12, 4, 2 },
+    {372, 43, 178, 12, 4, 2 },
+};
 
 static const float max_alc = 10.0f;
 
-static int16_t lit[ROWS];       /* segments lit in each row, as last drawn */
+static lv_obj_t *bars[ROWS];
+static int16_t   lit[ROWS];     /* segments lit in each bar, as last drawn */
+static int16_t   peak;          /* PWR's peak segment, held PEAK_HOLD_MS */
+static uint32_t  peak_time;
 
 static void on_cur_mode_change(Subject *subj, void *user_data);
 static void update_labels_visibility_cb(Subject *, void *);
@@ -65,6 +74,7 @@ static void tx_cb(void * s, lv_msg_t * msg) {
     pwr  = 0.0f;
     vswr = 0.0f;
     alc  = 0.0f;
+    peak = 0;
 
     lv_obj_clear_flag(obj, LV_OBJ_FLAG_HIDDEN);
 }
@@ -78,15 +88,32 @@ static void update_tx_info(void *arg) {
         return;
     }
 
-    int16_t n   = (int16_t)(lv_obj_get_width(leds) / (SEG_W + SEG_GAP));
-    int16_t now[ROWS] = {
-        (int16_t)(n * LV_CLAMP(0.0f, (pwr - min_pwr) / (max_pwr - min_pwr), 1.0f) + 0.5f),
-        (int16_t)(n * LV_CLAMP(0.0f, (vswr - min_swr) / (max_swr - min_swr), 1.0f) + 0.5f),
-        (int16_t)(n * LV_CLAMP(0.0f, alc / max_alc, 1.0f) + 0.5f),
+    float frac[ROWS] = {
+        (pwr - min_pwr) / (max_pwr - min_pwr),
+        (vswr - min_swr) / (max_swr - min_swr),
+        alc / max_alc,
     };
-    if (memcmp(now, lit, sizeof(lit)) != 0) {
-        memcpy(lit, now, sizeof(lit));
-        lv_obj_invalidate(leds);
+    bool redraw = false;
+
+    for (int row = 0; row < ROWS; row++) {
+        int16_t n   = bar_geo[row].w / (bar_geo[row].seg + bar_geo[row].gap);
+        int16_t now = (int16_t)(n * LV_CLAMP(0.0f, frac[row], 1.0f) + 0.5f);
+
+        if (now != lit[row]) {
+            lit[row] = now;
+            lv_obj_invalidate(bars[row]);
+        }
+    }
+    if (lit[0] >= peak) {
+        redraw = lit[0] != peak;
+        peak = lit[0];
+        peak_time = lv_tick_get();
+    } else if (lv_tick_elaps(peak_time) > PEAK_HOLD_MS) {
+        peak--;                 /* falls one segment an update after the hold */
+        redraw = true;
+    }
+    if (redraw) {
+        lv_obj_invalidate(bars[0]);
     }
 
     if (param_i_get(cfg.ui.mag_alc()) && !dialog_run) {
@@ -121,38 +148,44 @@ static lv_color_t seg_color(int row, float f) {
     return lv_color_hex(0x00C83C);
 }
 
-static void leds_draw_cb(lv_event_t *e) {
-    lv_draw_ctx_t *draw_ctx = lv_event_get_draw_ctx(e);
-    lv_area_t      coords;
+static void bar_draw_cb(lv_event_t *e) {
+    int                row      = (int)(intptr_t)lv_event_get_user_data(e);
+    lv_draw_ctx_t     *draw_ctx = lv_event_get_draw_ctx(e);
+    lv_area_t          coords;
     lv_draw_rect_dsc_t dsc;
+    lv_coord_t         step = bar_geo[row].seg + bar_geo[row].gap;
 
-    lv_obj_get_coords(leds, &coords);
-    int16_t n = (int16_t)(lv_area_get_width(&coords) / (SEG_W + SEG_GAP));
+    lv_obj_get_coords(bars[row], &coords);
+    int16_t n = (int16_t)(lv_area_get_width(&coords) / step);
 
     lv_draw_rect_dsc_init(&dsc);
-    for (int row = 0; row < ROWS; row++) {
-        for (int16_t i = 0; i < n; i++) {
-            lv_color_t c = seg_color(row, (float)i / n);
-            lv_area_t  a;
+    for (int16_t i = 0; i < n; i++) {
+        lv_color_t c = seg_color(row, (float)i / n);
+        lv_area_t  a;
 
-            a.x1 = coords.x1 + i * (SEG_W + SEG_GAP);
-            a.x2 = a.x1 + SEG_W - 1;
-            a.y1 = coords.y1 + row * ROW_STEP;
-            a.y2 = a.y1 + ROW_H - 1;
-            dsc.bg_color = i < lit[row] ? c : lv_color_darken(c, 212);
-            lv_draw_rect(draw_ctx, &dsc, &a);
+        a.x1 = coords.x1 + i * step;
+        a.x2 = a.x1 + bar_geo[row].seg - 1;
+        a.y1 = coords.y1;
+        a.y2 = coords.y2;
+        if (row == 0 && peak > 0 && i == peak - 1 && peak > lit[0]) {
+            c = lv_color_white();
+        } else if (i >= lit[row]) {
+            c = lv_color_darken(c, 212);
         }
+        dsc.bg_color = c;
+        lv_draw_rect(draw_ctx, &dsc, &a);
     }
 }
 
-static lv_obj_t *row_label(lv_coord_t x, lv_coord_t w, int row, lv_text_align_t align, const char *text) {
+static lv_obj_t *add_label(lv_coord_t x, lv_coord_t y, lv_coord_t w, const lv_font_t *font,
+                           lv_text_align_t align, const char *text) {
     lv_obj_t *l = lv_label_create(obj);
 
     lv_obj_add_style(l, &style.text_base_color, LV_PART_MAIN);
-    lv_obj_set_style_text_font(l, &sony_16, 0);
+    lv_obj_set_style_text_font(l, font, 0);
     lv_obj_set_style_text_align(l, align, 0);
     lv_obj_set_width(l, w);
-    lv_obj_set_pos(l, x, row * ROW_STEP + ROW_H / 2 - 9);
+    lv_obj_set_pos(l, x, y);
     lv_label_set_text(l, text);
     return l;
 }
@@ -162,25 +195,34 @@ lv_obj_t *tx_info_init(lv_obj_t *parent) {
     lv_obj_remove_style_all(obj);
     lv_obj_add_style(obj, &style.tx_info, 0);
     lv_obj_set_scrollbar_mode(obj, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_clear_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
 
-    lv_obj_update_layout(obj);
-    lv_coord_t w = lv_obj_get_content_width(obj);
+    for (int row = 0; row < ROWS; row++) {
+        bars[row] = lv_obj_create(obj);
+        lv_obj_remove_style_all(bars[row]);
+        lv_obj_set_pos(bars[row], bar_geo[row].x, bar_geo[row].y);
+        lv_obj_set_size(bars[row], bar_geo[row].w, bar_geo[row].h);
+        lv_obj_clear_flag(bars[row], LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_event_cb(bars[row], bar_draw_cb, LV_EVENT_DRAW_MAIN, (void *)(intptr_t)row);
+    }
 
-    leds = lv_obj_create(obj);
-    lv_obj_remove_style_all(leds);
-    lv_obj_set_pos(leds, NAME_W, 0);
-    lv_obj_set_size(leds, w - NAME_W - VALUE_W, ROW_STEP * (ROWS - 1) + ROW_H);
-    lv_obj_clear_flag(leds, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_event_cb(leds, leds_draw_cb, LV_EVENT_DRAW_MAIN, NULL);
+    /* PWR's scale, 0-10 W over the thick bar */
+    for (int w = 0; w <= 10; w += 2) {
+        lv_coord_t x = bar_geo[0].x + bar_geo[0].w * w / 10;
+        lv_obj_t  *l = add_label(x - 15, -4, 30, &sony_14, LV_TEXT_ALIGN_CENTER, "");
 
-    row_label(0, NAME_W, 0, LV_TEXT_ALIGN_LEFT, "PWR");
-    row_label(0, NAME_W, 1, LV_TEXT_ALIGN_LEFT, "SWR");
-    row_label(0, NAME_W, 2, LV_TEXT_ALIGN_LEFT, "ALC");
-    pwr_label  = row_label(w - VALUE_W, VALUE_W, 0, LV_TEXT_ALIGN_RIGHT, "");
-    vswr_label = row_label(w - VALUE_W, VALUE_W, 1, LV_TEXT_ALIGN_RIGHT, "");
-    alc_label  = row_label(w - VALUE_W, VALUE_W, 2, LV_TEXT_ALIGN_RIGHT, "");
+        lv_label_set_text_fmt(l, "%d", w);
+        lv_obj_add_style(l, &style.text_muted_color, LV_PART_MAIN);
+    }
+
+    add_label(0, 14, 48, &sony_18, LV_TEXT_ALIGN_LEFT, "PWR");
+    add_label(0, 40, 40, &sony_14, LV_TEXT_ALIGN_LEFT, "SWR");
+    add_label(330, 40, 40, &sony_14, LV_TEXT_ALIGN_LEFT, "ALC");
+    pwr_label  = add_label(535, 9, 85, &sony_26, LV_TEXT_ALIGN_RIGHT, "");
+    vswr_label = add_label(244, 39, 56, &sony_16, LV_TEXT_ALIGN_RIGHT, "");
+    alc_label  = add_label(554, 39, 66, &sony_16, LV_TEXT_ALIGN_RIGHT, "");
 
     lv_msg_subscribe(MSG_RADIO_TX, tx_cb, NULL);
     lv_msg_subscribe(MSG_RADIO_RX, rx_cb, NULL);
