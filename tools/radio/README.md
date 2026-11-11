@@ -7,6 +7,11 @@ SD card without losing your settings. Each one has its usage at the top of
 the file. They were written while porting JS8 and are used every day on one
 radio; you're welcome to improve them.
 
+**Linux only.** They use udev, udisks and `lsblk`, and haven't been tried on
+Windows, macOS or WSL. On Windows you can still read the console with any
+serial terminal (115200, root / 123) and write an image with an SD card
+writer, but those keep nothing: back up the DATA partition first.
+
 **Read [AGENTS.md](../../AGENTS.md), "Safety on a live radio", before
 pointing an AI at these.** A radio is live hardware, often with an amplifier
 behind it.

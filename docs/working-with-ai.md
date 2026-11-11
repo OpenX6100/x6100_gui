@@ -32,7 +32,9 @@ written.** AI code gets the same review as anyone's.
    pictures is quick; changing finished code is slow.
 3. **A branch per change**, with a plain name (e.g. `tx-meter-led`).
 4. **A test image** from your branch: Actions > *Build image* > Run workflow,
-   about an hour. The image stays on the run's page for 30 days.
+   about an hour. The image stays on the run's page for 30 days. Only
+   OpenX6100 members can run it here; everyone else runs it in their own
+   fork, after turning on Actions there.
 5. **Test on the radio.** You're the tester: try it, tell the AI what you saw,
    let it fix, build again. Several small loops beat one big one.
 6. **An AI code review** of the finished branch (in Claude Code:

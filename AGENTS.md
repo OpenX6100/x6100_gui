@@ -78,7 +78,8 @@ will find it.
 2. **A test image** from the branch: Actions > *Build image* > Run workflow
    (about an hour; `buildroot_ref` picks an open Buildroot PR's branch to
    test with). The image and the unstripped GUI stay on the run's page for
-   30 days.
+   30 days. Without write access here, run it in your own fork (turn on
+   Actions there first); it needs no secrets.
 3. **Test on a radio** before the PR. Say in the PR which image (run) was
    tested and what was tried. Station-to-station features need two
    stations (a second radio or SDR with desktop software, a dummy load).
