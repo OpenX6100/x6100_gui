@@ -283,9 +283,8 @@ static button_data_t btn_rtty_macros = {
 /* ---- Menu ----------------------------------------------------------- */
 
 /*
- * The reports are set with the knob, like Rate, Shift and Center:
- * picking one hands the MFK knob to it and its value shows on the
- * message line as it turns.
+ * The reports are changed in the list itself: press the MFK on one, turn
+ * it, press again (digi_menu_set_adjust()).
  */
 enum {
     MENU_DX, MENU_RST_SENT, MENU_RST_RCVD, MENU_AUTO_DX, MENU_QSO, MENU_NEW_QSO, MENU_COUNT
@@ -297,14 +296,6 @@ static void menu_pick(int item, void *ctx)
     switch (item) {
         case MENU_DX:
             rtty_qso_open_dx_input();
-            break;
-
-        case MENU_RST_SENT:
-            mfk_set_ctrl(CTRL_RTTY_RST_SENT);
-            break;
-
-        case MENU_RST_RCVD:
-            mfk_set_ctrl(CTRL_RTTY_RST_RCVD);
             break;
 
         case MENU_AUTO_DX:
@@ -326,20 +317,13 @@ static void menu_pick(int item, void *ctx)
     buttons_refresh(&btn_rtty_next);
 }
 
-static void menu_press_cb(button_data_t *b)
+static void menu_texts(char text[MENU_COUNT][56], const char *items[MENU_COUNT])
 {
-    static char  text[MENU_COUNT][56];
-    const char  *items[MENU_COUNT];
-    const char  *dx = digi_qso_dx();
+    const char *dx = digi_qso_dx();
 
-    (void)b;
-    if (digi_menu_is_open()) {
-        digi_menu_close();
-        return;
-    }
     snprintf(text[MENU_DX], 56, "DX call...  (%s)", (dx && *dx) ? dx : "none");
-    snprintf(text[MENU_RST_SENT], 56, "RST sent with the knob  (%s)", digi_qso_rst_sent());
-    snprintf(text[MENU_RST_RCVD], 56, "RST received with the knob  (%s)",
+    snprintf(text[MENU_RST_SENT], 56, "RST sent: %s  (press to change)", digi_qso_rst_sent());
+    snprintf(text[MENU_RST_RCVD], 56, "RST received: %s  (press to change)",
              digi_qso_rst_rcvd());
     snprintf(text[MENU_AUTO_DX], 56, "Call/name/QTH from text: %s  (press: %s)",
              digi_qso_autograb() ? "on" : "off", digi_qso_autograb() ? "off" : "on");
@@ -348,7 +332,37 @@ static void menu_press_cb(button_data_t *b)
     for (int i = 0; i < MENU_COUNT; i++) {
         items[i] = text[i];
     }
+}
+
+static char menu_text[MENU_COUNT][56];
+
+static void menu_adjust(int item, int dir, void *ctx)
+{
+    const char *items[MENU_COUNT];
+
+    (void)ctx;
+    if (item == MENU_RST_SENT) {
+        digi_qso_change_rst_sent((int16_t)dir);
+    } else if (item == MENU_RST_RCVD) {
+        digi_qso_change_rst_rcvd((int16_t)dir);
+    }
+    menu_texts(menu_text, items);
+    digi_menu_set_texts(items, MENU_COUNT);
+    buttons_refresh(&btn_rtty_next);
+}
+
+static void menu_press_cb(button_data_t *b)
+{
+    const char *items[MENU_COUNT];
+
+    (void)b;
+    if (digi_menu_is_open()) {
+        digi_menu_close();
+        return;
+    }
+    menu_texts(menu_text, items);
     digi_menu_open(lv_scr_act(), "Menu", items, MENU_COUNT, menu_pick, NULL, NULL);
+    digi_menu_set_adjust((1u << MENU_RST_SENT) | (1u << MENU_RST_RCVD), menu_adjust);
 }
 
 static button_data_t btn_rtty_menu = {
