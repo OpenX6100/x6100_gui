@@ -51,6 +51,9 @@
 #include "qso_log.h"
 #include "dxcc.h"
 #include "scheduler.h"
+#include "digi_menu.h"
+#include "ftx_freqs.h"
+#include "band_plan.h"
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -208,6 +211,7 @@ static void hold_tx_freq_cb(struct button_data_t *btn_data);
 static void mode_auto_cb(struct button_data_t *btn_data);
 static void cq_modifier_cb(struct button_data_t *btn_data);
 static void time_sync(struct button_data_t *btn_data);
+static void freq_list_cb(struct button_data_t *btn_data);
 
 static void force_save_qso(struct button_data_t *btn_data);
 static const char * map_label_getter();
@@ -256,6 +260,7 @@ static button_data_t button_cq_mod = { .type=BTN_TEXT, .label = "CQ\nModifier", 
 static button_data_t button_time_sync = { .type=BTN_TEXT, .label = "Time\nSync", .press = time_sync };
 
 static button_data_t button_psk = { .type=BTN_TEXT_FN, .label_fn = psk_label_getter, .press = psk_cb, .hold = psk_hold_cb };
+static button_data_t button_freq_list = { .type=BTN_TEXT, .label = "Freq\nlist", .press = freq_list_cb };
 
 static buttons_page_t btn_page_1 = {
     {&button_page_1, &button_show_cq_all, &button_mode_ft4_ft8, &button_tx_cq_en_dis, &button_tx_call_en_dis}
@@ -266,7 +271,7 @@ static buttons_page_t btn_page_2 = {
 };
 
 static buttons_page_t btn_page_3 = {
-    {&button_page_3, &button_cq_mod, &button_time_sync, &button_psk}
+    {&button_page_3, &button_cq_mod, &button_time_sync, &button_psk, &button_freq_list}
 };
 
 static dialog_t dialog = {
@@ -587,6 +592,70 @@ static void band_cb(lv_event_t * e) {
     worker_done();
     worker_init();
     clean_screen();
+}
+
+/*
+ * Freq list (page 3): every FT8 or FT4 frequency WSJT-X knows for these
+ * bands (ftx_freqs.c), the standard ones and the others, such as where
+ * DXpeditions run Fox and Hound. The band buttons keep stepping through
+ * the standard ones. The list starts on the frequency closest to the dial.
+ */
+static ftx_freq_t freq_list[DIGI_MENU_MAX];
+static int        freq_list_n;
+
+static void freq_label(const ftx_freq_t *f, char *out, size_t size) {
+    const char *band = band_plan_band_name(f->hz);
+
+    snprintf(out, size, "%s %s%s%s", ftx_mode_name(), band ? band : "", f->what ? " " : "",
+             f->what ? f->what : "");
+}
+
+static void freq_list_pick(int item, void *ctx) {
+    char label[48];
+
+    (void)ctx;
+    if (item < 0 || item >= freq_list_n) {
+        return;
+    }
+    freq_label(&freq_list[item], label, sizeof(label));
+    cfg_digital_set((int32_t)freq_list[item].hz, x6100_mode_usb_dig, label);
+    msg_update_text_fmt("%s", label);
+    psk_update();
+
+    worker_done();
+    worker_init();
+    clean_screen();
+}
+
+static void freq_list_cb(struct button_data_t *btn_data) {
+    static char text[DIGI_MENU_MAX][64];      /* digi_menu's ITEM_LEN */
+    const char *items[DIGI_MENU_MAX];
+    char        title[64];
+    uint32_t    dial = (uint32_t)cparam_i_get(cfg.cur.fg_freq());
+    int         protocol = param_i_get(cfg.ft8.protocol());
+
+    (void)btn_data;
+    if (digi_menu_is_open()) {
+        digi_menu_close();
+        return;
+    }
+    freq_list_n = ftx_freqs(protocol, band_plan_region(), freq_list, DIGI_MENU_MAX);
+    if (freq_list_n == 0) {
+        msg_update_text_fmt("%s: one frequency per band, on the band buttons", ftx_mode_name());
+        return;
+    }
+    for (int i = 0; i < freq_list_n; i++) {
+        char label[40];
+
+        freq_label(&freq_list[i], label, sizeof(label));
+        snprintf(text[i], sizeof(text[i]), "%s%2u.%03u.%u  %s", freq_list[i].hz == dial ? "* " : "  ",
+                 (unsigned)(freq_list[i].hz / 1000000), (unsigned)(freq_list[i].hz / 1000 % 1000),
+                 (unsigned)(freq_list[i].hz / 100 % 10), label);
+        items[i] = text[i];
+    }
+    snprintf(title, sizeof(title), "%s frequencies: MFK to choose, press to tune", ftx_mode_name());
+    digi_menu_open(dialog.obj, title, items, freq_list_n, freq_list_pick, NULL, NULL);
+    digi_menu_select(ftx_freqs_closest(freq_list, freq_list_n, dial));
 }
 
 static void msg_timer(lv_timer_t *t) {

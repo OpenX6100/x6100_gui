@@ -73,3 +73,10 @@ add_executable(test_digi_txq test_digi_txq.cpp ${PROJECT_SOURCE_DIR}/src/digi_tx
 target_include_directories(test_digi_txq PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(test_digi_txq PRIVATE Catch2::Catch2WithMain pthread)
 add_test(NAME test_digi_txq COMMAND $<TARGET_FILE:test_digi_txq> --colour-mode=ansi)
+
+# test_ftx_freqs: the FT8 window's list of every FT8 and FT4 frequency
+add_executable(test_ftx_freqs test_ftx_freqs.cpp ${PROJECT_SOURCE_DIR}/src/ftx_freqs.c)
+target_include_directories(test_ftx_freqs PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_compile_definitions(test_ftx_freqs PRIVATE X6100_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+target_link_libraries(test_ftx_freqs PRIVATE ft8_core Catch2::Catch2WithMain)
+add_test(NAME test_ftx_freqs COMMAND $<TARGET_FILE:test_ftx_freqs> --colour-mode=ansi)
