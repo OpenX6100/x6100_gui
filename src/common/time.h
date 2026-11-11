@@ -21,3 +21,14 @@ static inline uint64_t get_time(void) {
 
     return (uint64_t) now.tv_sec * 1000L + now.tv_nsec / 1000000L;
 }
+
+/**
+ * Return monotonic time in us.
+ */
+static inline uint64_t get_time_us(void) {
+    struct timespec now;
+
+    clock_gettime(CLOCK_MONOTONIC, &now);
+
+    return (uint64_t) now.tv_sec * 1000000L + now.tv_nsec / 1000L;
+}

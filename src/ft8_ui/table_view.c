@@ -63,6 +63,14 @@ static cell_data_t *pool_alloc_and_copy(const cell_data_t *src) {
     return c;
 }
 
+/* The list follows the newest message. Turning the MFK up to read stops that;
+ * it comes back at the bottom row, on pressing a row, or FOLLOW_RESUME_MS
+ * after the last turn. */
+#define FOLLOW_RESUME_MS 20000
+static bool     s_follow = true;
+static uint32_t s_turned_ms;
+static bool     s_self_key; /* the key is ours, not the MFK's */
+
 static void truncate_oldest(void) {
     if (!s_table) return;
 
@@ -117,11 +125,7 @@ void table_view_push_ui(const cell_data_t *src) {
         rows = 0;
     }
 
-    /* Row autoscroll: keep scrolled-to-bottom unless the user moved away. */
-    uint16_t selected_row = 0;
-    uint16_t selected_col = 0;
-    lv_table_get_selected_cell(s_table, &selected_row, &selected_col);
-    bool scroll = (rows == (uint16_t)(selected_row + 1));
+    if (!s_follow && lv_tick_elaps(s_turned_ms) >= FOLLOW_RESUME_MS) s_follow = true;
 
     /* In-place RX-header collapse: replace the last row text instead of
      * appending another identical "RX ..." marker. */
@@ -140,9 +144,15 @@ void table_view_push_ui(const cell_data_t *src) {
     lv_table_set_cell_value(s_table, rows, 0, stored->text);
     set_row_cell(rows, stored);
 
-    if (scroll) {
-        static int32_t c = LV_KEY_DOWN;
+    if (s_follow && rows > 0) {
+        /* From the row above, so the table scrolls to the new one */
+        static int32_t c    = LV_KEY_DOWN;
+        lv_table_t    *tbl = (lv_table_t *)s_table;
+        tbl->col_act        = 0;
+        tbl->row_act        = (uint16_t)(rows - 1);
+        s_self_key          = true;
         lv_event_send(s_table, LV_EVENT_KEY, &c);
+        s_self_key          = false;
     }
 }
 
@@ -160,6 +170,8 @@ void table_view_reset(void) {
     lv_table_set_row_cnt(s_table, 1);
     lv_table_set_cell_value(s_table, 0, 0, WAIT_SYNC_TEXT);
     s_pool_write = 0;
+    s_follow     = true;
+    ((lv_table_t *)s_table)->row_act = 0; /* the rows it was on have gone */
 }
 
 /* -------- LVGL event plumbing ------------------------------------------ */
@@ -321,6 +333,7 @@ static void cell_press_cb(lv_event_t *e) {
     lv_table_get_selected_cell(s_table, &row, &col);
     (void)col;
     cell_data_t *cd = row_cell(row);
+    s_follow = true;
     s_press_cb(cd);
 }
 
@@ -328,6 +341,17 @@ static void key_cb(lv_event_t *e) {
     uint32_t key = *((uint32_t *)lv_event_get_param(e));
 
     switch (key) {
+    case LV_KEY_UP:
+    case LV_KEY_DOWN:
+    case LV_KEY_LEFT:
+    case LV_KEY_RIGHT:
+        if (!s_self_key) {
+            uint16_t row = 0, col = 0;
+            lv_table_get_selected_cell(s_table, &row, &col);
+            s_follow    = row + 1 >= lv_table_get_row_cnt(s_table);
+            s_turned_ms = lv_tick_get();
+        }
+        break;
     case LV_KEY_ESC:
         if (s_actions.on_close) s_actions.on_close();
         break;
@@ -346,6 +370,7 @@ static void key_cb(lv_event_t *e) {
 
 void table_view_build(lv_obj_t *parent, lv_coord_t x, lv_coord_t y, lv_coord_t w, lv_coord_t h) {
     s_pool_write = 0;
+    s_follow     = true;
     s_press_cb   = NULL;
     memset(&s_actions, 0, sizeof(s_actions));
     memset(s_row_cell, 0, sizeof(s_row_cell));

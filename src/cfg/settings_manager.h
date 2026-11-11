@@ -148,6 +148,10 @@ class SettingsManager {
         StorageType::GLOBAL, pending_writes_, &global_params_};
     Parameter<int32_t> p_ft8_hold_freq{"ft8_hold_freq", true, 0, 1,
         StorageType::GLOBAL, pending_writes_, &global_params_};
+    Parameter<int32_t> p_ft8_psk{"ft8_psk", false, 0, 1,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // who hears you, from PSK Reporter
+    Parameter<int32_t> p_ft8_psk_min{"ft8_psk_min", 15, 5, 60,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // how long their lines stay
     Parameter<int32_t> p_ft8_max_repeats{"ft8_max_repeats", 6, {},
         StorageType::GLOBAL, pending_writes_, {}, &global_params_};
 
@@ -273,6 +277,14 @@ class SettingsManager {
         StorageType::GLOBAL, pending_writes_, &global_params_};
     Parameter<int32_t> p_spectrum_height{"spectrum_height", 160, 160, 260,
         StorageType::GLOBAL, pending_writes_, &global_params_};
+    // 3D view: past traces stacked into the distance; its height is a percent
+    // of the screen below the indicators (2D keeps spectrum_height)
+    Parameter<int32_t> p_spectrum_3d{"spectrum_3d", false, 0, 1,
+        StorageType::GLOBAL, pending_writes_, &global_params_};
+    Parameter<int32_t> p_band_plan_region{"band_plan_region", 0, 0, 3,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // 0 Auto (QTH Grid), 1-3 ITU region
+    Parameter<int32_t> p_spectrum_3d_size{"spectrum_3d_size", 50, 35, 55,
+        StorageType::GLOBAL, pending_writes_, &global_params_};
 
     // Waterfall
     Parameter<int32_t> p_waterfall_center_line{"waterfall_center_line", true, 0, 1,
@@ -397,6 +409,16 @@ class SettingsManager {
         StorageType::GLOBAL, pending_writes_, {}, &global_params_};
     Parameter<std::string> p_callsign{"callsign", "", {},
         StorageType::GLOBAL, pending_writes_, {}, &global_params_};
+    Parameter<std::string> p_op_name{"op_name", "", {},
+        StorageType::GLOBAL, pending_writes_, {}, &global_params_}; // operator's name, <MYNAME> in the keyboard modes
+    Parameter<std::string> p_op_qth{"op_qth", "", {},
+        StorageType::GLOBAL, pending_writes_, {}, &global_params_}; // operator's town, <MYQTH> (p_qth is the locator)
+
+    // Keyboard modes (PSK31, Olivia, RTTY)
+    Parameter<int32_t> p_digi_text_save{"digi_text_save", 1, 0, 1,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // append sent and received text to /mnt/<mode>_text.txt
+    Parameter<int32_t> p_digi_auto_log{"digi_auto_log", 1, 0, 1,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // log the QSO when the 73 macro goes out
 
     // Network
     Parameter<int32_t> p_wifi_enabled{"wifi_enabled", false, 0, 1,

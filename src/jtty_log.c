@@ -13,8 +13,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
 
+#include "adif_rec.h"
 #include "cfg/cfg_api.h"
 #include "ft8_udp.h"
 #include "jtty_tx.h"
@@ -38,7 +38,7 @@ void jtty_log_open(void)
 
 void jtty_log_close(void)
 {
-    ft8_udp_deinit();
+    ft8_udp_close();            /* not the Bluetooth bridge: that is FT8's */
 }
 
 void jtty_log_forget(void)
@@ -67,86 +67,35 @@ static bool serial_of(const char *exch, char *out, size_t size)
     return true;
 }
 
-static void adif_add(char *out, size_t size, size_t *o, const char *name, const char *value)
-{
-    int n;
-
-    if (value == NULL || value[0] == '\0' || *o >= size) {
-        return;
-    }
-    n = snprintf(out + *o, size - *o, "<%s:%d>%s ", name, (int)strlen(value), value);
-    if (n > 0 && (size_t)n < size - *o) {
-        *o += (size_t)n;
-    }
-}
-
 size_t jtty_log_adif(char *out, size_t size, const jtty_qso_t *q, const char *my_call,
                      const char *my_grid, int tx_power_w)
 {
-    struct tm tm;
-    char      date[16];
-    char      tim[16];
-    char      freq[24];
-    char      pwr[12];
-    char      num[16];
-    size_t    o = 0;
-    int       n;
+    adif_rec_t r;
+    char       num[16];
 
-    if (size == 0) {
-        return 0;
+    adif_rec_begin(&r, out, size);
+    adif_rec_str(&r, "call", q->call);
+    adif_rec_mode(&r, MODE_JTTY, NULL);
+    adif_rec_str(&r, "rst_sent", "599");
+    adif_rec_str(&r, "rst_rcvd", "599");
+    adif_rec_times(&r, q->when, q->when);
+    adif_rec_freq(&r, q->dial_hz);
+    adif_rec_str(&r, "station_callsign", my_call);
+    adif_rec_str(&r, "my_gridsquare", my_grid);
+    if (tx_power_w > 0) {
+        adif_rec_int(&r, "tx_pwr", tx_power_w);
     }
-    out[0] = '\0';
-    gmtime_r(&q->when, &tm);
-    snprintf(date, sizeof(date), "%04d%02d%02d", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
-    snprintf(tim, sizeof(tim), "%02d%02d%02d", tm.tm_hour, tm.tm_min, tm.tm_sec);
-    snprintf(freq, sizeof(freq), "%.6f", (double)q->dial_hz / 1e6);
-    snprintf(pwr, sizeof(pwr), "%d", tx_power_w);
-
-    adif_add(out, size, &o, "call", q->call);
-    adif_add(out, size, &o, "mode", "JTTY");      /* as WSJT-X logs it */
-    adif_add(out, size, &o, "rst_sent", "599");
-    adif_add(out, size, &o, "rst_rcvd", "599");
-    adif_add(out, size, &o, "qso_date", date);
-    adif_add(out, size, &o, "time_on", tim);
-    adif_add(out, size, &o, "qso_date_off", date);
-    adif_add(out, size, &o, "time_off", tim);
-    adif_add(out, size, &o, "band", ft8_udp_band_name(q->dial_hz));
-    adif_add(out, size, &o, "freq", freq);
-    adif_add(out, size, &o, "station_callsign", my_call);
-    adif_add(out, size, &o, "my_gridsquare", my_grid);
-    adif_add(out, size, &o, "tx_pwr", tx_power_w > 0 ? pwr : "");
     if (serial_of(q->sent, num, sizeof(num))) {
-        adif_add(out, size, &o, "stx", num);
+        adif_rec_str(&r, "stx", num);
     } else if (strncmp(q->sent, "599 ", 4) == 0) {
-        adif_add(out, size, &o, "stx_string", q->sent + 4);
+        adif_rec_str(&r, "stx_string", q->sent + 4);
     }
     if (serial_of(q->rcvd, num, sizeof(num))) {
-        adif_add(out, size, &o, "srx", num);
+        adif_rec_str(&r, "srx", num);
     } else if (strncmp(q->rcvd, "599 ", 4) == 0) {
-        adif_add(out, size, &o, "srx_string", q->rcvd + 4);
+        adif_rec_str(&r, "srx_string", q->rcvd + 4);
     }
-
-    n = snprintf(out + o, size - o, "<eor>\n");
-    if (n > 0 && (size_t)n < size - o) {
-        o += (size_t)n;
-    }
-    return o;
-}
-
-static void append_file(const char *record)
-{
-    struct stat st;
-    bool        fresh = stat(JTTY_LOG_PATH, &st) != 0 || st.st_size == 0;
-    FILE       *f = fopen(JTTY_LOG_PATH, "a");
-
-    if (f == NULL) {
-        return;
-    }
-    if (fresh) {
-        fprintf(f, "X6100 JTTY log\n<adif_ver:5>3.1.0 <programid:5>X6100 <eoh>\n");
-    }
-    fputs(record, f);
-    fclose(f);
+    return adif_rec_end(&r);
 }
 
 bool jtty_log_save(const jtty_qso_t *q)
@@ -174,7 +123,7 @@ bool jtty_log_save(const jtty_qso_t *q)
     }
 
     if (jtty_log_adif(adif, sizeof(adif), q, my_call, my_grid, pwr) > 0) {
-        append_file(adif);
+        adif_rec_append(JTTY_LOG_PATH, "X6100 JTTY log", adif);
         ft8_udp_send_qso_logged(q->when, q->call, "", q->dial_hz, "JTTY", "599", "599", "",
                                 q->rcvd, "", my_call, my_grid);
         ft8_udp_send_logged_adif(adif);

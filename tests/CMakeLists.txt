@@ -12,6 +12,13 @@ add_executable(test_qth test_qth.cpp)
 target_link_libraries(test_qth PRIVATE QTH Catch2::Catch2WithMain)
 add_test(NAME test_qth COMMAND $<TARGET_FILE:test_qth> --colour-mode=ansi )
 
+# test_itu_region: the ITU region of a position or a locator
+# (src/itu_region.c, plain C, the locator maths from QTH)
+add_executable(test_itu_region test_itu_region.cpp ${PROJECT_SOURCE_DIR}/src/itu_region.c)
+target_include_directories(test_itu_region PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(test_itu_region PRIVATE QTH m Catch2::Catch2WithMain)
+add_test(NAME test_itu_region COMMAND $<TARGET_FILE:test_itu_region> --colour-mode=ansi)
+
 add_subdirectory(../src/ft8 ${CMAKE_BINARY_DIR}/src/ft8)
 add_executable(test_ft8_qso test_ft8_qso.cpp)
 target_link_libraries(test_ft8_qso PRIVATE ft8_core QTH aether_x6100_control Catch2::Catch2WithMain)
@@ -46,9 +53,23 @@ target_include_directories(test_civ PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(test_civ PRIVATE cat_core Catch2::Catch2WithMain)
 add_test(NAME test_civ COMMAND $<TARGET_FILE:test_civ> --colour-mode=ansi)
 
+# test_adif_rec: the ADIF records of the logs and of UDP (src/adif_rec.c,
+# plain C)
+add_executable(test_adif_rec test_adif_rec.cpp ${PROJECT_SOURCE_DIR}/src/adif_rec.c)
+target_include_directories(test_adif_rec PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(test_adif_rec PRIVATE Catch2::Catch2WithMain)
+add_test(NAME test_adif_rec COMMAND $<TARGET_FILE:test_adif_rec> --colour-mode=ansi)
+
 # test_tx_level: the digital modes' drive level (src/tx_level.c, plain C,
 # no radio) against a model radio.
 add_executable(test_tx_level test_tx_level.cpp ${PROJECT_SOURCE_DIR}/src/tx_level.c)
 target_include_directories(test_tx_level PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(test_tx_level PRIVATE Catch2::Catch2WithMain)
 add_test(NAME test_tx_level COMMAND $<TARGET_FILE:test_tx_level> --colour-mode=ansi)
+
+# test_digi_txq: the text queue of the PSK31, Olivia and RTTY transmitters
+# (src/digi_txq.c, plain C and pthreads): typing while sending.
+add_executable(test_digi_txq test_digi_txq.cpp ${PROJECT_SOURCE_DIR}/src/digi_txq.c)
+target_include_directories(test_digi_txq PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(test_digi_txq PRIVATE Catch2::Catch2WithMain pthread)
+add_test(NAME test_digi_txq COMMAND $<TARGET_FILE:test_digi_txq> --colour-mode=ansi)
