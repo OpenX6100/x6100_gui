@@ -1177,6 +1177,10 @@ static void spectrum_key_cb(lv_event_t * e) {
 
         case LV_KEY_ESC:
             // VOL press also
+            if (rtty_tx_is_on()) {
+                rtty_buttons_stop();    /* as JS8: the RFG knob stops TX */
+                break;
+            }
             if (!dialog_running) {
                 switch (vol->state) {
                     case VOL_STATE_EDIT:
