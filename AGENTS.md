@@ -145,9 +145,8 @@ Claude Code, the `/new-app` skill walks through it.
   - `check_build_list.py`: every source file is in the build list;
   - `check_tests_in_ci.py`: every unit test is run by CI;
   - `check_ratchets.py`: risky patterns only get rarer, file by file
-    (`ratchets.json`): i2c and `/dev/rtc1` only where they are today,
-    no new colours typed into the code outside `src/styles.c`. Raising a
-    number there is the reviewers' decision: say why in the PR.
+    (`ratchets.json`): i2c and `/dev/rtc1` only where they are today.
+    Raising a number there is the reviewers' decision: say why in the PR.
 - **Compile check for ARM:** `tools/radio/x6100-syncheck src/file.c ...`
   with a local Buildroot build or the matching toolchain (see the file).
 - **Unit tests** (Catch2, on a PC): `./run_tests.sh` builds and runs them
