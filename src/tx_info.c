@@ -56,8 +56,8 @@ static const struct {
     lv_coord_t seg, gap;    /* one LED segment, the gap after it */
 } bar_geo[ROWS] = {
     { 50, 14, 480, 22, 6, 2 },
-    { 42, 43, 198, 12, 4, 2 },
-    {372, 43, 178, 12, 4, 2 },
+    { 50, 43, 168, 12, 4, 2 },
+    {376, 43, 156, 12, 4, 2 },
 };
 
 static const float max_alc = 10.0f;
@@ -218,11 +218,13 @@ lv_obj_t *tx_info_init(lv_obj_t *parent) {
     }
 
     add_label(0, 14, 48, &sony_18, LV_TEXT_ALIGN_LEFT, "PWR");
-    add_label(0, 40, 40, &sony_14, LV_TEXT_ALIGN_LEFT, "SWR");
-    add_label(330, 40, 40, &sony_14, LV_TEXT_ALIGN_LEFT, "ALC");
+    /* SWR and ALC as big as the power (sony_16 was too small to read on
+     * the radio), their names as PWR's, on the numbers' base line */
+    add_label(0, 42, 48, &sony_18, LV_TEXT_ALIGN_LEFT, "SWR");
+    add_label(326, 42, 48, &sony_18, LV_TEXT_ALIGN_LEFT, "ALC");
     pwr_label  = add_label(535, 9, 85, &sony_26, LV_TEXT_ALIGN_RIGHT, "");
-    vswr_label = add_label(244, 39, 56, &sony_16, LV_TEXT_ALIGN_RIGHT, "");
-    alc_label  = add_label(554, 39, 66, &sony_16, LV_TEXT_ALIGN_RIGHT, "");
+    vswr_label = add_label(222, 37, 78, &sony_26, LV_TEXT_ALIGN_RIGHT, "");
+    alc_label  = add_label(536, 37, 84, &sony_26, LV_TEXT_ALIGN_RIGHT, "");
 
     lv_msg_subscribe(MSG_RADIO_TX, tx_cb, NULL);
     lv_msg_subscribe(MSG_RADIO_RX, rx_cb, NULL);
