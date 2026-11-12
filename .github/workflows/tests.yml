@@ -99,12 +99,12 @@ jobs:
       run: |
         cmake -B build_test -DENABLE_TESTING=YES
         # -k: every test that builds still runs, and the log shows every failure
-        cmake --build build_test -j"$(nproc)" --target test_qth test_itu_region test_adif_rec test_digi_txq test_ft8_qso test_civ test_cfg test_cw_decoder -- -k || echo "::error::some tests didn't build (above)"
+        cmake --build build_test -j"$(nproc)" --target test_qth test_itu_region test_adif_rec test_digi_txq test_ft8_qso test_civ test_cfg test_cw_decoder test_olivia -- -k || echo "::error::some tests didn't build (above)"
 
     - name: Tests
       if: always()
       run: |
-        ctest --test-dir build_test --output-on-failure -R '^(test_qth|test_itu_region|test_adif_rec|test_digi_txq|test_ft8_qso|test_civ|test_cfg|test_cw_decoder)$'
+        ctest --test-dir build_test --output-on-failure -R '^(test_qth|test_itu_region|test_adif_rec|test_digi_txq|test_ft8_qso|test_civ|test_cfg|test_cw_decoder|test_olivia)$'
 
   unit-tests:
     name: Unit tests
