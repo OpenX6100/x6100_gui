@@ -1,8 +1,10 @@
 name: Unit tests
-# The JS8 library's unit tests on a PC, a few minutes. Built with
-# ENABLE_TESTING (ASan/UBSan, tests/CMakeLists.txt): the JS8 targets and
-# test_tx_level (#306); other test binaries can be added here as jobs or
-# targets.
+# Every unit test in tests/ on a PC, a few minutes, built with ENABLE_TESTING
+# (ASan/UBSan, tests/CMakeLists.txt). Two jobs because the tests need two
+# Ubuntus: JS8 needs Boost >= 1.78 (24.04), X6100Control's GPIO code the
+# libgpiod 1.6 API (22.04). Only the test programs are built: the firmware's
+# LVGL fork (NEON) doesn't build on a PC. tools/checks/check_tests_in_ci.py
+# fails a test that is registered but run by neither job.
 on:
   workflow_dispatch:
   pull_request:
@@ -43,3 +45,61 @@ jobs:
 
     - name: Transmit level tests
       run: build_test/tests/test_tx_level --colour-mode=ansi
+
+  others:
+    runs-on: ubuntu-22.04 # libgpiod 1.6, the API X6100Control's gpio.c uses
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+    - name: Checkout GUI
+      uses: actions/checkout@v4
+      with:
+        submodules: true
+
+    - name: Packages
+      run: sudo apt-get update && sudo apt-get install -y cmake g++ libgpiod-dev pkg-config autoconf automake
+
+    # SQLite and liquid-dsp as the image has them (AetherX6100Buildroot's
+    # buildroot/package/sqlite and liquid-dsp): 22.04's own are too old
+    # (SQLite 3.37 has no RIGHT JOIN, which cfg's band query uses; liquid-dsp
+    # 1.3 lacks LIQUID_OK and liquid_hann, which the CW decoder uses).
+    - name: SQLite 3.40.1 and liquid-dsp 1.4.0
+      run: |
+        cd /tmp
+        # sha256 as in Buildroot's sqlite.hash and liquid-dsp.hash
+        curl -fsSL -o sqlite.tgz https://www.sqlite.org/2022/sqlite-autoconf-3400100.tar.gz
+        curl -fsSL -o liquid.tgz https://github.com/jgaeddert/liquid-dsp/archive/refs/tags/v1.4.0.tar.gz
+        sha256sum -c - <<'SUMS'
+        2c5dea207fa508d765af1ef620b637dcb06572afa6f01f0815bd5bbf864b33d9  sqlite.tgz
+        66f38d509aa8f6207d2035bae5ee081a3d9df0f2cab516bc2118b5b1c6ce3333  liquid.tgz
+        SUMS
+        tar xzf sqlite.tgz && tar xzf liquid.tgz
+        (cd sqlite-autoconf-3400100 && ./configure -q --prefix=/usr/local && make -s -j"$(nproc)" && sudo make -s install)
+        (cd liquid-dsp-1.4.0 && ./bootstrap.sh && ./configure -q --prefix=/usr/local && make -s -j"$(nproc)" && sudo make -s install)
+        sudo ldconfig
+
+    # ft8lib as the image has it: AetherX6100Buildroot's package/ft8lib
+    # (keep the commit in step with its FT8LIB_VERSION).
+    - name: ft8lib
+      run: |
+        git clone -q https://github.com/gdyuldin/ft8_lib /tmp/ft8_lib
+        git -C /tmp/ft8_lib checkout -q 73b0db861dc41c7ca9f3dedc73ee148daa06dd0e
+        make -C /tmp/ft8_lib lib
+        sudo mkdir -p /usr/local/include/ft8lib
+        sudo install -m 0644 /tmp/ft8_lib/ft8/*.h /usr/local/include/ft8lib/
+        sudo install -m 0755 /tmp/ft8_lib/.build/libft8.so /usr/local/lib/
+        sudo ldconfig
+
+    - name: Build the tests (ASan/UBSan)
+      run: |
+        cmake -B build_test -DENABLE_TESTING=YES
+        # -k: every test that builds still runs, and the log shows every failure
+        cmake --build build_test -j"$(nproc)" --target test_qth test_itu_region test_adif_rec test_digi_txq test_ft8_qso test_civ test_cfg test_cw_decoder -- -k || echo "::error::some tests didn't build (above)"
+
+    - name: Tests
+      if: always()
+      run: |
+        ctest --test-dir build_test --output-on-failure -R '^(test_qth|test_itu_region|test_adif_rec|test_digi_txq|test_ft8_qso|test_civ|test_cfg|test_cw_decoder)$'

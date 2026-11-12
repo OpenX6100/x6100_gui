@@ -1,42 +1,39 @@
 ---
 name: Bug report
-about: Create a report to help us improve
+about: Something on the radio doesn't work as it should
 title: ''
 labels: ''
 assignees: ''
 
 ---
 
-Issue tracker is **ONLY** used for reporting bugs. New features should be discussed on project's [discussions](https://github.com/gdyuldin/x6100_gui/discussions) or on [groups.io](https://groups.io/g/xiegu-x6100/topics)
+The issue tracker is **only** for bugs. Ideas and new features go to the project's [discussions](https://github.com/OpenX6100/x6100_gui/discussions) or [groups.io](https://groups.io/g/xiegu-x6100/topics).
 
+Writing this with an AI assistant is fine: please check it describes what *you* saw, and keep guesses about the cause apart from what happened.
 
-<!--- Provide a general summary of the issue in the Title above -->
+## Version and radio
+<!-- SETTINGS > Info shows both versions. Which image did you install
+(release name, or the test build's link)? -->
+- App version:
+- BASE version:
+- Image (release or test build):
+- Radio, and anything plugged in (amplifier, tuner, keyboard, GPS, Bluetooth device):
 
-## Expected Behavior
-<!--- Tell us what should happen -->
+## What happened
+<!-- In which app or screen. What you did, what you expected, what you saw. -->
 
-## Current Behavior
-<!--- Tell us what happens instead of the expected behavior -->
-
-## Possible Solution
-<!--- Not obligatory, but suggest a fix/reason for the bug, -->
-
-## Steps to Reproduce
-<!--- Provide a link to a live example, or an unambiguous set of steps to -->
-<!--- reproduce this bug. Include code to reproduce, if relevant -->
+## Steps to reproduce
 1.
 2.
 3.
-4.
 
-## Context (Environment)
-<!--- How has this issue affected you? What are you trying to accomplish? -->
-<!--- Providing context helps us come up with a solution that is most useful in the real world -->
+How often: <!-- every time / sometimes / once -->
 
-<!--- Provide a general summary of the issue in the Title above -->
+## Log and screenshot
+<!-- The GUI's log is on the SD card's DATA partition, folder `app_logs`: one
+file per run, named with its date and time. Attach the one from when it
+happened (a crash or restart ends the file). A screenshot or a photo of the
+screen helps too. -->
 
-## Detailed Description
-<!--- Provide a detailed description of the change or addition you are proposing -->
-
-## Possible Implementation
-<!--- Not obligatory, but suggest an idea for implementing addition or change -->
+## Anything else
+<!-- Did it work in an older version? Which one? -->

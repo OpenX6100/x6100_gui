@@ -1,0 +1,30 @@
+name: Merge checks
+# Quick checks (seconds) for mistakes that compile but break the image or an
+# app, all of them made in real merges. Each is a script in tools/checks/
+# that runs the same way on a PC; adding one is a step below.
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Every app's window case ends in its break
+      run: python3 tools/checks/check_app_cases.py
+
+    - name: Every source file is in the build list
+      run: python3 tools/checks/check_build_list.py
+
+    - name: Every unit test is run by CI
+      run: python3 tools/checks/check_tests_in_ci.py
+
+    - name: Ratchets (i2c) only go down
+      run: python3 tools/checks/check_ratchets.py
