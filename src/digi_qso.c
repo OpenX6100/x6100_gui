@@ -45,6 +45,7 @@ static bool    serial_rcvd_sure;      /* sent twice: a single one won't replace 
 static char    serial_heard[8];       /* an exchange heard in this QSO, before we sent ours */
 static bool    serial_heard_sure;
 static bool    next_by_hand;          /* "Next serial" set while this QSO had its number */
+static unsigned qso_gen;              /* counts QSOs: text held over from one is not the next one's */
 
 static void new_qso(void) {
     qso_name[0] = '\0';
@@ -57,6 +58,7 @@ static void new_qso(void) {
     serial_heard[0] = '\0';
     serial_heard_sure = false;
     next_by_hand = false;
+    qso_gen++;
     qso_logged = false;
     qso_start = time(NULL);
     rst_s = rst_r = 9;
@@ -400,6 +402,28 @@ static bool looks_like_serial(const char *w) {
     return true;
 }
 
+/* The number after a report, held until the next word says whether it
+ * was sent twice. Held for the QSO it was heard in only. */
+static char     num1[8];
+static bool     num1_mine;            /* our call came just before that report */
+static unsigned num1_gen;
+
+/* Decide on the held number: `next` is the word after it, NULL at the
+ * end of a line (the end of an over: nothing more comes for it). */
+static void settle_num1(const char *next) {
+    if (num1[0] == '\0') {
+        return;
+    }
+    if (autograb && num1_gen == qso_gen) {
+        if (next != NULL && looks_like_serial(next) && atoi(next) == atoi(num1)) {
+            take_serial(num1, true);      /* "012 012" */
+        } else if (num1_mine) {
+            take_serial(num1, false);
+        }
+    }
+    num1[0] = '\0';
+}
+
 /* ---- the decoder's text ------------------------------------------------- */
 
 typedef enum { WANT_NONE, WANT_NAME, WANT_NAME_OP, WANT_QTH } want_t;
@@ -431,11 +455,11 @@ void digi_qso_feed_rx(char c) {
     static want_t want = WANT_NONE;
     static char   qth[sizeof(qso_qth)];
     static int    qth_words = 0;
-    static bool   after_rst = false;  /* a report just heard, "599" */
-    static char   num1[8];            /* the number after it, waiting for the next word */
-    static bool   num1_mine = false;  /* our call came just before that report */
-    static int    mine_left = 0;      /* words since our call, counting down */
-    bool          is_word;
+    static bool     after_rst = false;  /* a report just heard, "599" */
+    static unsigned rst_gen;            /* in which QSO */
+    static int      mine_left = 0;      /* words since our call, counting down */
+    bool            is_word;
+    bool            line_end;
 
     if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
 
@@ -445,7 +469,11 @@ void digi_qso_feed_rx(char c) {
         return;
     }
 
+    line_end = (c == '\n' || c == '\r');
     if (wl == 0) {                        /* separator run */
+        if (line_end) {
+            settle_num1(NULL);
+        }
         if (c != ' ' && want == WANT_QTH && qth_words > 0) {
             want = WANT_NONE;             /* ",", "." or a line break ends it */
             goto qth_done;
@@ -470,19 +498,13 @@ void digi_qso_feed_rx(char c) {
     if (is_my_call(word)) {
         mine_left = 4;                    /* "SP2KMO TU 5NN 012" */
     }
-    if (num1[0]) {
-        if (autograb && looks_like_serial(word) && atoi(word) == atoi(num1)) {
-            take_serial(num1, true);      /* "012 012" */
-        } else if (autograb && num1_mine) {
-            take_serial(num1, false);
-        }
-        num1[0] = '\0';
-    }
+    settle_num1(word);
     if (looks_like_rst(word)) {
         if (!after_rst) {
             num1_mine = mine_left > 0;    /* a repeated report keeps the first */
         }
         after_rst = true;
+        rst_gen = qso_gen;
         /* a report ends whatever was being captured: "QTH POZNAN 599 JOHN" */
         after_de = false;
         if (want == WANT_QTH && qth_words > 0) {
@@ -494,8 +516,12 @@ void digi_qso_feed_rx(char c) {
     }
     if (after_rst) {
         after_rst = false;
-        if (looks_like_serial(word)) {
+        if (rst_gen == qso_gen && looks_like_serial(word)) {
             snprintf(num1, sizeof(num1), "%s", word);   /* decided on the next word */
+            num1_gen = qso_gen;
+            if (line_end) {
+                settle_num1(NULL);        /* "SP2KMO 599 012" and the over ends */
+            }
             return;
         }
     }
