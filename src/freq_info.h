@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
 #include "lvgl/lvgl.h"
 
@@ -16,6 +17,10 @@ extern "C" {
 #endif
 
 lv_obj_t * freq_info_init(lv_obj_t * parent);
+
+/* Bluetooth's icons (bt_icons_17) right of the mode, for while a window
+ * hides the status bar; highlighted when `connected`. NULL hides them. */
+void freq_info_bt(const char *text, bool connected);
 
 // const char* info_params_mode_label_get();
 // const char* info_params_agc();

@@ -15,6 +15,7 @@ extern "C" {
     #include "bt_ctl.h"
     #include "bt_spp.h"
     #include "keyboard.h"
+    #include "freq_info.h"
 
     LV_FONT_DECLARE(bt_icons_17);
 
@@ -54,6 +55,8 @@ static lv_obj_t     *spl_label;
 static lv_obj_t     *agc_label;
 static lv_obj_t     *wifi_label;
 static lv_obj_t     *bt_label;
+static bool          bar_shown = true;  /* false while a window hides the bar */
+static bool          bt_force;          /* show again even if nothing changed */
 
 /* bt_icons_17: Bluetooth, and what is connected through it */
 #define BT_ICON         "\xEF\x8A\x93"   /* U+F293 Bluetooth */
@@ -193,6 +196,9 @@ void indicators_left_show(bool v) {
 }
 
 void indicators_show(bool v) {
+    bar_shown = v;
+    bt_force = true;
+    bt_update_cb(NULL);     /* Bluetooth moves to or from the mode's side */
     if (!v) {
         lv_obj_add_flag(cont_left, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(cont_right, LV_OBJ_FLAG_HIDDEN);
@@ -257,12 +263,16 @@ static void wifi_state_change_cb(void *s, lv_msg_t *m) {
  * As WiFi's: hidden while Bluetooth is off, grey while it is on with
  * nothing connected, highlighted while something is, followed by what:
  * headphones (the radio's audio goes to a headset), a phone (the app,
- * over SPP), a keyboard.
+ * over SPP), a keyboard. While a window (FT8, RTTY, ...) hides this bar,
+ * the same shows right of the mode above the frequency (freq_info_bt()),
+ * without the keyboard, which is in the user's hands anyway and wouldn't
+ * leave room for the other VFO's frequency.
  */
 static void bt_update_cb(lv_timer_t *t) {
     static char last[24] = "";
     static int  last_state = -1;
     char        text[24];
+    char        short_text[24];
     int         state;      /* 0 hidden, 1 on, 2 connected */
 
     (void)t;
@@ -274,16 +284,21 @@ static void bt_update_cb(lv_timer_t *t) {
 
     snprintf(text, sizeof(text), "%s%s%s%s", BT_ICON, audio ? BT_ICON_AUDIO : "",
              phone ? BT_ICON_PHONE : "", kbd ? BT_ICON_KBD : "");
+    snprintf(short_text, sizeof(short_text), "%s%s%s", BT_ICON, audio ? BT_ICON_AUDIO : "",
+             phone ? BT_ICON_PHONE : "");
     if (audio || phone || kbd) {
         state = 2;
     } else {
         state = on ? 1 : 0;
     }
-    if (state == last_state && strcmp(text, last) == 0) {
+    if (!bt_force && state == last_state && strcmp(text, last) == 0) {
         return;
     }
+    bt_force = false;
     last_state = state;
     snprintf(last, sizeof(last), "%s", text);
+
+    freq_info_bt(bar_shown || state == 0 ? NULL : short_text, state == 2);
 
     lv_label_set_text(bt_label, text);
     if (state == 0) {
