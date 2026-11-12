@@ -73,3 +73,12 @@ add_executable(test_digi_txq test_digi_txq.cpp ${PROJECT_SOURCE_DIR}/src/digi_tx
 target_include_directories(test_digi_txq PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(test_digi_txq PRIVATE Catch2::Catch2WithMain pthread)
 add_test(NAME test_digi_txq COMMAND $<TARGET_FILE:test_digi_txq> --colour-mode=ansi)
+
+# test_olivia: the Olivia modulator into the receiver, every variant of
+# the Mode button (src/olivia*.c, plain C, no radio)
+add_executable(test_olivia test_olivia.cpp
+    ${PROJECT_SOURCE_DIR}/src/olivia.c ${PROJECT_SOURCE_DIR}/src/olivia_mod.c
+    ${PROJECT_SOURCE_DIR}/src/olivia_demod.c ${PROJECT_SOURCE_DIR}/src/olivia_rx.c)
+target_include_directories(test_olivia PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(test_olivia PRIVATE m Catch2::Catch2WithMain)
+add_test(NAME test_olivia COMMAND $<TARGET_FILE:test_olivia> --colour-mode=ansi)
