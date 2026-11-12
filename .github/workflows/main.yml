@@ -98,6 +98,20 @@ jobs:
       run: |
         cd AetherX6100Buildroot && bash ./br_config.sh
 
+    # Buildroot fetches U-Boot only from ftp.denx.de (sources.buildroot.net
+    # has no copy of 2023.01): when denx is down every build fails after
+    # ~45 min (2026-11-06, 11-10, 11-12). Put the tarball in Buildroot's dl
+    # folder first, from OpenWrt's source mirror if denx doesn't answer,
+    # checked by its hash. Update the version when Buildroot's U-Boot changes.
+    - name: U-Boot source (ftp.denx.de fallback)
+      run: |
+        f=u-boot-2023.01.tar.bz2
+        d=AetherX6100Buildroot/buildroot/dl/uboot
+        mkdir -p $d
+        curl -fsSL --connect-timeout 20 -m 600 -o $d/$f https://ftp.denx.de/pub/u-boot/$f ||
+          curl -fsSL --connect-timeout 20 -m 1200 -o $d/$f https://sources.openwrt.org/$f
+        echo "69423bad380f89a0916636e89e6dcbd2e4512d584308d922d1039d1e4331950f  $d/$f" | sha256sum -c
+
     # Build
     - name: Build
       run: |
