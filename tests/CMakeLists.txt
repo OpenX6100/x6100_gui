@@ -12,6 +12,13 @@ add_executable(test_qth test_qth.cpp)
 target_link_libraries(test_qth PRIVATE QTH Catch2::Catch2WithMain)
 add_test(NAME test_qth COMMAND $<TARGET_FILE:test_qth> --colour-mode=ansi )
 
+# test_itu_region: the ITU region of a position or a locator
+# (src/itu_region.c, plain C, the locator maths from QTH)
+add_executable(test_itu_region test_itu_region.cpp ${PROJECT_SOURCE_DIR}/src/itu_region.c)
+target_include_directories(test_itu_region PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(test_itu_region PRIVATE QTH m Catch2::Catch2WithMain)
+add_test(NAME test_itu_region COMMAND $<TARGET_FILE:test_itu_region> --colour-mode=ansi)
+
 add_subdirectory(../src/ft8 ${CMAKE_BINARY_DIR}/src/ft8)
 add_executable(test_ft8_qso test_ft8_qso.cpp)
 target_link_libraries(test_ft8_qso PRIVATE ft8_core QTH aether_x6100_control Catch2::Catch2WithMain)
@@ -66,3 +73,12 @@ add_executable(test_digi_txq test_digi_txq.cpp ${PROJECT_SOURCE_DIR}/src/digi_tx
 target_include_directories(test_digi_txq PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(test_digi_txq PRIVATE Catch2::Catch2WithMain pthread)
 add_test(NAME test_digi_txq COMMAND $<TARGET_FILE:test_digi_txq> --colour-mode=ansi)
+
+# test_olivia: the Olivia modulator into the receiver, every variant of
+# the Mode button (src/olivia*.c, plain C, no radio)
+add_executable(test_olivia test_olivia.cpp
+    ${PROJECT_SOURCE_DIR}/src/olivia.c ${PROJECT_SOURCE_DIR}/src/olivia_mod.c
+    ${PROJECT_SOURCE_DIR}/src/olivia_demod.c ${PROJECT_SOURCE_DIR}/src/olivia_rx.c)
+target_include_directories(test_olivia PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(test_olivia PRIVATE m Catch2::Catch2WithMain)
+add_test(NAME test_olivia COMMAND $<TARGET_FILE:test_olivia> --colour-mode=ansi)

@@ -46,6 +46,8 @@
 #include "styles.h"
 #include "cfg/cfg_api.h"
 #include "radio.h"
+#include "band_plan.h"
+#include "itu_region.h"
 #include "common/time.h"
 #include "audio.h"
 #include "dsp.h"
@@ -177,9 +179,11 @@
  * PSK31 has no single official list of frequencies. These are where
  * activity is found, cross-checked between several published lists;
  * PSK31 signals sit within the 3 kHz above the dial, which is exactly
- * what the waterfall shows. Region 1 values where regions differ:
+ * what the waterfall shows. Where the regions differ, the station's is
+ * used: Settings > Band plan, or with Auto the region of the locator in
+ * the QTH Grid app (band_plan_region(), itu_region.c):
  *
- *  - 40 m: 7040 kHz is Region 1. Region 2 uses 7070, Region 3 7035.
+ *  - 40 m: 7040 kHz in Region 1, 7070 in Region 2, 7035 in Region 3.
  *  - 17 m: 18097 kHz. PSK31 moved down from 18100 in 2019, when FT8
  *    took that frequency.
  *  - 60 m is left out: allocations and permitted modes differ from
@@ -187,25 +191,32 @@
  */
 typedef struct {
     const char *label;
-    uint32_t    dial_hz;
+    uint32_t    dial[3];        /* Regions 1, 2, 3; 0: Region 1's */
 } psk_band_t;
 
 static const psk_band_t psk_bands[] = {
-    {"160m",   1838000},
-    {"80m",    3580000},
-    {"40m",    7040000},
-    {"30m",   10140000},
-    {"20m",   14070000},
-    {"17m",   18097000},
-    {"15m",   21070000},
-    {"12m",   24920000},
-    {"10m",   28120000},
-    {"6m",    50290000},
+    {"160m", { 1838000}},
+    {"80m",  { 3580000}},
+    {"40m",  { 7040000, 7070000, 7035000}},
+    {"30m",  {10140000}},
+    {"20m",  {14070000}},
+    {"17m",  {18097000}},
+    {"15m",  {21070000}},
+    {"12m",  {24920000}},
+    {"10m",  {28120000}},
+    {"6m",   {50290000}},
 };
 
 #define PSK_BAND_CNT ((int)(sizeof(psk_bands) / sizeof(psk_bands[0])))
 
 static int cur_band = -1;
+static int region = 1;          /* the station's, read by load_band() */
+
+/* The band's dial for the station's region. */
+static uint32_t band_dial(int idx)
+{
+    return itu_region_pick(psk_bands[idx].dial, region);
+}
 
 /* ------------------------------------------------------------------ */
 
@@ -1009,7 +1020,7 @@ static int band_nearest(uint32_t freq)
     int64_t best_d = -1;
 
     for (int i = 0; i < PSK_BAND_CNT; i++) {
-        int64_t d = (int64_t)freq - (int64_t)psk_bands[i].dial_hz;
+        int64_t d = (int64_t)freq - (int64_t)band_dial(i);
 
         if (d < 0)
             d = -d;
@@ -1021,12 +1032,31 @@ static int band_nearest(uint32_t freq)
     return best;
 }
 
+/* The band and its dial on the message line; where the dial depends on
+ * the region, which one, and the offset when the dial is moved. */
+static void band_msg(uint32_t f)
+{
+    char region_s[16] = "";
+
+    if (itu_region_differs(psk_bands[cur_band].dial))
+        snprintf(region_s, sizeof(region_s), " (Region %d)", region);
+
+    if (dial_offset_hz == 0)
+        msg_update_text_fmt("PSK31 %s  %u.%03u MHz%s", psk_bands[cur_band].label,
+                            (unsigned)(f / 1000000u), (unsigned)((f / 1000u) % 1000u), region_s);
+    else
+        msg_update_text_fmt("PSK31 %s  %u.%03u MHz (%+d kHz)", psk_bands[cur_band].label,
+                            (unsigned)(f / 1000000u), (unsigned)((f / 1000u) % 1000u),
+                            (int)(dial_offset_hz / 1000));
+}
+
 /* dir 0 picks the band closest to where the radio already is, which is
  * what opening the window does; +-1 steps through the list. */
 static void load_band(int8_t dir)
 {
     int idx;
 
+    region = band_plan_region();    /* once here, not on every band_dial() */
     if (dir == 0 || cur_band < 0) {
         idx = band_nearest((uint32_t)cparam_i_get(cfg.cur.fg_freq()));
     } else {
@@ -1042,13 +1072,11 @@ static void load_band(int8_t dir)
     refresh_btn(&btn_dial);
 
     /* Frequency first, then mode - the order cfg_digital_load() uses. */
-    cparam_i_set(cfg.cur.fg_freq(), (int32_t)psk_bands[idx].dial_hz);
+    cparam_i_set(cfg.cur.fg_freq(), (int32_t)band_dial(idx));
     cparam_i_set(cfg.cur.mode(), x6100_mode_usb_dig);
     digi_text_new_header();
 
-    msg_update_text_fmt("PSK31 %s  %u.%03u MHz", psk_bands[idx].label,
-                        (unsigned)(psk_bands[idx].dial_hz / 1000000u),
-                        (unsigned)((psk_bands[idx].dial_hz / 1000u) % 1000u));
+    band_msg(band_dial(idx));
 }
 
 static void restart_rx(void)
@@ -1097,7 +1125,7 @@ static void dial_apply(void)
     if (cur_band < 0)
         return;
 
-    f = (uint32_t)((int32_t)psk_bands[cur_band].dial_hz + dial_offset_hz);
+    f = (uint32_t)((int32_t)band_dial(cur_band) + dial_offset_hz);
     cparam_i_set(cfg.cur.fg_freq(), (int32_t)f);
     digi_text_new_header();
 
@@ -1110,13 +1138,7 @@ static void dial_apply(void)
     restart_rx();
     quiet_since = lv_tick_get();
 
-    if (dial_offset_hz == 0)
-        msg_update_text_fmt("PSK31 %s  %u.%03u MHz", psk_bands[cur_band].label,
-                            (unsigned)(f / 1000000u), (unsigned)((f / 1000u) % 1000u));
-    else
-        msg_update_text_fmt("PSK31 %s  %u.%03u MHz (%+d kHz)", psk_bands[cur_band].label,
-                            (unsigned)(f / 1000000u), (unsigned)((f / 1000u) % 1000u),
-                            (int)(dial_offset_hz / 1000));
+    band_msg(f);
     refresh_btn(&btn_dial);
 }
 
@@ -1889,7 +1911,12 @@ static void key_cb(lv_event_t *e)
 
     switch (key) {
         case LV_KEY_ESC:
-            dialog_destruct();
+            /* The RFG knob, as JS8: the first stops TX, the next closes. */
+            if (psk_tx_is_on()) {
+                stop_press_cb(NULL);
+            } else {
+                dialog_destruct();
+            }
             break;
 
         case LV_KEY_ENTER:

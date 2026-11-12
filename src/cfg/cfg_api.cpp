@@ -65,6 +65,8 @@ static ParamInt *cfg_vox_delay(void) { return param_ref<ParamInt>(cfg_instance()
 static ParamInt *cfg_ft8_show_all(void) { return param_ref<ParamInt>(cfg_instance().p_ft8_show_all); }
 static ParamInt *cfg_ft8_protocol(void) { return param_ref<ParamInt>(cfg_instance().p_ft8_protocol); }
 static ParamInt *cfg_ft8_auto(void) { return param_ref<ParamInt>(cfg_instance().p_ft8_auto); }
+static ParamInt *cfg_ft8_psk(void) { return param_ref<ParamInt>(cfg_instance().p_ft8_psk); }
+static ParamInt *cfg_ft8_psk_min(void) { return param_ref<ParamInt>(cfg_instance().p_ft8_psk_min); }
 static ParamInt *cfg_ft8_hold_freq(void) { return param_ref<ParamInt>(cfg_instance().p_ft8_hold_freq); }
 static ParamInt *cfg_ft8_max_repeats(void) { return param_ref<ParamInt>(cfg_instance().p_ft8_max_repeats); }
 static ParamInt *cfg_swrscan_linear(void) { return param_ref<ParamInt>(cfg_instance().p_swrscan_linear); }
@@ -322,6 +324,8 @@ extern "C" const cfg_refs_t cfg = {
         .protocol = &cfg_ft8_protocol,
         .auto_mode = &cfg_ft8_auto,
         .hold_freq = &cfg_ft8_hold_freq,
+        .psk = &cfg_ft8_psk,
+        .psk_min = &cfg_ft8_psk_min,
         .max_repeats = &cfg_ft8_max_repeats,
         .tx_freq = &cfg_ft8_tx_freq,
         .output_gain_offset = &cfg_ft8_output_gain_offset,

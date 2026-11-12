@@ -142,9 +142,7 @@ static void next_press_cb(button_data_t *b)
 
     digi_menu_close();
     if (rtty_tx_is_on()) {
-        rtty_tx_stop();
-        digi_qso_menu_tx_stopped();
-        buttons_refresh(b);
+        rtty_buttons_stop();
         return;
     }
     idx = digi_next_pick(&next_state, digi_qso_dx(), rtty_macros_count(), macro_name_at);
@@ -404,6 +402,13 @@ void rtty_center_hold_cb(button_data_t *b)
 buttons_page_t buttons_page_rtty_2 = {
     {&btn_rtty_p2, &btn_rtty_next, &btn_rtty_sql, &btn_rtty_macros, &btn_rtty_menu}
 };
+
+void rtty_buttons_stop(void)
+{
+    rtty_tx_stop();
+    digi_qso_menu_tx_stopped();
+    rtty_refresh_macro_labels();
+}
 
 void rtty_refresh_macro_labels(void)
 {

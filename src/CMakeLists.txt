@@ -34,6 +34,7 @@ target_sources(${PROJECT_NAME} PUBLIC
     dxcc.c
     dialog_ft8.c dialog_freq.c dialog_gps.c dialog_msg_cw.c
     ft8_ui/table_view.c ft8_ui/map_view.c
+    app_wf.c
     ft8_udp.c
     dialog_msg_voice.c dialog_recorder.c dialog_qth.c dialog_callsign.c digi_menu.c
     textarea_window.c cw_encoder.c buttons.cpp vol.cpp recorder.c
@@ -47,10 +48,13 @@ target_sources(${PROJECT_NAME} PUBLIC
     # JTTY
     dialog_jtty.c jtty/jtty_proto.c jtty/jtty_fec.c jtty/jtty_source.c
     jtty/jtty_demod.c jtty/jtty_rx.c jtty/jtty_mod.c jtty/jtty_pack.c jtty_tx.c jtty_log.c
+    # DSC
+    dialog_dsc.c dsc/dsc_decoder.c dsc/dsc_format.c dsc/dsc_mid.c dsc/dsc_ships.c dsc/dsc_flags.c
     # The apps on their way in: each one's sources below its name
     # WSPR
     dialog_wspr.c wspr_app.c wspr_worker.c wspr_demod.c wspr_fano.c
     wspr_encode.c wspr_mod.c wspr_spec.c wspr_map.c wspr_net.c wsprd/wsprd_utils.c wsprd/nhash.c
+    psk_reporter.c
     # JS8
     dialog_js8.c js8_wf.c js8_clock.c
     # PSK31
@@ -61,6 +65,8 @@ target_sources(${PROJECT_NAME} PUBLIC
     psk_spec.c digi_qso.c digi_menu.c digi_next.c
     # WeFax
     dialog_wefax.c wefax/decoder.c wefax/stations.c wefax/wefax_pp.c
+    # NavTex
+    dialog_navtex.c navtex/decoder.c navtex/sitorb.c navtex/bulletin.c
     # SSTV
     dialog_sstv.c sstv_resources.c sstv/decoder.c sstv/encoder.c sstv/autodetect.c sstv/vis.c sstv/linesync.c sstv/preview.c sstv/sstv_denoise.c sstv/sstv_dnn.c sstv/syncgrid.c
 )

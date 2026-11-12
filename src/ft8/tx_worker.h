@@ -24,6 +24,10 @@
 
 #include "../ports/app_ports.h"
 
+/* FT8 audio tone offset inside the radio passband: the VFO moves by
+ * tx_freq - FT8_TX_AUDIO_HZ while sending. */
+#define FT8_TX_AUDIO_HZ 1325
+
 #ifdef __cplusplus
 extern "C" {
 #endif
