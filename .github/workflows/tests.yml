@@ -4,7 +4,9 @@ name: Unit tests
 # Ubuntus: JS8 needs Boost >= 1.78 (24.04), X6100Control's GPIO code the
 # libgpiod 1.6 API (22.04). Only the test programs are built: the firmware's
 # LVGL fork (NEON) doesn't build on a PC. tools/checks/check_tests_in_ci.py
-# fails a test that is registered but run by neither job.
+# fails a test that is registered but run by neither job. The last job,
+# "Unit tests", passes only when both have: it is the one check to require
+# on main.
 on:
   workflow_dispatch:
   pull_request:
@@ -103,3 +105,17 @@ jobs:
       if: always()
       run: |
         ctest --test-dir build_test --output-on-failure -R '^(test_qth|test_itu_region|test_adif_rec|test_digi_txq|test_ft8_qso|test_civ|test_cfg|test_cw_decoder)$'
+
+  unit-tests:
+    name: Unit tests
+    needs: [js8, others]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+    - name: Both test jobs passed
+      env:
+        JS8: ${{ needs.js8.result }}
+        OTHERS: ${{ needs.others.result }}
+      run: |
+        echo "js8: $JS8, others: $OTHERS"
+        test "$JS8" = success && test "$OTHERS" = success
