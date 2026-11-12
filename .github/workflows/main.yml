@@ -2,6 +2,8 @@ name: Build image
 # On a tag: the release. Started by hand on any branch: a test image to try on
 # a radio before the PR (Actions > Build image > Run workflow), kept for 30
 # days as a download on the run's page, named after the branch ("/" -> "-").
+# Works in a fork too (anyone outside OpenX6100): enable Actions in the
+# fork, then Actions > Build image > Run workflow on your branch.
 on:
   workflow_dispatch:
     inputs:
@@ -66,11 +68,13 @@ jobs:
           echo "A release must be built on Buildroot master, not $REF"; exit 1
         fi
 
-    # The image's name: the tag or branch, a "/" in it made "-" (a file name
-    # and an artifact name can't have one).
+    # The image's name: the tag or branch with everything but letters,
+    # digits and . _ - made "-". Git allows ; $ " : < > | * ? \ and spaces in
+    # a branch name: they'd run as shell in the steps below, and
+    # upload-artifact refuses some of them (Kris).
     - name: Image name
       id: img
-      run: echo "name=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_OUTPUT"
+      run: echo "name=$(printf '%s' "$GITHUB_REF_NAME" | tr -c 'A-Za-z0-9._-' '-')" >> "$GITHUB_OUTPUT"
 
     - name: Patch GUI mk
       run: |
@@ -110,10 +114,12 @@ jobs:
 
     # Compress image
     - name: Compress image
+      env:
+        NAME: ${{ steps.img.outputs.name }}
       run: |
         cd AetherX6100Buildroot/build/images
-        mv sdcard.img sdcard.${{ steps.img.outputs.name }}.img
-        zip sdcard.${{ steps.img.outputs.name }}.img.zip sdcard.${{ steps.img.outputs.name }}.img
+        mv sdcard.img "sdcard.$NAME.img"
+        zip "sdcard.$NAME.img.zip" "sdcard.$NAME.img"
 
     # Always keep the image as a download on the run's page: a branch run has
     # no release to attach it to, and on a tag it survives a failed Release.
