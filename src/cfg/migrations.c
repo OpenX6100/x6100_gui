@@ -127,7 +127,8 @@ static int _4_convert_scaled_params_to_real() {
 }
 
 /* FT2 dial frequencies (IU8LMC's Decodium list, mode 3 = USB-D). For new
-   and existing databases alike: the seed database starts at version 1. */
+   and existing databases alike: the seed database starts at version 1.
+   80 m and 40 m are corrected by migration 6. */
 static int _5_add_ft2_frequencies() {
     sqlite3 *db = cfg_db_get();
     int rc;
@@ -157,6 +158,36 @@ static int _5_add_ft2_frequencies() {
     return 0;
 }
 
+/* FT2 on 80 m and 40 m where the stations are: 3578 kHz (3568 was a typo;
+   Decodium, WSJT-X Improved and the first testers all use 3578) and
+   7052 kHz (WSJT-X Improved and the activity on the air; 7062 is in the
+   phone part of the band in Region 1). Only a row that still has the old
+   frequency moves; OR IGNORE keeps one the user already has on the new
+   frequency, rather than failing the migration. */
+static int _6_fix_ft2_frequencies() {
+    sqlite3 *db = cfg_db_get();
+    int rc;
+    char *query;
+    rc = asprintf(&query,
+        "UPDATE OR IGNORE digital_modes SET freq = 3578000 "
+            "WHERE type = %u AND freq = 3568000;"
+        "UPDATE OR IGNORE digital_modes SET freq = 7052000 "
+            "WHERE type = %u AND freq = 7062000;",
+        CFG_DIG_TYPE_FT2, CFG_DIG_TYPE_FT2
+    );
+    if (rc == -1) {
+        printf("Cannot allocate SQL query\n");
+        return 1;
+    }
+    rc = sqlite3_exec(db, query, NULL, NULL, NULL);
+    free(query);
+    if (rc != SQLITE_OK) {
+        printf("Cannot fix FT2 frequencies: %s\n", sqlite3_errmsg(db));
+        return 1;
+    }
+    return 0;
+}
+
 /* Migrations array */
 static int (*migrations[])() = {
     _0_init_migrations,
@@ -165,6 +196,7 @@ static int (*migrations[])() = {
     _3_update_spectrum_peak_hold,
     _4_convert_scaled_params_to_real,
     _5_add_ft2_frequencies,
+    _6_fix_ft2_frequencies,
 };
 
 int migrations_apply(void) {
