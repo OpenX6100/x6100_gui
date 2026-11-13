@@ -217,14 +217,15 @@ lv_obj_t *tx_info_init(lv_obj_t *parent) {
         lv_obj_add_style(l, &style.text_muted_color, LV_PART_MAIN);
     }
 
-    add_label(0, 14, 48, &sony_18, LV_TEXT_ALIGN_LEFT, "PWR");
-    /* SWR and ALC as big as the power (sony_16 was too small to read on
-     * the radio), their names as PWR's, on the numbers' base line */
-    add_label(0, 42, 48, &sony_18, LV_TEXT_ALIGN_LEFT, "SWR");
-    add_label(326, 42, 48, &sony_18, LV_TEXT_ALIGN_LEFT, "ALC");
+    /* SWR and ALC numbers as big as the power (sony_16 was too small to
+     * read on the radio), the names sony_22, each on its number's base
+     * line (sony_22 and sony_26 lines put it 15 and 16 px down) */
+    add_label(0, 10, 48, &sony_22, LV_TEXT_ALIGN_LEFT, "PWR");
+    add_label(0, 40, 48, &sony_22, LV_TEXT_ALIGN_LEFT, "SWR");
+    add_label(326, 40, 48, &sony_22, LV_TEXT_ALIGN_LEFT, "ALC");
     pwr_label  = add_label(535, 9, 85, &sony_26, LV_TEXT_ALIGN_RIGHT, "");
-    vswr_label = add_label(222, 37, 78, &sony_26, LV_TEXT_ALIGN_RIGHT, "");
-    alc_label  = add_label(536, 37, 84, &sony_26, LV_TEXT_ALIGN_RIGHT, "");
+    vswr_label = add_label(222, 39, 78, &sony_26, LV_TEXT_ALIGN_RIGHT, "");
+    alc_label  = add_label(536, 39, 84, &sony_26, LV_TEXT_ALIGN_RIGHT, "");
 
     lv_msg_subscribe(MSG_RADIO_TX, tx_cb, NULL);
     lv_msg_subscribe(MSG_RADIO_RX, rx_cb, NULL);
