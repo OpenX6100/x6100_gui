@@ -22,6 +22,8 @@ extern "C" {
 typedef void (*dialog_construct_cb_t)(lv_obj_t *);
 typedef void (*dialog_destruct_cb_t)(void);
 typedef void (*dialog_rotary_cb_t)(int32_t diff, uint16_t dt);
+typedef bool (*dialog_mic_step_cb_t)(int dir);
+typedef bool (*dialog_vm_toggle_cb_t)(void);
 
 typedef struct {
     lv_obj_t                *obj;
@@ -31,6 +33,11 @@ typedef struct {
     buttons_page_t          *btn_page;
     buttons_page_t          *prev_page;
     lv_event_cb_t           key_cb;
+    /* optional, for an app with a list (stations, channels...): mic UP / DOWN
+     * (dir -1 / +1) and V/M; true when the app used the key, false to leave
+     * it to Channels recall */
+    dialog_mic_step_cb_t    mic_step_cb;
+    dialog_vm_toggle_cb_t   vm_toggle_cb;
     bool                    run;
 } dialog_t;
 
@@ -47,6 +54,8 @@ lv_obj_t * dialog_init(lv_obj_t *parent);
 void dialog_item(dialog_t *dialog, lv_obj_t *obj);
 
 void dialog_rotary(int32_t diff, uint16_t dt);
+bool dialog_mic_step(int dir);  /* the open dialog's mic_step_cb, false without */
+bool dialog_vm_toggle(void);    /* the open dialog's vm_toggle_cb, false without */
 
 #ifdef __cplusplus
 }
