@@ -2,6 +2,7 @@
 #include "../src/ft8/call_table.h"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <cstdint>
@@ -608,4 +609,48 @@ TEST_CASE("Callsign table never fills up", "[ft8_qso]") {
     REQUIRE(t.lookup_hash(FTX_CALLSIGN_HASH_22_BITS, 0x2ABCDEu, got));
     ftx_call_table_age(10);
     REQUIRE(!t.lookup_hash(FTX_CALLSIGN_HASH_22_BITS, 0x2ABCDEu, got));
+}
+
+/* "A B +" is a valid free-text frame that any station can send. A bare sign, or a sign and letters, where the report
+ * goes reached std::stoi, which threw std::invalid_argument on the FT8 decoder thread; nothing catches it there, so
+ * the GUI ended (std::terminate). These frames are text, not reports, and real reports still parse. */
+TEST_CASE("A bare sign where the report goes is text, not a report", "[ft8_qso]") {
+    FTxQsoProcessor q = FTxQsoProcessor("R2RFE", "LO02", save_qso);
+    ftx_msg_meta_t  meta;
+    ftx_tx_msg_t    tx_msg;
+
+    SECTION("no report, nothing thrown") {
+        const char *text = GENERATE("A B +", "A B -", "A B R+", "A B R-", "Q1QQQ KF0QGT +", "A B +5X", "A B R-1X",
+                                    "R2RFE EA1DX +", "R2RFE EA1DX R-");
+        INFO(text);
+        REQUIRE_NOTHROW(q.add_rx_text(text, 12, &meta, &tx_msg));
+        REQUIRE(meta.type == FXT_MSG_TYPE_OTHER);
+        REQUIRE(qso_vec.empty());
+    }
+    SECTION("real reports as before") {
+        q.add_rx_text("A B +05", 12, &meta, &tx_msg);
+        REQUIRE(meta.type == FTX_MSG_TYPE_REPORT);
+        REQUIRE(meta.remote_snr == 5);
+        q.add_rx_text("A B R-12", 12, &meta, &tx_msg);
+        REQUIRE(meta.type == FTX_MSG_TYPE_R_REPORT);
+        REQUIRE(meta.remote_snr == -12);
+        q.add_rx_text("Q1QQQ KF0QGT R+03", 12, &meta, &tx_msg);
+        REQUIRE(meta.type == FTX_MSG_TYPE_R_REPORT);
+        REQUIRE(meta.remote_snr == 3);
+    }
+    SECTION("a QSO goes on past a bare R+") {
+        q.add_rx_text("R2RFE EA1DX AB31", 5, &meta, &tx_msg);
+        q.start_new_slot();
+        q.add_rx_text("R2RFE EA1DX R+", 7, &meta, &tx_msg);
+        REQUIRE(qso_vec.empty());
+        q.start_new_slot();
+        q.add_rx_text("R2RFE EA1DX R+12", 7, &meta, &tx_msg);
+        REQUIRE(qso_vec.size() == 1);
+        auto [remote_callsign, remote_grid, r_snr, s_snr] = qso_vec[0];
+        REQUIRE_THAT(remote_callsign, Equals("EA1DX"));
+        REQUIRE_THAT(remote_grid, Equals("AB31"));
+        REQUIRE(r_snr == 12);
+        REQUIRE(s_snr == 5);
+    }
+    qso_vec.clear();
 }
