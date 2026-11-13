@@ -58,6 +58,13 @@ cd buildroot
 Images built from this repository include JS8's engine, which changes their
 licence: see [License](#license).
 
+## Bug hunt
+
+AI tokens left over at the end of the week? Point your agent at
+[docs/bug-hunt/HUNT.md](docs/bug-hunt/HUNT.md): it takes a part of the code
+nobody has hunted yet, reviews every line, and reports what it finds on that
+part's GitHub issue. It changes no code.
+
 ## License
 
 The GUI's own code is LGPL-2.1-or-later ([LICENSE](LICENSE)), and every file
