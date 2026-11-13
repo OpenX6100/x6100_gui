@@ -38,6 +38,8 @@ static void on_vfo_change(Subject *subj, void *user_data);
 static void on_step_change(Subject *subj, void *user_data);
 static void on_mode_change(Subject *subj, void *user_data);
 static void lock_freq_change_cb(void *s, lv_msg_t *msg);
+static void tx_cb(void *s, lv_msg_t *msg);
+static void rx_cb(void *s, lv_msg_t *msg);
 
 static void fg_freq_post_draw_event_cb(lv_event_t *e);
 
@@ -141,6 +143,10 @@ lv_obj_t * freq_info_init(lv_obj_t * parent) {
 
     lv_msg_subscribe(MSG_LOCK_FREQ, lock_freq_change_cb, NULL);
 
+    /* During TX the TX meter takes this box's place too (tx_info.c) */
+    lv_msg_subscribe(MSG_TX_INFO_SHOW, tx_cb, NULL);
+    lv_msg_subscribe(MSG_TX_INFO_HIDE, rx_cb, NULL);
+
     return NULL;
 }
 
@@ -205,6 +211,14 @@ static void on_step_change(Subject *subj, void *user_data) {
 static void on_mode_change(Subject *subj, void *user_data) {
     x6100_mode_t mode = (x6100_mode_t)cfg.cur.mode()->get();
     lv_label_set_text(mode_label, mode_to_str(mode));
+}
+
+static void tx_cb(void *s, lv_msg_t *msg) {
+    lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void rx_cb(void *s, lv_msg_t *msg) {
+    lv_obj_clear_flag(obj, LV_OBJ_FLAG_HIDDEN);
 }
 
 static void lock_freq_change_cb(void *s, lv_msg_t *msg) {
