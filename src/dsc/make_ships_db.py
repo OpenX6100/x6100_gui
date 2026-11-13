@@ -24,9 +24,9 @@ the same name.  Three formats, recognised by their content:
   special   211204590Jade Hochschule DH6000       (training / test sites)
   coast     002040100,AZR,Delgada,37.73,25.67     (ship type "Coast station")
 
-No ships file comes with the firmware: put ships.bin in /mnt/dsc/ on the
-SD card (see rootfs/usr/share/x6100/README-dsc.md), built from lists you
-may use.
+The firmware's file (rootfs/usr/share/x6100/dsc_ships.bin) is built from
+lista.csv of https://github.com/TheMurusTeam/dsc_db, where every line names
+its source; a ships.bin in /mnt/dsc/ on the SD card is read first.
 """
 
 import csv
