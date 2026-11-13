@@ -82,3 +82,9 @@ add_executable(test_olivia test_olivia.cpp
 target_include_directories(test_olivia PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(test_olivia PRIVATE m Catch2::Catch2WithMain)
 add_test(NAME test_olivia COMMAND $<TARGET_FILE:test_olivia> --colour-mode=ansi)
+
+# test_navtex_bulletin: the NavTex bulletin assembler on texts
+# (src/navtex/bulletin.c, plain C)
+add_executable(test_navtex_bulletin navtex/bulletin_test.c ${PROJECT_SOURCE_DIR}/src/navtex/bulletin.c)
+target_include_directories(test_navtex_bulletin PRIVATE ${PROJECT_SOURCE_DIR}/src/navtex)
+add_test(NAME test_navtex_bulletin COMMAND $<TARGET_FILE:test_navtex_bulletin>)
