@@ -118,6 +118,14 @@ void dialog_rotary(int32_t diff, uint16_t dt) {
     }
 }
 
+bool dialog_mic_step(int dir) {
+    return dialog_is_running() && current_dialog->mic_step_cb && current_dialog->mic_step_cb(dir);
+}
+
+bool dialog_vm_toggle(void) {
+    return dialog_is_running() && current_dialog->vm_toggle_cb && current_dialog->vm_toggle_cb();
+}
+
 
 static bool dialog_is_running() {
     return (current_dialog != NULL) && current_dialog->run;

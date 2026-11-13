@@ -241,6 +241,8 @@ static dialog_t dialog = {
     .construct_cb = construct_cb,
     .destruct_cb = destruct_cb,
     .key_cb = key_cb,
+    .mic_step_cb = dialog_navtex_mic_step,
+    .vm_toggle_cb = dialog_navtex_vm_toggle,
     .btn_page = &btn_page_1
 };
 

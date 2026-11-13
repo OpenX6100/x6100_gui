@@ -230,6 +230,8 @@ static dialog_t dialog = {
     .construct_cb = construct_cb,
     .destruct_cb = destruct_cb,
     .key_cb = key_cb,
+    .mic_step_cb = dialog_dsc_mic_step,
+    .vm_toggle_cb = dialog_dsc_vm_toggle,
     .btn_page = &page_list_1
 };
 
