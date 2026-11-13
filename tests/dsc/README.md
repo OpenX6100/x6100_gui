@@ -7,6 +7,10 @@ Tools to test the DSC decoder (`src/dsc/dsc_decoder.c`) on a computer
     ./run_tests.py            # synthetic calls at several SNR and fadings
     ./dsc_wav REC.wav         # the calls of a recording
 
+`run_tests.py --check` is also a unit test of the firmware, `test_dsc`, run
+by CI (`.github/workflows/tests.yml`): it fails if a call is WRONG or if a
+call of the clean case (SNR 10 dB) is not verified.
+
 | Tool | What it does |
 |---|---|
 | `dsc_gen OUT.wav [--snr DB] [--off HZ] [--fade S] [--sfade S] [--seed N] SYMBOLS...` | a DSC call (ITU-R M.493, 100 Bd, 170 Hz, dot pattern, phasing, DX/RX, EOS and error check) as 12000 Hz audio, with noise in 2500 Hz, frequency offset, fading (`--sfade`: the two tones fade independently) |

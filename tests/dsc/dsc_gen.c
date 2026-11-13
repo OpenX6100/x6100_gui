@@ -130,5 +130,6 @@ int main(int argc, char **argv)
     fwrite("data", 1, 4, f); fwrite(&data, 4, 1, f);
     fwrite(pcm, 2, (size_t)n, f);
     fclose(f);
+    free(pcm);
     return 0;
 }

@@ -5,7 +5,11 @@
 Synthetic test of the DSC decoder: random individual calls at several
 signal to noise ratios and fadings.
 
-    ./run_tests.py [--calls N] [--decoder PATH ...]
+    ./run_tests.py [--calls N] [--bin DIR] [--check] [--decoder PATH ...]
+
+--bin: the directory of dsc_gen and dsc_wav (default: this one).
+--check: exit 1 if a call is WRONG, or if a call of the clean case
+(SNR 10 dB) is not verified: the unit test test_dsc (tests/CMakeLists.txt).
 
 For each case, out of N calls:
   verified   decoded with a correct error check and right
@@ -14,6 +18,7 @@ For each case, out of N calls:
   ids        both MMSIs right (verified or not)
 """
 import os
+import shutil
 import random
 import subprocess
 import sys
@@ -51,8 +56,12 @@ def decode(tool, wav):
 
 def main():
     n = 20
-    tools = [os.path.join(HERE, "dsc_wav")]
     args = sys.argv[1:]
+    bin_dir = HERE
+    if "--bin" in args:
+        bin_dir = args[args.index("--bin") + 1]
+    check = "--check" in args
+    tools = [os.path.join(bin_dir, "dsc_wav")]
     if "--calls" in args:
         n = int(args[args.index("--calls") + 1])
     if "--decoder" in args:
@@ -65,6 +74,7 @@ def main():
              ("SNR 5, fading 2 s", ["--snr", "5", "--fade", "2"]),
              ("SNR 10, selective 2 s", ["--snr", "10", "--sfade", "2"])]
     tmp = tempfile.mkdtemp(prefix="dsc_test_")
+    failed = []
     print("%-22s" % "case" + "".join("  %-26s" % os.path.basename(t) for t in tools))
     print("%-22s" % "" + "  verified WRONG  ids       " * len(tools))
     for name, extra in cases:
@@ -76,7 +86,7 @@ def main():
                 ecc ^= v
             full = [sym[0]] + sym + [ecc]
             wav = os.path.join(tmp, "c.wav")
-            subprocess.run([os.path.join(HERE, "dsc_gen"), wav, "--seed", str(s)] + extra +
+            subprocess.run([os.path.join(bin_dir, "dsc_gen"), wav, "--seed", str(s)] + extra +
                            [str(v) for v in sym], check=True)
             for k, t in enumerate(tools):
                 for ok, got in decode(t, wav):
@@ -88,7 +98,19 @@ def main():
                     if got[2:7] == full[2:7] and got[8:13] == full[8:13]:
                         res[k][2] += 1
         print("%-22s" % name + "".join("  %5d/%-2d %5d %5d       " % (r[0], n, r[1], r[2]) for r in res))
+        for k, r in enumerate(res):
+            if r[1]:
+                failed.append("%s, %s: %d WRONG" % (name, os.path.basename(tools[k]), r[1]))
+            if name == "SNR 10 dB" and r[0] < n:
+                failed.append("%s, %s: %d/%d verified" % (name, os.path.basename(tools[k]), r[0], n))
+    shutil.rmtree(tmp, ignore_errors=True)
+    if check:
+        for f in failed:
+            print("FAILED: " + f)
+        print("%d FAILED" % len(failed) if failed else "all passed")
+        return 1 if failed else 0
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

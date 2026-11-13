@@ -9,6 +9,9 @@ Tools to test the SITOR-B receiver of the NAVTEX application
     ./navtex_wav REC.wav      # a recording, any sample rate
     ./navtex_wav REC.wav --quality
 
+`bulletin_test` is also a unit test of the firmware, `test_navtex_bulletin`,
+run by CI (`.github/workflows/tests.yml`).
+
 | Tool | What it does |
 |---|---|
 | `sitorb_gen OUT.wav [--snr DB] [--off HZ] [--ppm N] [--fade S] [--sfade S] [--rate HZ] [--rev] < text` | a NAVTEX message sent in SITOR-B (phasing, DX/RX repetition, idle alpha), with noise in 2500 Hz, frequency offset, clock error, fading (`--sfade`: the two tones fade independently) |
