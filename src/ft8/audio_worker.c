@@ -278,6 +278,7 @@ audio_worker_t *audio_worker_create(int audio_sample_rate,
     }
 
     ftx_worker_init(w->sample_rate, proto);
+    ftx_worker_set_filter(filter_low_hz, filter_high_hz);
     w->block_size          = ftx_worker_get_block_size();
     if (w->block_size <= 0) goto fail;
 
