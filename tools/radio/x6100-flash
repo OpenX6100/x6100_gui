@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+# Write a new image to the X6100's SD card in a USB card reader, keeping the
+# DATA partition (settings, logs, QSOs, inboxes).
+#
+#   x6100-flash RUN_ID        a Build image run's download (gh needed)
+#   x6100-flash FILE.img.zip  a zip holding one .img (a release's asset)
+#   x6100-flash FILE.img
+#
+# Steps: checks the image's own partition table (BOOT + rootfs ending where
+# the card's DATA starts), finds the card (a USB, SD-slot or removable disk
+# with BOOT and DATA on it; never a guessed /dev/sdX), backs up DATA, asks, writes the
+# image, puts the DATA partition back in the table, checks DATA matches the
+# backup and powers the card off. Asks for your sudo password for the write.
+#
+# Settings: X6100_REPO (where RUN_ID's run is, default OpenX6100/x6100_gui),
+# X6100_BACKUPS (default ~/x6100-sd-backups), X6100_BUILDS (downloads,
+# default ~/x6100-builds), X6100_CARD_SERIAL (the card reader's serial, to
+# pick one card when more than one is plugged in).
+#
+# A card the radio has never booted has no DATA yet: write the first image
+# with balenaEtcher or Rufus (README "Installing").
+set -euo pipefail
+
+REPO=${X6100_REPO:-OpenX6100/x6100_gui}
+BACKUPS=${X6100_BACKUPS:-$HOME/x6100-sd-backups}
+BUILDS=${X6100_BUILDS:-$HOME/x6100-builds}
+
+say() { printf '\n==> %s\n' "$*"; }
+die() { printf '\n*** %s\n' "$*" >&2; exit 1; }
+
+[ $# = 1 ] || die "usage: x6100-flash RUN_ID | FILE.img.zip | FILE.img"
+
+# --- the image -----------------------------------------------------------------
+SRC=$1
+if [[ "$SRC" =~ ^[0-9]+$ ]]; then
+    say "Build image run $SRC in $REPO"
+    command -v gh >/dev/null || die "needs the GitHub CLI (gh) for a run id; or give the .img.zip"
+    read -r status conclusion sha < <(gh run view "$SRC" -R "$REPO" --json status,conclusion,headSha \
+        --jq '"\(.status) \(.conclusion) \(.headSha[0:7])"')
+    [ "$status" = completed ] || die "The build is still running ($status)."
+    [ "$conclusion" = success ] || die "The build didn't succeed ($conclusion)."
+    DIR="$BUILDS/run-$SRC"
+    ZIP=$(find "$DIR" -name '*.img.zip' -type f 2>/dev/null | head -1 || true)
+    if [ -z "$ZIP" ]; then
+        # gh run download hangs on big artifacts; the API's zip doesn't.
+        A=$(gh api "repos/$REPO/actions/runs/$SRC/artifacts" \
+            --jq '.artifacts[] | select(.name | startswith("sdcard")) | .id' | head -1)
+        [ -n "$A" ] || die "Run $SRC has no sdcard download (expired after 30 days?)."
+        mkdir -p "$DIR"
+        say "Downloading the image (commit $sha)"
+        gh api "repos/$REPO/actions/artifacts/$A/zip" > "$DIR/artifact.zip"
+        unzip -q -o "$DIR/artifact.zip" -d "$DIR" && rm "$DIR/artifact.zip"
+        ZIP=$(find "$DIR" -name '*.img.zip' -type f | head -1)
+    fi
+    [ -n "$ZIP" ] || die "No .img.zip in $DIR"
+    SRC=$ZIP
+fi
+[ -f "$SRC" ] || die "No such file: $SRC"
+
+case "$SRC" in
+*.zip)
+    unzip -tq "$SRC" >/dev/null || die "The zip is damaged: $SRC"
+    # Only the .img inside is written: anything else in the zip (a README)
+    # would otherwise land past the image's end, on DATA.
+    mapfile -t IMGS < <(unzip -Z1 "$SRC" | grep -i '\.img$')
+    [ ${#IMGS[@]} = 1 ] || die "The zip must hold exactly one .img (it has ${#IMGS[@]})."
+    MEMBER=${IMGS[0]}
+    IMG_BYTES=$(unzip -l "$SRC" "$MEMBER" | awk 'NR == 4 {print $1}')
+    image() { unzip -p "$SRC" "$MEMBER"; }
+    ;;
+*.img)
+    IMG_BYTES=$(stat -c %s "$SRC")
+    image() { cat "$SRC"; }
+    ;;
+*) die "Give a run id, an .img.zip or an .img" ;;
+esac
+echo "image: $SRC${MEMBER:+ ($MEMBER)}, $IMG_BYTES bytes"
+
+MBR=$(mktemp)
+trap 'rm -f "$MBR"' EXIT
+image 2>/dev/null | head -c 1048576 >"$MBR" || true
+read -r NPARTS IMG_END < <(sfdisk -d "$MBR" 2>/dev/null | grep -o 'start= *[0-9]*, size= *[0-9]*' |
+                          tr -dc '0-9 \n' | awk '{n++; e = $1 + $2} END {print n + 0, e + 0}')
+[ "$NPARTS" = 2 ] || die "The image has $NPARTS partitions, not BOOT + rootfs. Stopping; nothing written."
+[ "$IMG_BYTES" -le $((IMG_END * 512)) ] || die "The image is longer than its partitions. Stopping."
+echo "image layout: BOOT + rootfs, ending at sector $IMG_END"
+
+# --- the card --------------------------------------------------------------------
+say "Looking for the card"
+CARDS=()
+while read -r line; do
+    # lsblk -P: KEY="value" pairs, so an empty TRAN doesn't shift the fields
+    name=$(sed -n 's/.*NAME="\([^"]*\)".*/\1/p' <<<"$line")
+    tran=$(sed -n 's/.*TRAN="\([^"]*\)".*/\1/p' <<<"$line")
+    rm=$(sed -n 's/.*RM="\([^"]*\)".*/\1/p' <<<"$line")
+    # a USB reader, a built-in SD slot (mmc), or anything removable
+    [ "$tran" = usb ] || [ "$tran" = mmc ] || [ "$rm" = 1 ] || [[ "$name" == mmcblk* ]] || continue
+    labels=$(lsblk -nlo LABEL "/dev/$name" | tr '\n' ' ')
+    [[ " $labels " == *" BOOT "* && " $labels " == *" DATA "* ]] || continue
+    if [ -n "${X6100_CARD_SERIAL:-}" ]; then
+        [ "$(lsblk -dno SERIAL "/dev/$name" | tr -d ' ')" = "$X6100_CARD_SERIAL" ] || continue
+    fi
+    CARDS+=("$name")
+done < <(lsblk -dnP -o NAME,TRAN,RM -e 7)
+[ ${#CARDS[@]} -gt 0 ] || die "No X6100 card found (a USB, SD-slot or removable disk with BOOT and DATA). Is it in the reader?"
+[ ${#CARDS[@]} = 1 ] || die "More than one X6100 card (${CARDS[*]}): set X6100_CARD_SERIAL to pick one."
+DEV=/dev/${CARDS[0]}
+P3=$(lsblk -nlo NAME,LABEL "$DEV" | awk '$2 == "DATA" {print $1}')
+[ "$P3" = "${CARDS[0]}3" ] || [ "$P3" = "${CARDS[0]}p3" ] || die "DATA isn't the card's third partition ($P3). Stopping."
+P3_START=$(cat "/sys/block/${CARDS[0]}/$P3/start")
+P3_SIZE=$(cat "/sys/block/${CARDS[0]}/$P3/size")
+P3_TYPE=$(lsblk -no PARTTYPE "/dev/$P3")
+lsblk -o NAME,SIZE,MODEL,SERIAL,LABEL,MOUNTPOINT "$DEV"
+[ "$P3_START" = "$IMG_END" ] ||
+    die "DATA starts at sector $P3_START but the image ends at $IMG_END: writing it would damage DATA. Stopping."
+echo "card: $DEV, DATA at sector $P3_START: matches the image"
+
+# --- back up DATA ----------------------------------------------------------------
+say "Backing up DATA"
+udisksctl mount -b "/dev/$P3" >/dev/null 2>&1 || true
+DATA=$(lsblk -no MOUNTPOINT "/dev/$P3" | head -1)
+[ -n "$DATA" ] || die "Couldn't mount /dev/$P3 (DATA)."
+mkdir -p "$BACKUPS"
+BACKUP="$BACKUPS/sd-backup-$(date +%Y-%m-%d-%H%M%S)"
+n=2; BASE=$BACKUP
+while [ -e "$BACKUP" ]; do BACKUP="$BASE-$n"; n=$((n + 1)); done # never into an old one
+cp -a "$DATA" "$BACKUP"
+echo "backup: $BACKUP ($(du -sh "$BACKUP" | cut -f1))"
+
+read -r -p $'\nWrite the image to '"$DEV"$'? This replaces BOOT and rootfs (DATA is kept). [y/N] ' ok
+[ "$ok" = y ] || [ "$ok" = Y ] || die "Stopped; nothing written."
+
+for p in $(lsblk -nlo NAME "$DEV" | tail -n +2); do udisksctl unmount -b "/dev/$p" >/dev/null 2>&1 || true; done
+if lsblk -no MOUNTPOINT "$DEV" | grep -q .; then die "Something on $DEV is still mounted."; fi
+
+# --- write -----------------------------------------------------------------------
+say "Writing the image (a few minutes)"
+image | sudo dd of="$DEV" bs=4M conv=fsync iflag=fullblock status=progress
+say "Putting the DATA partition back"
+echo "start=$P3_START, size=$P3_SIZE, type=${P3_TYPE#0x}" | sudo sfdisk --append --no-reread "$DEV"
+sudo partprobe "$DEV"
+sleep 3
+
+# --- check -----------------------------------------------------------------------
+say "Checking DATA against the backup"
+udisksctl mount -b "/dev/$P3" >/dev/null 2>&1 || true
+DATA=$(lsblk -no MOUNTPOINT "/dev/$P3" | head -1)
+[ -n "$DATA" ] || die "DATA didn't come back; your files are in $BACKUP."
+SAME=1
+if diff -rq "$BACKUP" "$DATA"; then echo "DATA is identical to the backup."; else SAME=0; fi
+
+sync
+for p in $(lsblk -nlo NAME "$DEV" | tail -n +2); do udisksctl unmount -b "/dev/$p" >/dev/null 2>&1 || true; done
+udisksctl power-off -b "$DEV" || true
+[ $SAME = 1 ] || die "The image is written, but DATA differs from the backup (above). Your files are safe in $BACKUP: copy them back before using the card."
+say "Done. Safe to take the card out and put it in the radio. Backup: $BACKUP"

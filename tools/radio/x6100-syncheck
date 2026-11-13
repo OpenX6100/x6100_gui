@@ -1,0 +1,26 @@
+#!/bin/bash
+# Check that GUI source files compile for the radio, in seconds instead of an
+# image build's hour: the image's ARM GCC 12, syntax only (no link, so it
+# doesn't catch a file missing from the build list: tools/checks/ does).
+# C files get the build's -Werror=implicit-function-declaration, so a call to
+# a removed function fails here too.
+#
+#   x6100-syncheck src/main_screen.c src/buttons.cpp ...   (in a checkout's root)
+#
+# Needs an ARM toolchain and the headers the GUI uses (liquid-dsp,
+# X6100Control, RHVoice, ft8lib, Boost, ...). The simplest is a local
+# AetherX6100Buildroot build: X6100_BR=<its build folder> (it has
+# host/bin/arm-linux-gcc, which finds its own sysroot). Or a matching
+# toolchain (Bootlin armv7-eabihf glibc stable 2023.08-1) in X6100_TC
+# (its bin folder) plus X6100_INC="-I... -I..." for the libraries' headers.
+# Prints ok/FAIL per file; exit code 1 if any failed.
+if [ -n "$X6100_BR" ]; then TC=$X6100_BR/host/bin; else TC=$X6100_TC; fi
+[ -x "$TC/arm-linux-gcc" ] || { echo "no ARM compiler: set X6100_BR or X6100_TC (see the top of $0)" >&2; exit 2; }
+[ $# -gt 0 ] || { echo "usage: x6100-syncheck FILE..." >&2; exit 2; }
+INC="-Isrc -I. -Ilvgl -Ilv_drivers -Ithird-party -Ithird-party/rapidxml -Ithird-party/utf8 -Ithird-party/js8core/include -Ithird-party/js8core -Isrc/js8 $X6100_INC -DLV_CONF_INCLUDE_SIMPLE"
+rc=0
+for f in "$@"; do
+  case $f in *.c) C="$TC/arm-linux-gcc -std=gnu11 -Werror=implicit-function-declaration";; *) C="$TC/arm-linux-g++ -std=gnu++20";; esac
+  if out=$($C -fsyntax-only $INC "$f" 2>&1); then echo "ok   $f"; else echo "FAIL $f"; echo "$out" | grep -iE "error" | head -5; rc=1; fi
+done
+exit $rc
