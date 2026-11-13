@@ -375,6 +375,7 @@ static button_data_t btn_rtty_center = {
     .type  = BTN_TEXT,
     .label = "Center",
     .press = button_encoder_update_cb,
+    .hold  = rtty_center_hold_cb,       /* snap to the signal */
     .ctrl  = CTRL_RTTY_CENTER,
     .encoder_allowed = true,
 };

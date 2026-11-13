@@ -25,10 +25,18 @@
 #include "digi_text.h"
 #include "qso_log.h"
 #include "radio.h"
+#include "rtty.h"
 #include "rtty_sql.h"
 #include "rtty_tx.h"
 
 #define TEXT_PATH "/mnt/rtty_text.txt"
+
+
+/* Snap and AFC search inside the receive filter. */
+static void note_filter(void)
+{
+    rtty_set_passband(cparam_i_get(cfg.filter.low()), cparam_i_get(cfg.filter.high()));
+}
 
 static digi_next_t next_state;          /* where the QSO is, for Next */
 
@@ -97,7 +105,7 @@ static void send_macro(int idx)
                         m->name);
     digi_qso_menu_sent(&qso_menu, m->name);     /* a 73 logs the QSO */
     digi_next_sent(&next_state, m->name, digi_qso_dx());
-    if (digi_next_is_cq(m->name)) {
+    if (digi_next_is_cq_macro(m->name, m->text)) {
         digi_qso_clear();               /* a CQ starts a new QSO */
     }
 }
@@ -288,7 +296,8 @@ static button_data_t btn_rtty_macros = {
  * message line as it turns.
  */
 enum {
-    MENU_DX, MENU_RST_SENT, MENU_RST_RCVD, MENU_AUTO_DX, MENU_QSO, MENU_NEW_QSO, MENU_COUNT
+    MENU_DX, MENU_RST_SENT, MENU_RST_RCVD, MENU_AUTO_DX, MENU_QSO, MENU_NEW_QSO, MENU_SNAP,
+    MENU_AFC, MENU_USOS, MENU_COUNT
 };
 
 static void menu_pick(int item, void *ctx)
@@ -315,6 +324,22 @@ static void menu_pick(int item, void *ctx)
 
         case MENU_QSO:
             digi_qso_menu_open(&qso_menu);
+            break;
+
+        case MENU_SNAP:
+            note_filter();
+            rtty_snap();
+            break;
+
+        case MENU_AFC:
+            param_i_set(cfg.rtty.afc(), !param_i_get(cfg.rtty.afc()));
+            msg_update_text_fmt("#FFFFFF RTTY AFC %s", param_i_get(cfg.rtty.afc()) ? "on" : "off");
+            break;
+
+        case MENU_USOS:
+            param_i_set(cfg.rtty.usos(), !param_i_get(cfg.rtty.usos()));
+            msg_update_text_fmt("#FFFFFF Unshift on space %s",
+                                param_i_get(cfg.rtty.usos()) ? "on" : "off");
             break;
 
         case MENU_NEW_QSO:
@@ -345,6 +370,10 @@ static void menu_press_cb(button_data_t *b)
              digi_qso_autograb() ? "on" : "off", digi_qso_autograb() ? "off" : "on");
     snprintf(text[MENU_QSO], 56, "QSO: log, name, QTH...");
     snprintf(text[MENU_NEW_QSO], 56, "New QSO (clear DX call, name, RST)");
+    snprintf(text[MENU_SNAP], 56, "Snap to the signal (also: hold Center)");
+    snprintf(text[MENU_AFC], 56, "AFC, keep the signal centred: %s",
+             param_i_get(cfg.rtty.afc()) ? "on" : "off");
+    snprintf(text[MENU_USOS], 56, "Unshift on space: %s", param_i_get(cfg.rtty.usos()) ? "on" : "off");
     for (int i = 0; i < MENU_COUNT; i++) {
         items[i] = text[i];
     }
@@ -356,6 +385,17 @@ static button_data_t btn_rtty_menu = {
     .label = "Menu",
     .press = menu_press_cb,
 };
+
+/* ---- page 1's Center, held ------------------------------------------- */
+
+
+void rtty_center_hold_cb(button_data_t *b)
+{
+    (void)b;
+    digi_menu_close();
+    note_filter();
+    rtty_snap();
+}
 
 /* ---- page ----------------------------------------------------------- */
 
@@ -395,6 +435,7 @@ static void sql_timer_cb(lv_timer_t *t)
         text_band = band;
         digi_text_new_header();
     }
+    note_filter();
     rtty_refresh_macro_labels();
     if (btn_rtty_sql.disp_btn) {
         buttons_refresh(&btn_rtty_sql);
@@ -407,6 +448,7 @@ void rtty_sql_timer_start(void)
 {
     if (!sql_timer) {
         sql_timer = lv_timer_create(sql_timer_cb, 400, NULL);
+        note_filter();
         text_band = qso_log_freq_to_band((uint64_t)cparam_i_get(cfg.cur.fg_freq()));
         digi_log_open();
         digi_text_open("RTTY", TEXT_PATH, qso_freq);

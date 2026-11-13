@@ -527,6 +527,8 @@ static void seed_default_macros(void) {
     rtty_macro_add("73",     "TNX FER QSO 73 73 DE <MYCALL> SK");
     rtty_macro_add("RY",     "RYRYRYRYRYRYRYRY");
     rtty_macro_add("Info",   "<CALL> DE <MYCALL> NAME <MYNAME> QTH <MYQTH> LOC <MYLOC> <CALL> DE <MYCALL> K");
+    rtty_macro_add("CQ TEST", "CQ TEST <MYCALL> <MYCALL> CQ");
+    rtty_macro_add("Exch",   "<CALL> 599 <CNTR> <CNTR> <CALL>");
 }
 
 void rtty_macros_load(void) {
@@ -635,7 +637,11 @@ bool rtty_macro_send(int idx, const char **missing) {
     if (!digi_qso_expand(m->text, expanded, sizeof(expanded), missing)) {
         return false;
     }
-    return rtty_tx_send(expanded);
+    if (!rtty_tx_send(expanded)) {
+        return false;
+    }
+    digi_qso_note_sent(m->text);        /* a <CNTR> keeps its number */
+    return true;
 }
 
 /* ---- Macro editor UI (two-step: name, then text) -------------------- */

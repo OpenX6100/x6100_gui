@@ -9,6 +9,7 @@
 #include "digi_qso_menu.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 #include <time.h>
@@ -24,8 +25,8 @@
 #define ITEM_LEN  64
 
 enum {
-    ITEM_LOG, ITEM_NAME, ITEM_QTH, ITEM_RSTR, ITEM_MYNAME, ITEM_MYQTH, ITEM_PICKUP, ITEM_AUTOLOG,
-    ITEM_TEXT, ITEM_COUNT
+    ITEM_LOG, ITEM_NAME, ITEM_QTH, ITEM_RSTR, ITEM_SERIAL, ITEM_SERIAL_RCVD, ITEM_MYNAME,
+    ITEM_MYQTH, ITEM_PICKUP, ITEM_AUTOLOG, ITEM_TEXT, ITEM_COUNT
 };
 
 static const digi_qso_menu_t *cur;
@@ -84,6 +85,24 @@ static bool field_ok_cb(void)
             msg_update_text_fmt("#FFFFFF My QTH: %s",
                                 param_t_get_into(cfg.op_qth(), my, sizeof(my)));
             break;
+
+        case ITEM_SERIAL:
+            if (t && atoi(t) > 0) {
+                digi_qso_set_serial_next(atoi(t));
+            }
+            if (digi_qso_serial_sent() > 0) {
+                msg_update_text_fmt("#FFFFFF Next serial: %03d (this QSO keeps %03d, sent)",
+                                    digi_qso_serial_next(), digi_qso_serial_sent());
+            } else {
+                msg_update_text_fmt("#FFFFFF Next serial: %03d", digi_qso_serial_next());
+            }
+            break;
+
+        case ITEM_SERIAL_RCVD:
+            digi_qso_set_serial_rcvd(t);
+            msg_update_text_fmt("#FFFFFF Serial received: %s",
+                                digi_qso_serial_rcvd()[0] ? digi_qso_serial_rcvd() : "none");
+            break;
     }
     field = -1;
     if (cur && cur->input_end) {
@@ -130,6 +149,16 @@ static void edit_field(int item)
         case ITEM_MYQTH:
             label = "My QTH:";
             param_t_get_into(cfg.op_qth(), text, sizeof(text));
+            break;
+
+        case ITEM_SERIAL:
+            label = "Next serial:";
+            snprintf(text, sizeof(text), "%d", digi_qso_serial_next());
+            break;
+
+        case ITEM_SERIAL_RCVD:
+            label = "Serial received:";
+            snprintf(text, sizeof(text), "%s", digi_qso_serial_rcvd());
             break;
     }
     field = item;
@@ -199,6 +228,7 @@ static void pending_drop(bool say)
     }
     lv_timer_del(pending_timer);
     pending_timer = NULL;
+    digi_qso_serial_unused(pending.stx);    /* not logged: its number is free again */
     if (say) {
         msg_update_text_fmt("#FF0000 TX stopped: %s not logged (Menu > QSO > Log QSO)",
                             pending.call);
@@ -247,6 +277,8 @@ static void menu_pick(int item, void *ctx)
 
         case ITEM_MYNAME:
         case ITEM_MYQTH:
+        case ITEM_SERIAL:
+        case ITEM_SERIAL_RCVD:
             edit_field(item);
             break;
 
@@ -303,6 +335,13 @@ void digi_qso_menu_open(const digi_qso_menu_t *m)
     snprintf(text[ITEM_QTH], ITEM_LEN, "DX QTH...  (%s)",
              digi_qso_qth()[0] ? digi_qso_qth() : "none");
     snprintf(text[ITEM_RSTR], ITEM_LEN, "RST received: %s  (press: next)", digi_qso_rst_rcvd());
+    if (digi_qso_serial_sent() > 0) {
+        snprintf(text[ITEM_SERIAL], ITEM_LEN, "Serial <CNTR>...  (sent %03d)", digi_qso_serial_sent());
+    } else {
+        snprintf(text[ITEM_SERIAL], ITEM_LEN, "Serial <CNTR>...  (next %03d)", digi_qso_serial_next());
+    }
+    snprintf(text[ITEM_SERIAL_RCVD], ITEM_LEN, "Serial received...  (%s)",
+             digi_qso_serial_rcvd()[0] ? digi_qso_serial_rcvd() : "none");
     param_t_get_into(cfg.op_name(), my, sizeof(my));
     snprintf(text[ITEM_MYNAME], ITEM_LEN, "My name...  (%s)", my[0] ? my : "not set");
     param_t_get_into(cfg.op_qth(), my, sizeof(my));
@@ -347,6 +386,7 @@ void digi_qso_menu_sent(const digi_qso_menu_t *m, const char *macro_name)
         pending_log();                  /* an earlier 73, to another call, queued ahead */
     }
     digi_log_from_qso(&pending, m->mode, submode_now(m), freq_now(m));
+    digi_qso_serial_used(pending.stx);  /* the next exchange gets the next one */
     pending_tx_on = m->tx_on;
     if (pending_tx_on == NULL || !pending_tx_on()) {
         pending_log();                  /* nothing to wait for */

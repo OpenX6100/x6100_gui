@@ -34,3 +34,12 @@ float rtty_change_rate(int16_t df);
 uint16_t rtty_change_shift(int16_t df);
 uint16_t rtty_change_center(int16_t df);
 bool rtty_change_reverse(int16_t df);
+
+/* Find the signal within 300 Hz of the centre and centre on it, from
+ * the next 1.5 s of audio (rtty_afc.h). The result is on the message
+ * line. */
+void rtty_snap(void);
+
+/* UI thread: the receive filter's edges (audio Hz), which snap and AFC
+ * search inside. */
+void rtty_set_passband(int32_t lo, int32_t hi);
