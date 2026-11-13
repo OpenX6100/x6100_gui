@@ -352,6 +352,16 @@ void bt_ctl_request(bool on)
     pthread_mutex_unlock(&S.lock);
 }
 
+bt_ctl_state_t bt_ctl_state_if_started(void)
+{
+    bool started;
+
+    pthread_mutex_lock(&S.lock);
+    started = S.thread_valid;
+    pthread_mutex_unlock(&S.lock);
+    return started ? bt_ctl_state() : BT_CTL_OFF;
+}
+
 bt_ctl_state_t bt_ctl_state(void)
 {
     bt_ctl_state_t st;

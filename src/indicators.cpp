@@ -1,5 +1,8 @@
 #include "indicators.h"
 
+#include <cstdio>
+#include <cstring>
+
 #include "globals.h"
 #include "cfg/cfg_api.h"
 #include "cfg/atu.h"
@@ -8,6 +11,13 @@
 
 extern "C" {
     #include "styles.h"
+    #include "bt_audio.h"
+    #include "bt_ctl.h"
+    #include "bt_spp.h"
+    #include "keyboard.h"
+    #include "freq_info.h"
+
+    LV_FONT_DECLARE(bt_icons_17);
 
     #include <aether_radio/x6100_control/control.h>
 }
@@ -20,6 +30,7 @@ static lv_obj_t * create_spacer(lv_obj_t *parent);
 static lv_obj_t * create_sep(lv_obj_t *parent);
 
 static void wifi_state_change_cb(void *s, lv_msg_t *m);
+static void bt_update_cb(lv_timer_t *t);
 
 static void mark_non_zero(Subject *subj, void *user_data);
 static void on_agc_change(Subject *subj, void *user_data);
@@ -43,6 +54,16 @@ static lv_obj_t     *spl_label;
 
 static lv_obj_t     *agc_label;
 static lv_obj_t     *wifi_label;
+static lv_obj_t     *bt_label;
+static bool          bar_shown = true;  /* false while a window hides the bar */
+static bool          bt_force;          /* show again even if nothing changed */
+
+/* bt_icons_17: Bluetooth, and what is connected through it */
+#define BT_ICON         "\xEF\x8A\x93"   /* U+F293 Bluetooth */
+#define BT_ICON_AUDIO   "\xEF\x80\xA5"   /* U+F025 headphones: the radio's audio there */
+#define BT_ICON_PHONE   "\xEF\x8F\x8D"   /* U+F3CD phone: the app connected (SPP) */
+#define BT_ICON_KBD     "\xEF\x84\x9C"   /* U+F11C keyboard */
+#define BT_POLL_MS      1000
 
 static lv_style_t ind_style;
 static lv_style_t ind_style_active;
@@ -130,6 +151,11 @@ void indicators_init(lv_obj_t * parent, lv_coord_t h, lv_coord_t meter_w) {
 
     create_spacer(cont_right);
 
+    bt_label = create_item(cont_right, BT_ICON);
+    lv_obj_set_style_text_font(bt_label, &bt_icons_17, 0);
+    lv_obj_set_style_text_letter_space(bt_label, 4, 0);
+    lv_obj_add_flag(bt_label, LV_OBJ_FLAG_HIDDEN);
+
     wifi_label = create_item(cont_right, LV_SYMBOL_WIFI "");
 
 
@@ -154,6 +180,11 @@ void indicators_init(lv_obj_t * parent, lv_coord_t h, lv_coord_t meter_w) {
     cfg.xit()->subscribe_delayed_and_notify(mark_non_zero, (void*)xit_label);
 
     lv_msg_subscribe(MSG_WIFI_STATE_CHANGED, wifi_state_change_cb, NULL);
+
+    /* Bluetooth has no message of its own: its state is read every
+     * second (a few mutexes and one stat(), no D-Bus). */
+    lv_timer_create(bt_update_cb, BT_POLL_MS, NULL);
+    bt_update_cb(NULL);
 }
 
 void indicators_left_show(bool v) {
@@ -165,6 +196,9 @@ void indicators_left_show(bool v) {
 }
 
 void indicators_show(bool v) {
+    bar_shown = v;
+    bt_force = true;
+    bt_update_cb(NULL);     /* Bluetooth moves to or from the mode's side */
     if (!v) {
         lv_obj_add_flag(cont_left, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(cont_right, LV_OBJ_FLAG_HIDDEN);
@@ -224,6 +258,61 @@ static void wifi_state_change_cb(void *s, lv_msg_t *m) {
     lv_obj_update_layout(lv_obj_get_parent(wifi_label));
 }
 
+
+/*
+ * As WiFi's: hidden while Bluetooth is off, grey while it is on with
+ * nothing connected, highlighted while something is, followed by what:
+ * headphones (the radio's audio goes to a headset), a phone (the app,
+ * over SPP), a keyboard. While a window (FT8, RTTY, ...) hides this bar,
+ * the same shows right of the mode above the frequency (freq_info_bt()),
+ * without the keyboard, which is in the user's hands anyway and wouldn't
+ * leave room for the other VFO's frequency.
+ */
+static void bt_update_cb(lv_timer_t *t) {
+    static char last[24] = "";
+    static int  last_state = -1;
+    char        text[24];
+    char        short_text[24];
+    int         state;      /* 0 hidden, 1 on, 2 connected */
+
+    (void)t;
+    bt_ctl_state_t ctl = bt_ctl_state_if_started();
+    bool           on = ctl == BT_CTL_ON || ctl == BT_CTL_STARTING;
+    bool           audio = bt_audio_state_if_started() == BT_AUDIO_ON;
+    bool           phone = bt_spp_state() == BT_SPP_CONNECTED;
+    bool           kbd = keyboard_bt_connected();
+
+    snprintf(text, sizeof(text), "%s%s%s%s", BT_ICON, audio ? BT_ICON_AUDIO : "",
+             phone ? BT_ICON_PHONE : "", kbd ? BT_ICON_KBD : "");
+    snprintf(short_text, sizeof(short_text), "%s%s%s", BT_ICON, audio ? BT_ICON_AUDIO : "",
+             phone ? BT_ICON_PHONE : "");
+    if (audio || phone || kbd) {
+        state = 2;
+    } else {
+        state = on ? 1 : 0;
+    }
+    if (!bt_force && state == last_state && strcmp(text, last) == 0) {
+        return;
+    }
+    bt_force = false;
+    last_state = state;
+    snprintf(last, sizeof(last), "%s", text);
+
+    freq_info_bt(bar_shown || state == 0 ? NULL : short_text, state == 2);
+
+    lv_label_set_text(bt_label, text);
+    if (state == 0) {
+        lv_obj_add_flag(bt_label, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_clear_flag(bt_label, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (state == 2) {
+        lv_obj_add_state(bt_label, LV_STATE_CHECKED);
+    } else {
+        lv_obj_clear_state(bt_label, LV_STATE_CHECKED);
+    }
+    lv_obj_update_layout(lv_obj_get_parent(bt_label));
+}
 
 static void mark_non_zero(Subject *subj, void *user_data) {
     lv_obj_t *item = (lv_obj_t *)user_data;
