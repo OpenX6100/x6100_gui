@@ -27,5 +27,8 @@ jobs:
     - name: Every unit test is run by CI
       run: python3 tools/checks/check_tests_in_ci.py
 
+    - name: Every source file is in a bug-hunt area
+      run: python3 tools/bug-hunt/areas.py check
+
     - name: Ratchets (i2c) only go down
       run: python3 tools/checks/check_ratchets.py
