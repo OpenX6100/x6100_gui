@@ -121,11 +121,6 @@ jobs:
         make libsndfile-dirclean
         make
 
-    # Replace U-boot
-    - name: Replace u-boot
-      run: |
-        dd if=x6100_gui/u-boot/u-boot-sunxi-with-spl.bin of=AetherX6100Buildroot/build/images/sdcard.img seek=8K bs=1 conv=notrunc
-
     # Compress image
     - name: Compress image
       env:
