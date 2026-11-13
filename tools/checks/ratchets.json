@@ -1,0 +1,6 @@
+{
+ "i2c": {
+  "js8_clock.c": 2,
+  "settings/settings_page_general.cpp": 2
+ }
+}
