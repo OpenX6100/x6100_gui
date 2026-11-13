@@ -187,8 +187,9 @@ static void draw_part_begin_cb(lv_event_t *e) {
     (void)col;
     cell_data_t *cd = row_cell((uint16_t)row);
 
-    /* With the list's own 30 % black: a row covers about half the waterfall */
-    dsc->rect_dsc->bg_opa = LV_OPA_30;
+    /* With the list's own 40 % black: a row covers about two thirds of the
+     * waterfall (30 + 30 % was too see-through on the radio) */
+    dsc->rect_dsc->bg_opa = LV_OPA_40;
 
     if (!cd) {
         dsc->label_dsc->align = LV_TEXT_ALIGN_CENTER;
@@ -390,7 +391,7 @@ void table_view_build(lv_obj_t *parent, lv_coord_t x, lv_coord_t y, lv_coord_t w
     lv_table_set_col_width(s_table, 0, w - 2);
 
     lv_obj_set_style_border_width(s_table, 0, LV_PART_ITEMS);
-    lv_obj_set_style_bg_opa(s_table, LV_OPA_30, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_table, LV_OPA_40, LV_PART_MAIN);
     lv_obj_set_style_bg_color(s_table, lv_color_black(), LV_PART_MAIN);
     lv_obj_set_style_border_width(s_table, 1, LV_PART_MAIN);
     lv_obj_set_style_border_color(s_table, lv_color_white(), LV_PART_MAIN);
