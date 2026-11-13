@@ -44,7 +44,7 @@ static lv_obj_t     *vswr_label;
 static lv_obj_t     *alc_label;
 
 /* One thick PWR bar with its 0-10 W scale and a peak tick, SWR and ALC as
- * thin bars below, green / amber / red by where each segment sits. The box
+ * thin bars below, in the stock meter's colours (seg_color). The box
  * takes the meter and frequency boxes' width (the dial hides during TX),
  * in the small top bar's height, so it never hangs over the spectrum or an
  * app's waterfall. Bar positions are in the box's content area (620 x 58). */
@@ -137,15 +137,13 @@ static void on_dialog_stop(void *s, lv_msg_t *msg) {
     update_labels_visibility_cb(NULL, NULL);
 }
 
-/* Green, amber, red by where the segment sits on its scale. */
+/* The stock meter's colours: PWR (and ALC, which had no bar) grey, SWR
+ * green up to 2, yellow up to 3, red above. */
 static lv_color_t seg_color(int row, float f) {
-    static const float amber_from[ROWS] = {0.6f, 0.25f, 0.3f};   /* 6 W, SWR 2, ALC 3 */
-    static const float red_from[ROWS]   = {0.85f, 0.5f, 0.6f};   /* 8.5 W, SWR 3, ALC 6 */
-
-    if (f >= red_from[row]) return lv_color_hex(0xE62820);
-    if (f >= amber_from[row]) return lv_color_hex(0xFFB400);
-    if (row == 1 && param_i_get(cfg.ui.swr_color()) == SWR_GRAY) return lv_color_hex(0xAAAAAA);
-    return lv_color_hex(0x00C83C);
+    if (row != 1) return lv_color_hex(0xAAAAAA);
+    if (f > 0.5f) return lv_color_hex(0xAA0000);                 /* SWR 3 */
+    if (f > 0.25f) return lv_color_hex(0xAAAA00);                /* SWR 2 */
+    return param_i_get(cfg.ui.swr_color()) == SWR_GRAY ? lv_color_hex(0xAAAAAA) : lv_color_hex(0x00CC00);
 }
 
 static void bar_draw_cb(lv_event_t *e) {
@@ -167,10 +165,12 @@ static void bar_draw_cb(lv_event_t *e) {
         a.x2 = a.x1 + bar_geo[row].seg - 1;
         a.y1 = coords.y1;
         a.y2 = coords.y2;
+        dsc.bg_opa = LV_OPA_80;         /* lit, as the stock bars */
         if (row == 0 && peak > 0 && i == peak - 1 && peak > lit[0]) {
             c = lv_color_white();
         } else if (i >= lit[row]) {
             c = lv_color_darken(c, 212);
+            dsc.bg_opa = LV_OPA_COVER;
         }
         dsc.bg_color = c;
         lv_draw_rect(draw_ctx, &dsc, &a);
