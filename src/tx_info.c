@@ -51,6 +51,8 @@ static lv_obj_t     *alc_label;
 #define ROWS        3       /* PWR, SWR, ALC */
 #define PEAK_HOLD_MS 1000
 #define PEAK_FALL    20      /* segments a second the peak falls after the hold */
+#define CW_HOLD_MS   1000    /* CW: TX and RX at every pause in the keying, so the
+                              * meter stays up this long after the last element */
 
 static const struct {
     lv_coord_t x, y, w, h;  /* the bar */
@@ -69,6 +71,7 @@ static int16_t   peak;          /* PWR's peak segment, held PEAK_HOLD_MS */
 static int16_t   peak_held;     /* where it was when the hold started */
 static uint32_t  peak_time;
 static bool      swr_gray;      /* the SWR colour setting, read once a redraw */
+static lv_timer_t *cw_hold;
 
 static int16_t segments(int row) {
     return bar_geo[row].w / (bar_geo[row].seg + bar_geo[row].gap);
@@ -77,7 +80,24 @@ static int16_t segments(int row) {
 static void on_cur_mode_change(Subject *subj, void *user_data);
 static void update_labels_visibility_cb(Subject *, void *);
 
+/* The S-meter and the dial follow these (meter.c, freq_info.cpp) */
+static void hide(void) {
+    lv_timer_pause(cw_hold);
+    if (!lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN)) {
+        lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+        lv_msg_send(MSG_TX_INFO_HIDE, NULL);
+    }
+}
+
+static void cw_hold_cb(lv_timer_t *t) {
+    hide();
+}
+
 static void tx_cb(void * s, lv_msg_t * msg) {
+    lv_timer_pause(cw_hold);
+    if (!lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN)) {
+        return;                 /* CW: the next element within the hold */
+    }
     pwr  = 0.0f;
     vswr = 0.0f;
     alc  = 0.0f;
@@ -85,10 +105,18 @@ static void tx_cb(void * s, lv_msg_t * msg) {
     memset(lit, 0, sizeof(lit));  /* not the last transmission's bars */
 
     lv_obj_clear_flag(obj, LV_OBJ_FLAG_HIDDEN);
+    lv_msg_send(MSG_TX_INFO_SHOW, NULL);
 }
 
 static void rx_cb(void * s, lv_msg_t * msg) {
-    lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+    x6100_mode_t mode = cparam_i_get(cfg.cur.mode());   /* cur_mode is set only on a change */
+
+    if (mode == x6100_mode_cw || mode == x6100_mode_cwr) {
+        lv_timer_reset(cw_hold);
+        lv_timer_resume(cw_hold);
+    } else {
+        hide();
+    }
 }
 
 static void update_tx_info(void *arg) {
@@ -209,6 +237,9 @@ lv_obj_t *tx_info_init(lv_obj_t *parent) {
     lv_obj_clear_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+
+    cw_hold = lv_timer_create(cw_hold_cb, CW_HOLD_MS, NULL);
+    lv_timer_pause(cw_hold);
 
     for (int row = 0; row < ROWS; row++) {
         bars[row] = lv_obj_create(obj);

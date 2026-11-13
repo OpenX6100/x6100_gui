@@ -144,8 +144,8 @@ lv_obj_t * freq_info_init(lv_obj_t * parent) {
     lv_msg_subscribe(MSG_LOCK_FREQ, lock_freq_change_cb, NULL);
 
     /* During TX the TX meter takes this box's place too (tx_info.c) */
-    lv_msg_subscribe(MSG_RADIO_TX, tx_cb, NULL);
-    lv_msg_subscribe(MSG_RADIO_RX, rx_cb, NULL);
+    lv_msg_subscribe(MSG_TX_INFO_SHOW, tx_cb, NULL);
+    lv_msg_subscribe(MSG_TX_INFO_HIDE, rx_cb, NULL);
 
     return NULL;
 }
