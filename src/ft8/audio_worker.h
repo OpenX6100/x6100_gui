@@ -18,7 +18,8 @@
  *      on_message   - one FT8/FT4 decode (may fire 0..N times per iteration)
  *      on_psd       - one waterfall PSD frame
  *      on_slot_end  - slot boundary crossed, RX window closed, decoder reset
- *      on_tick      - end-of-iteration hook, caller may perform blocking TX
+ *      on_tick      - end-of-iteration hook (transmissions start on their
+ *                     own thread, ft8/tx_worker.c)
  *
  *  All callbacks run on the worker thread. Handlers that need to touch LVGL
  *  must scheduler_put() into the UI thread instead of poking LVGL directly.
@@ -56,9 +57,8 @@ typedef struct {
                    const slot_info_t *info, void *ctx);
     void (*on_slot_end)(const slot_info_t *info, void *ctx);
     /* End-of-iteration hook. Fires after rx processing and slot-end handling.
-     * The caller may perform a blocking TX here; on return, the worker loops
-     * back around and the stale audio accumulated during TX will be drained
-     * at the next slot boundary. */
+     * Audio is not fed while transmitting (the TX thread, ft8/tx_worker.c);
+     * whatever came in around a TX is drained at the next slot boundary. */
     void (*on_tick)(const slot_info_t *info,
                     bool new_slot,
                     float sec_since_slot_start,

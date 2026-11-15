@@ -27,6 +27,7 @@
 #include <stdint.h>
 #include <errno.h>
 #include <ctype.h>
+#include <pthread.h>
 
 #define MAX_CANDIDATES 200
 #define MAX_DECODED_MESSAGES 50
@@ -90,6 +91,8 @@ static ftx_message_t  *decoded_hashtable[MAX_DECODED_MESSAGES];
 static ftx_waterfall_t wf;
 static int             find_candidates_at;
 static char            own_call[12]; /* kept in the hash table, see remember_own_call() */
+/* The callsign table: both threads use it */
+static pthread_mutex_t  hash_mux = PTHREAD_MUTEX_INITIALIZER;
 
 static void decode_messages(const ftx_waterfall_t *wf, int *num_candidates, ftx_candidate_t *candidate_list,
                             ftx_message_t *decoded, ftx_message_t **decoded_hashtable, int ldpc_iterations,
@@ -113,7 +116,9 @@ static void remember_own_call(void) {
     }
     snprintf(text, sizeof(text), "CQ %s", own_call);
     ftx_message_init(&msg);
+    pthread_mutex_lock(&hash_mux);
     ftx_message_encode(&msg, &ftx_call_table_if, text);
+    pthread_mutex_unlock(&hash_mux);
 }
 
 void ftx_worker_set_own_call(const char *call) {
@@ -257,7 +262,11 @@ void ftx_worker_free() {
  */
 void ftx_worker_reset() {
     /* Once a slot: a reset follows the one at a full waterfall at the boundary */
-    if (wf.num_blocks > 0) ftx_call_table_age(10);
+    if (wf.num_blocks > 0) {
+        pthread_mutex_lock(&hash_mux);
+        ftx_call_table_age(10);
+        pthread_mutex_unlock(&hash_mux);
+    }
     remember_own_call();
     wf.num_blocks = 0;
     num_candidates = 0;
@@ -271,7 +280,9 @@ bool ftx_worker_generate_tx_samples(const char *text, const uint16_t signal_freq
                                     int16_t **samples, uint32_t *n_samples) {
     ftx_message_t msg;
     ftx_message_init(&msg);
+    pthread_mutex_lock(&hash_mux);
     ftx_message_rc_t rc = ftx_encode_text(&msg, &ftx_call_table_if, text);
+    pthread_mutex_unlock(&hash_mux);
 
     if (rc != FTX_MESSAGE_RC_OK) {
         LV_LOG_ERROR("Cannot parse message %i", rc);
@@ -436,10 +447,12 @@ static void decode_messages(const ftx_waterfall_t *wf, int *num_candidates, ftx_
             decoded_hashtable[idx_hash] = &decoded[idx_hash];
 
             char             text[FTX_CONTEST_TEXT_LEN];
+            pthread_mutex_lock(&hash_mux);
             ftx_message_rc_t unpack_status = ftx_message_decode(&message, &ftx_call_table_if, text);
             /* Contest and DXpedition messages ft8_lib can't unpack */
             if (unpack_status != FTX_MESSAGE_RC_OK && ftx_contest_decode(&message, &ftx_call_table_if, text, sizeof(text)))
                 unpack_status = FTX_MESSAGE_RC_OK;
+            pthread_mutex_unlock(&hash_mux);
             if (unpack_status != FTX_MESSAGE_RC_OK) {
                 LV_LOG_INFO("Error [%d] while unpacking!", (int)unpack_status);
             } else {

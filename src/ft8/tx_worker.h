@@ -8,12 +8,15 @@
 
 /*
  *  Synthesises an FT8/FT4 TX waveform from tx_text and pushes it to the
- *  audio output with per-block ALC-based gain correction. Blocks for the
- *  duration of one slot, so it is invoked from the decode thread between
- *  RX frames.
+ *  audio output with per-block ALC-based gain correction.
  *
- *  The caller supplies an abort-check callback that the worker polls each
- *  block, so dialog state (e.g. dialog_ft8.c's ft8_state_t) can preempt
+ *  Transmissions start on their own thread (tx_worker_start), as WSJT-X's:
+ *  the decoder may still be on the slot just ended, and the radio is keyed
+ *  on time all the same. A decode that moves the QSO on while the message
+ *  is going out swaps it (tx_worker_swap) if it still can, as WSJT-X does.
+ *
+ *  The caller supplies an abort-check callback that the worker polls every
+ *  ~85 ms, so dialog state (e.g. dialog_ft8.c's ft8_state_t) can preempt
  *  TX without this module owning that state itself.
  */
 
@@ -35,16 +38,33 @@ extern "C" {
 void tx_worker_construct(const app_ports_t *ports, uint32_t sample_rate);
 void tx_worker_destruct();
 
-/* Abort-check callback. Return true to stop TX after the current block. */
+/* Abort-check callback. Return true to stop TX after the current part. */
 typedef bool (*tx_abort_fn_t)(void *ctx);
 
-/* Transmit tx_text. Returns true on normal completion (or no-op when
- * sample generation fails); returns false if the abort callback fired
- * mid-transmit. */
+/* Transmit tx_text on tx_freq (the audio frequency asked for; the VFO
+ * moves by tx_freq - FT8_TX_AUDIO_HZ). Blocks until it has been sent.
+ * Returns true on normal completion (or no-op when sample generation
+ * fails); returns false if the abort callback fired mid-transmit. */
 bool tx_worker_run(const char    *tx_text,
+                   int32_t        tx_freq,
                    float          base_gain_offset,
                    tx_abort_fn_t  abort_check,
                    void          *abort_check_ctx);
+
+/* From the abort callback only (the TX thread): send text from here on
+ * instead. Done only while everything gone out is text's too (the sync
+ * tones, and any tones the two share), so the far end gets text whole;
+ * later, false: the message going out goes on. */
+bool tx_worker_swap(const char *text);
+
+/* Called on the TX thread at the start of each slot and every 100 ms
+ * between: the place to start a transmission with tx_worker_run(). */
+typedef void (*tx_tick_fn_t)(bool odd, float sec_since_slot_start, void *ctx);
+
+/* Start / stop the TX thread. tx_worker_stop() waits for it: a running
+ * transmission must have been told to stop by its check callback. */
+void tx_worker_start(tx_tick_fn_t tick, void *ctx);
+void tx_worker_stop(void);
 
 #ifdef __cplusplus
 }
