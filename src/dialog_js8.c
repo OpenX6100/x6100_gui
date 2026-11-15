@@ -2454,8 +2454,11 @@ static void wf_tx_row(spgramf s, float *p, float *row) {
     float    top     = -200.0f;
     for (uint32_t x = 0; x < WIDTH; x++) {
         uint32_t b0 = low_bin + x * bins / WIDTH, b1 = low_bin + (x + 1) * bins / WIDTH;
-        float    v  = p[b0];
-        for (uint32_t b = b0 + 1; b < b1; b++) v = p[b] > v ? p[b] : v;
+        float    v  = -200.0f;
+        /* below 0 Hz (an offset near the top) is the tone's mirror image: left dark */
+        for (uint32_t b = b0; b < b1 || b == b0; b++) {
+            if (b >= nfft / 2 && p[b] > v) v = p[b];
+        }
         row[x] = v;
         top    = v > top ? v : top;
     }
@@ -2477,6 +2480,7 @@ static void *wf_tx_main(void *arg) {
     pa_simple   *pa   = NULL;
     unsigned     fill = 0;
     bool         was  = false;
+    bool         warned = false;
     int          err;
 
     while (p && !atomic_load(&wf_tx_quit)) {
@@ -2484,7 +2488,8 @@ static void *wf_tx_main(void *arg) {
             pa = pa_simple_new(NULL, "X6100 GUI JS8 waterfall", PA_STREAM_RECORD, WF_TX_MONITOR, "Waterfall TX monitor",
                                &spec, NULL, &attr, &err);
             if (!pa) {
-                LV_LOG_WARN("JS8 waterfall: TX monitor: %s", pa_strerror(err));
+                if (!warned) LV_LOG_WARN("JS8 waterfall: TX monitor: %s", pa_strerror(err));
+                warned = true;
                 for (int i = 0; i < 10 && !atomic_load(&wf_tx_quit); i++) usleep(200000);
                 continue;
             }
@@ -2494,7 +2499,9 @@ static void *wf_tx_main(void *arg) {
             pa = NULL;
             continue;
         }
-        bool tx = radio_get_state() == RADIO_TX;
+        /* our own frame (as XARA's): from the moment the TX thread keys, not
+         * when the base reports TX, and never someone else's transmission */
+        bool tx = atomic_load(&keyed);
         if (tx != was) { /* a transmission starts or ends: a fresh row */
             spgramf_reset(s);
             fill = 0;
