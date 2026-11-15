@@ -1,0 +1,5 @@
+# Xiegu X6100 DEV USB-C port (WCH CH342 dual serial: console + CAT) for the
+# logged-in user, no dialout/uucp group needed. Install:
+#   sudo cp 70-x6100-serial.rules /etc/udev/rules.d/ && sudo udevadm control --reload
+# then unplug and plug the radio in again.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d2", TAG+="uaccess"

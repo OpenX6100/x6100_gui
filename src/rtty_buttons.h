@@ -28,6 +28,10 @@ extern "C" {
 
 extern buttons_page_t buttons_page_rtty_2;
 
+/* Stops what is being sent, for Next and the RFG knob's press alike:
+ * a 73 still waiting to be sent is then not logged. */
+void rtty_buttons_stop(void);
+
 /* Repaint Next after the macros or the QSO changed. */
 void rtty_refresh_macro_labels(void);
 

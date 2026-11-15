@@ -24,6 +24,7 @@
 
 #include <sys/resource.h>
 #include <sys/syscall.h>
+#include <limits.h>
 #include <unistd.h>
 
 #define WEFAX_PP_MODEL    "/usr/share/x6100/wefax_pp.bin"
@@ -81,8 +82,13 @@ static void pp_aligned(const pp_job_t *j, uint8_t *dst)
     }
 }
 
-static bool pp_write_png(const char *path, const uint8_t *img, unsigned int rows)
+/* Written as NAME_pp.png.pp.tmp and renamed when complete: a power-off
+ * during the save leaves no broken NAME_pp.png for the browser to show.
+ * (.pp.tmp, not .tmp: the browser's own save of the same file uses that.) */
+static bool pp_write_png(const char *final_path, const uint8_t *img, unsigned int rows)
 {
+    char path[PATH_MAX];
+    if (snprintf(path, sizeof(path), "%s.pp.tmp", final_path) >= (int)sizeof(path)) return false;
     FILE *fp = fopen(path, "wb");
     if (!fp) return false;
     png_structp png = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
@@ -107,7 +113,9 @@ static bool pp_write_png(const char *path, const uint8_t *img, unsigned int rows
         png_write_row(png, (png_bytep)(img + (size_t)r * WEFAX_WIDTH));
     png_write_end(png, NULL);
     png_destroy_write_struct(&png, &info);
-    if (fclose(fp) != 0) {
+    fflush(fp);
+    fsync(fileno(fp));      /* as the slant file: a failure here is not fatal */
+    if (fclose(fp) != 0 || rename(path, final_path) != 0) {
         remove(path);
         return false;
     }
