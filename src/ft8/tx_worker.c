@@ -56,7 +56,8 @@ static uint32_t sample_rate;
 static pthread_t       tick_thread;
 static bool            tick_up;
 static pthread_mutex_t tick_mux = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t  tick_cv  = PTHREAD_COND_INITIALIZER;
+static pthread_cond_t  tick_cv;            /* on CLOCK_MONOTONIC: Time Sync steps the clock */
+static bool            tick_cv_made;
 static bool            tick_quit;
 static tx_tick_fn_t    tick_fn;
 static void           *tick_ctx;
@@ -131,6 +132,15 @@ void tx_worker_destruct() {
     g_ports->audio->player_release(player);
 }
 
+/* The level a fraction into a ramp from from_db to to_db: the ramp is
+ * linear in scale (audio gain_db_transition) */
+static float ramp_db(float from_db, float to_db, float frac) {
+    float from = powf(10.0f, from_db / 20.0f);
+    float to   = powf(10.0f, to_db / 20.0f);
+
+    return 20.0f * log10f(from + (to - from) * frac);
+}
+
 static void correct_level(float *gain_offset) {
     *gain_offset += get_correction() * 0.4f;
     if (*gain_offset > GAIN_MAX_DB) {
@@ -184,42 +194,50 @@ bool tx_worker_run(const char *tx_text, int32_t tx_freq, float base_gain_offset,
     g_ports->radio->set_modem(true);
     LV_LOG_USER("FT8/FT4 TX keyed %.3f s into the slot", sec_into_slot());
 
-    float    prev_gain_offset = gain_offset;
     size_t   counter          = 0;     /* blocks begun */
     int16_t  part_buf[PART_SAMPLES];   /* the waveform stays as made, for tx_worker_swap() */
+    /* A level change ramps over its whole block, as when a block went out
+     * in one piece: the scale goes from block_from to block_to */
+    float    block_from = gain_offset, block_to = gain_offset;
 
     tx_skip = tx_pos = align_to_slot(tx_n_samples);
-    uint32_t block_end = tx_pos;
+    uint32_t block_start = tx_pos, block_end = tx_pos;
     /* Cut mid-symbol: 5 ms fade-in, no click on the air */
     uint32_t ramp      = LV_MIN(sample_rate / 200, tx_n_samples - tx_skip);
 
     bool aborted = false;
     while (tx_pos < tx_n_samples) {
         if (tx_pos >= block_end) {
+            block_from = block_to;
             if (counter > 30) {
                 correct_level(&gain_offset);
             }
+            block_to = gain_offset;
             counter++;
-            block_end = tx_pos + BLOCK_SAMPLES;
+            block_start = tx_pos;
+            block_end   = LV_MIN(tx_pos + BLOCK_SAMPLES, tx_n_samples);
         }
         if (abort_check && abort_check(abort_check_ctx)) {
             aborted = true;
             break;
         }
-        uint32_t part = LV_MIN(PART_SAMPLES, LV_MIN(block_end, tx_n_samples) - tx_pos);
+        uint32_t part = LV_MIN(PART_SAMPLES, block_end - tx_pos);
 
         memcpy(part_buf, tx_samples + tx_pos, part * sizeof(int16_t));
         for (uint32_t i = 0; tx_skip > 0 && i < part && tx_pos + i < tx_skip + ramp; i++) {
             uint32_t k = tx_pos + i - tx_skip;
             part_buf[i] = (int16_t)((int32_t)part_buf[i] * (int32_t)k / (int32_t)ramp);
         }
-        if (gain_offset == prev_gain_offset) {
-            if (gain_offset != 0.0f) {
-                g_ports->audio->gain_db(part_buf, part, gain_offset, part_buf);
+        if (block_from == block_to) {
+            if (block_to != 0.0f) {
+                g_ports->audio->gain_db(part_buf, part, block_to, part_buf);
             }
         } else {
-            g_ports->audio->gain_db_transition(part_buf, part, prev_gain_offset, gain_offset, part_buf);
-            prev_gain_offset = gain_offset;
+            float len = (float)(block_end - block_start);
+            g_ports->audio->gain_db_transition(part_buf, part,
+                                               ramp_db(block_from, block_to, (float)(tx_pos - block_start) / len),
+                                               ramp_db(block_from, block_to, (float)(tx_pos + part - block_start) / len),
+                                               part_buf);
         }
         g_ports->audio->player_send(player, part_buf, part);
         tx_pos += part;
@@ -256,13 +274,12 @@ static void *tick_main(void *arg) {
         tick_fn(odd, sec, tick_ctx);
 
         /* Next: 100 ms on, or just after the next slot starts */
-        clock_gettime(CLOCK_REALTIME, &now);
-        ftx_slot_pos(proto, now, &sec);
-        long wait_ms = (long)((ftx_slot_time(proto) - sec) * 1000.0f) + 1;
+        long wait_ms = (long)((ftx_slot_time(proto) - sec_into_slot()) * 1000.0f) + 1;
 
         if (wait_ms > TICK_MS) {
             wait_ms = TICK_MS;
         }
+        clock_gettime(CLOCK_MONOTONIC, &now);
         now.tv_sec  += wait_ms / 1000;
         now.tv_nsec += (wait_ms % 1000) * 1000000L;
         if (now.tv_nsec >= 1000000000L) {
@@ -281,6 +298,15 @@ static void *tick_main(void *arg) {
 void tx_worker_start(tx_tick_fn_t tick, void *ctx) {
     if (tick_up) {
         return;
+    }
+    if (!tick_cv_made) {
+        pthread_condattr_t attr;
+
+        pthread_condattr_init(&attr);
+        pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+        pthread_cond_init(&tick_cv, &attr);
+        pthread_condattr_destroy(&attr);
+        tick_cv_made = true;
     }
     tick_fn   = tick;
     tick_ctx  = ctx;
