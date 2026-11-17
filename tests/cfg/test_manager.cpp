@@ -767,8 +767,8 @@ TEST_CASE("enum validators clamp to the documented bounds", "[manager][validator
     REQUIRE(mgr.p_key_mode.get() == 0);
     mgr.p_iambic_mode.set(99);                  // 0..1
     REQUIRE(mgr.p_iambic_mode.get() == (int32_t)x6100_iambic_b);
-    mgr.p_ft8_protocol.set(99);                 // 0..1
-    REQUIRE(mgr.p_ft8_protocol.get() == (int32_t)FTX_PROTOCOL_FT8);
+    mgr.p_ft8_protocol.set(99);                 // 0..2 (FT8, FT4, FT2)
+    REQUIRE(mgr.p_ft8_protocol.get() == (int32_t)FTX_PROTOCOL_FT2);
     mgr.p_band_vfoa_att.set(99);                // 0..1
     REQUIRE(mgr.p_band_vfoa_att.get() == (int32_t)x6100_att_on);
     mgr.p_band_vfoa_pre.set(99);                // 0..1

@@ -1,0 +1,17 @@
+#!/bin/sh
+# Save the X6100's screen as a PNG in ~/Pictures over the USB console, about 40 s
+# (x6100-console daemon must be running and logged in). Prints the file's name.
+# Needs ImageMagick.
+set -e
+C="$(dirname "$(readlink -f "$0")")/x6100-console"
+M=$(command -v magick || command -v convert) || { echo "needs ImageMagick (magick or convert)" >&2; exit 1; }
+T=$(mktemp -d)
+trap 'rm -rf "$T"' EXIT
+P=$(xdg-user-dir PICTURES 2>/dev/null || echo "$HOME/Pictures")
+mkdir -p "$P"
+"$C" cmd 'cat /dev/fb0 | gzip -1 > /tmp/fb.gz' 20 >/dev/null
+"$C" cmd 'base64 /tmp/fb.gz; rm /tmp/fb.gz' 180 > "$T/fb.b64"
+grep -E '^[A-Za-z0-9+/=]+$' "$T/fb.b64" | base64 -d | gunzip > "$T/fb"
+F="$P/x6100-$(date +%Y-%m-%d_%H%M%S).png"
+"$M" -size 480x800 -depth 8 BGRA:"$T/fb" -alpha off -rotate 90 "$F"
+echo "$F"

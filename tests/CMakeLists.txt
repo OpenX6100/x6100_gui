@@ -74,6 +74,36 @@ target_include_directories(test_digi_txq PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(test_digi_txq PRIVATE Catch2::Catch2WithMain pthread)
 add_test(NAME test_digi_txq COMMAND $<TARGET_FILE:test_digi_txq> --colour-mode=ansi)
 
+# test_olivia: the Olivia modulator into the receiver, every variant of
+# the Mode button (src/olivia*.c, plain C, no radio)
+add_executable(test_olivia test_olivia.cpp
+    ${PROJECT_SOURCE_DIR}/src/olivia.c ${PROJECT_SOURCE_DIR}/src/olivia_mod.c
+    ${PROJECT_SOURCE_DIR}/src/olivia_demod.c ${PROJECT_SOURCE_DIR}/src/olivia_rx.c)
+target_include_directories(test_olivia PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(test_olivia PRIVATE m Catch2::Catch2WithMain)
+add_test(NAME test_olivia COMMAND $<TARGET_FILE:test_olivia> --colour-mode=ansi)
+
+# test_navtex_bulletin: the NavTex bulletin assembler on texts
+# (src/navtex/bulletin.c, plain C)
+add_executable(test_navtex_bulletin navtex/bulletin_test.c ${PROJECT_SOURCE_DIR}/src/navtex/bulletin.c)
+target_include_directories(test_navtex_bulletin PRIVATE ${PROJECT_SOURCE_DIR}/src/navtex)
+add_test(NAME test_navtex_bulletin COMMAND $<TARGET_FILE:test_navtex_bulletin>)
+
+# test_dsc: the DSC decoder on synthetic calls at several SNR and fadings
+# (tests/dsc/run_tests.py --check, with dsc_gen and dsc_wav built here):
+# no call decoded WRONG, every call of the clean case verified
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_executable(test_dsc_wav dsc/dsc_wav.c ${PROJECT_SOURCE_DIR}/src/dsc/dsc_decoder.c
+    ${PROJECT_SOURCE_DIR}/src/dsc/dsc_format.c ${PROJECT_SOURCE_DIR}/src/dsc/dsc_mid.c)
+target_include_directories(test_dsc_wav PRIVATE ${PROJECT_SOURCE_DIR}/src/dsc)
+target_link_libraries(test_dsc_wav PRIVATE m)
+add_executable(test_dsc_gen dsc/dsc_gen.c)
+target_link_libraries(test_dsc_gen PRIVATE m)
+set_target_properties(test_dsc_wav PROPERTIES OUTPUT_NAME dsc_wav RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/dsc)
+set_target_properties(test_dsc_gen PROPERTIES OUTPUT_NAME dsc_gen RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/dsc)
+add_test(NAME test_dsc COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/dsc/run_tests.py
+    --bin ${CMAKE_CURRENT_BINARY_DIR}/dsc --check)
+
 # test_ftx_freqs: the FT8 window's list of every FT8 and FT4 frequency
 add_executable(test_ftx_freqs test_ftx_freqs.cpp ${PROJECT_SOURCE_DIR}/src/ftx_freqs.c)
 target_include_directories(test_ftx_freqs PRIVATE ${PROJECT_SOURCE_DIR}/src)

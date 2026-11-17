@@ -78,12 +78,13 @@ static bool scan_resume = false;            /* the next Scan goes on from scan_h
 static char scan_btn_label[16] = "Scan";
 static char scan_wait_label[16] = "Wait\n0.7 s";
 
-/* from the decoder (DSP thread) */
-static volatile bool scan_synced = false;
-static volatile bool scan_unsynced = false;
+/* from the decoder (DSP thread), read and reset by the scan (LVGL thread):
+ * atomic, so neither thread sees half of a change */
+static atomic_bool scan_synced = false;
+static atomic_bool scan_unsynced = false;
 static uint32_t scan_unsync_since;          /* lv_tick when the lock was lost */
 static bool scan_unsync_seen = false;
-static volatile int scan_good = 0, scan_bad = 0;   /* characters since the lock */
+static atomic_int scan_good = 0, scan_bad = 0;     /* characters since the lock */
 
 /* tone measurement, filled by scan_audio() in the DSP thread */
 static pthread_mutex_t scan_mutex = PTHREAD_MUTEX_INITIALIZER;
