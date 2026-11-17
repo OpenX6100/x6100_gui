@@ -1142,7 +1142,8 @@ static void dial_apply(void)
     refresh_btn(&btn_dial);
 }
 
-static void dial_change(int d)
+/* The VFO d steps of 1 kHz from where it is, within DIAL_MAX_HZ. */
+static void dial_step(int d)
 {
     int32_t v = dial_offset_hz + d * DIAL_STEP_HZ;
 
@@ -1155,12 +1156,18 @@ static void dial_change(int d)
         v = -DIAL_MAX_HZ;
     if (v > DIAL_MAX_HZ)
         v = DIAL_MAX_HZ;
-    knob_timer_restart();
     if (v == dial_offset_hz)
         return;
 
     dial_offset_hz = v;
     dial_apply();
+}
+
+static void dial_change(int d)
+{
+    if (!psk_tx_is_on())
+        knob_timer_restart();
+    dial_step(d);
 }
 
 /* Press: the multifunction knob moves the VFO in 1 kHz steps. */
@@ -1742,14 +1749,11 @@ static void menu_pick(int item, void *ctx)
 {
     (void)ctx;
     switch (item) {
-        case MENU_SQL:       sql_press_cb(&btn_sql); break;
         case MENU_SQL_ONOFF: sql_hold_cb(&btn_sql); break;
-        case MENU_DIAL:      dial_press_cb(&btn_dial); break;
         case MENU_DIAL_BACK: dial_hold_cb(&btn_dial); break;
         case MENU_BAND_UP:   band_up_cb(NULL); break;
         case MENU_BAND_DOWN: band_down_cb(NULL); break;
         case MENU_DX:        dx_press_cb(&btn_dx); break;
-        case MENU_RST:       rst_press_cb(&btn_rst); break;
         case MENU_QSO:       digi_qso_menu_open(&qso_menu); break;
         case MENU_NEW_QSO:
             dx_hold_cb(&btn_dx);
@@ -1760,11 +1764,54 @@ static void menu_pick(int item, void *ctx)
     refresh_btn(&btn_next);
 }
 
+static char menu_text[MENU_COUNT][48];
+
+static void menu_texts(const char *items[MENU_COUNT])
+{
+    const char *dx = digi_qso_dx();
+
+    if (sql_thr)
+        snprintf(menu_text[MENU_SQL], 48, "Squelch: %u  (press to change)", (unsigned)sql_thr);
+    else
+        snprintf(menu_text[MENU_SQL], 48, "Squelch: off  (press to change)");
+    snprintf(menu_text[MENU_SQL_ONOFF], 48, "Squelch %s", sql_thr ? "off" : "on");
+    snprintf(menu_text[MENU_DIAL], 48, "Dial: %+d kHz  (press to change)",
+             (int)(dial_offset_hz / 1000));
+    snprintf(menu_text[MENU_DIAL_BACK], 48, "Dial back to the band's");
+    snprintf(menu_text[MENU_BAND_UP], 48, "Band up");
+    snprintf(menu_text[MENU_BAND_DOWN], 48, "Band down");
+    snprintf(menu_text[MENU_DX], 48, "DX call...  (%s)", (dx && *dx) ? dx : "none");
+    snprintf(menu_text[MENU_RST], 48, "RST sent: %s  (press to change)", digi_qso_rst_sent());
+    snprintf(menu_text[MENU_QSO], 48, "QSO: log, name, QTH...");
+    snprintf(menu_text[MENU_NEW_QSO], 48, "New QSO (clear DX call, name, RST)");
+    snprintf(menu_text[MENU_CLEAR], 48, "Clear the text");
+    for (int i = 0; i < MENU_COUNT; i++)
+        items[i] = menu_text[i];
+}
+
+/* The rows changed in place with the MFK: Squelch (0 is off; noise reads
+ * about 0, 3-4 is a good start), Dial and RST sent. */
+static void menu_adjust(int item, int dir, void *ctx)
+{
+    const char *items[MENU_COUNT];
+
+    (void)ctx;
+    switch (item) {
+        case MENU_SQL:  sql_change(dir); break;
+        case MENU_DIAL: dial_step(dir); break;
+        case MENU_RST:
+            digi_qso_change_rst_sent((int16_t)dir);
+            refresh_btn(&btn_rst);
+            break;
+    }
+    menu_texts(items);
+    digi_menu_set_texts(items, MENU_COUNT);
+    refresh_btn(&btn_next);
+}
+
 static void menu_press_cb(button_data_t *b)
 {
-    static char  text[MENU_COUNT][48];
-    const char  *items[MENU_COUNT];
-    const char  *dx = digi_qso_dx();
+    const char *items[MENU_COUNT];
 
     (void)b;
     if (input_active)
@@ -1773,20 +1820,9 @@ static void menu_press_cb(button_data_t *b)
         digi_menu_close();
         return;
     }
-    snprintf(text[MENU_SQL], 48, "Squelch with the knob  (%s)", sql_thr ? "on" : "off");
-    snprintf(text[MENU_SQL_ONOFF], 48, "Squelch %s", sql_thr ? "off" : "on");
-    snprintf(text[MENU_DIAL], 48, "Dial with the knob  (%+d kHz)", (int)(dial_offset_hz / 1000));
-    snprintf(text[MENU_DIAL_BACK], 48, "Dial back to the band's");
-    snprintf(text[MENU_BAND_UP], 48, "Band up");
-    snprintf(text[MENU_BAND_DOWN], 48, "Band down");
-    snprintf(text[MENU_DX], 48, "DX call...  (%s)", (dx && *dx) ? dx : "none");
-    snprintf(text[MENU_RST], 48, "RST sent: %s  (press: next)", digi_qso_rst_sent());
-    snprintf(text[MENU_QSO], 48, "QSO: log, name, QTH...");
-    snprintf(text[MENU_NEW_QSO], 48, "New QSO (clear DX call, name, RST)");
-    snprintf(text[MENU_CLEAR], 48, "Clear the text");
-    for (int i = 0; i < MENU_COUNT; i++)
-        items[i] = text[i];
+    menu_texts(items);
     digi_menu_open(dialog.obj, "Menu", items, MENU_COUNT, menu_pick, NULL, NULL);
+    digi_menu_set_adjust((1u << MENU_SQL) | (1u << MENU_DIAL) | (1u << MENU_RST), menu_adjust);
 }
 
 /* ---- QSO fields ------------------------------------------------------- */
