@@ -8,6 +8,8 @@
 #include "rtty.h"
 #include "scheduler.h"
 #include "rtty_sql.h"
+#include "rtty_afc.h"
+#include "msg.h"
 #include "digi_qso.h"
 #include "digi_text.h"
 
@@ -69,6 +71,18 @@ static bool         ready = false;
 static rtty_state_t state = RTTY_OFF;
 
 static uint32_t     dsp_audio_sub_id = AUDIO_SUB_INVALID;
+
+/* Snap and AFC (rtty_afc.h): what the decoder thread was asked to do */
+#define SNAP_WAIT_S     1.5f    /* fresh audio a snap looks at */
+#define AFC_PERIOD_S    1.0f
+#define AFC_DEADBAND_HZ 4.0f
+
+#define AFC_MIN_FRAMES  3       /* good frames a second (of about 6) that make "decoding" */
+
+static volatile bool snap_req;
+static float         afc_last_s;
+static int           frames_ok, frames_bad;  /* stop bits since the AFC last looked */
+static volatile int  pass_lo = 0, pass_hi = 4000;   /* the receive filter, audio Hz */
 
 static x6100_mode_t cur_mode;
 
@@ -153,6 +167,7 @@ static void update() {
 
 void rtty_init() {
     pthread_mutex_init(&rtty_mux, NULL);
+    rtty_afc_init(CAPTURE_RATE_F);
     subject_subscribe_and_notify((Subject*)cfg.cur.mode(), on_cur_mode_change, NULL);
     init();
     if (dsp_audio_sub_id == AUDIO_SUB_INVALID) {
@@ -161,6 +176,8 @@ void rtty_init() {
 }
 
 static char baudot_decoder(uint8_t c) {
+    char out;
+
     if (c == RTTY_SYMBOL_CODE) {
         rx_letter = false;
         return 0;
@@ -171,7 +188,16 @@ static char baudot_decoder(uint8_t c) {
         return 0;
     }
 
-    return rx_letter ? rtty_letters[c] : rtty_symbols[c];
+    out = rx_letter ? rtty_letters[c] : rtty_symbols[c];
+
+    /* Unshift on space (fldigi's and MMTTY's default): after a space the
+     * text is letters again, so one lost LTRS doesn't turn the rest of
+     * the line into figures. Senders that use it send FIGS again for a
+     * figure after a space, as rtty_tx.c does. */
+    if (out == ' ' && param_i_get(cfg.rtty.usos())) {
+        rx_letter = true;
+    }
+    return out;
 }
 
 static bool is_mark_space(uint8_t *correction) {
@@ -274,6 +300,8 @@ static void add_symbol(float pwr) {
                 if (is_mark()) {
                     char c = baudot_decoder(rx_data);
 
+                    frames_ok++;
+
                     if (c) {
                         char str[2] = {c, 0};
 
@@ -283,11 +311,123 @@ static void add_symbol(float pwr) {
                          * sent. */
                         scheduler_put(feed_rx_ui, &c, sizeof(c));
                     }
+                } else {
+                    frames_bad++;
                 }
                 rx_state = RX_STATE_IDLE;
             }
             break;
     }
+}
+
+/* ---- snap and AFC ------------------------------------------------------ */
+
+typedef struct {
+    int16_t center;     /* Hz, 0: nothing found */
+    bool    snap;       /* asked for, so it is reported */
+} center_msg_t;
+
+static void set_center_now(int32_t hz) {
+    param_i_set(cfg.rtty.center(), hz);
+    pthread_mutex_lock(&rtty_mux);
+    if (ready) {
+        update_nco();
+    }
+    pthread_mutex_unlock(&rtty_mux);
+}
+
+/* UI thread: what the decoder found. */
+static void center_found_ui(void *arg) {
+    center_msg_t *m = (center_msg_t *)arg;
+
+    if (state != RTTY_RX) {
+        return;                         /* closed, or transmitting meanwhile */
+    }
+    if (m->center > 0) {
+        set_center_now(m->center);
+        if (m->snap) {
+            msg_update_text_fmt("#FFFFFF RTTY: on the signal, centre %d Hz", m->center);
+        }
+    } else if (m->snap) {
+        msg_update_text_fmt("#FF0000 RTTY: no signal within %d Hz of %d Hz",
+                            (int)RTTY_AFC_SNAP_HZ, (int)param_i_get(cfg.rtty.center()));
+    }
+}
+
+/* Decoder thread, lock held: a snap waiting for fresh audio, or the AFC
+ * looking about once a second. */
+static void afc_step(void) {
+    float        now = rtty_afc_seconds();
+    float        center = (float)param_i_get(cfg.rtty.center());
+    float        shift = (float)param_i_get(cfg.rtty.shift());
+    float        found;
+    center_msg_t m = {0, false};
+
+    if (state != RTTY_RX) {
+        return;
+    }
+    if (snap_req) {
+        if (now < SNAP_WAIT_S) {
+            return;
+        }
+        snap_req = false;
+        m.snap = true;
+        if (rtty_afc_find(center, shift, RTTY_AFC_SNAP_HZ, 800.0f, 1600.0f, (float)pass_lo,
+                          (float)pass_hi, &found)) {
+            m.center = (int16_t)lroundf(found);
+        }
+        scheduler_put(center_found_ui, &m, sizeof(m));
+        afc_last_s = now;
+        return;
+    }
+    if (!param_i_get(cfg.rtty.afc()) || now - afc_last_s < AFC_PERIOD_S) {
+        return;
+    }
+    /* Only a signal being decoded is followed: most frames with a good
+     * stop bit. The squelch alone is no gate, as at 0 it is always open
+     * and a neighbour or a carrier would pull the centre (and TX). */
+    {
+        bool decoding = frames_ok >= AFC_MIN_FRAMES * (now - afc_last_s) / AFC_PERIOD_S &&
+                        frames_ok >= 3 * frames_bad;
+
+        afc_last_s = now;
+        frames_ok = frames_bad = 0;
+        if (!decoding) {
+            return;
+        }
+    }
+    if (rtty_afc_find(center, shift, RTTY_AFC_TRACK_HZ, 800.0f, 1600.0f, (float)pass_lo,
+                      (float)pass_hi, &found) &&
+        fabsf(found - center) > AFC_DEADBAND_HZ) {
+        m.center = (int16_t)lroundf(found);
+        scheduler_put(center_found_ui, &m, sizeof(m));
+    }
+}
+
+void rtty_set_passband(int32_t lo, int32_t hi) {
+    pass_lo = lo;
+    pass_hi = hi;
+}
+
+void rtty_snap(void) {
+    int32_t shift = param_i_get(cfg.rtty.shift());
+
+    if (state != RTTY_RX) {
+        msg_update_text_fmt("#FF0000 RTTY: snap while receiving only");
+        return;
+    }
+    if (pass_hi - pass_lo < shift + 60) {
+        msg_update_text_fmt("#FF0000 RTTY: the filter (%d Hz) is too narrow for %d Hz shift",
+                            (int)(pass_hi - pass_lo), (int)shift);
+        return;
+    }
+    pthread_mutex_lock(&rtty_mux);
+    rtty_afc_reset();                   /* what is heard from now on */
+    afc_last_s = 0.0f;
+    frames_ok = frames_bad = 0;
+    snap_req = true;
+    pthread_mutex_unlock(&rtty_mux);
+    msg_update_text_fmt("#FFFFFF RTTY: looking for the signal...");
 }
 
 void rtty_put_audio_samples(size_t n, float *samples) {
@@ -303,6 +443,8 @@ void rtty_put_audio_samples(size_t n, float *samples) {
         firhilbf_r2c_execute(hilb, samples[i], &cval);
         cbuffercf_push(rx_buf, cval);
     }
+    rtty_afc_feed(samples, n);
+    afc_step();
 
     while (cbuffercf_size(rx_buf) > symbol_samples) {
         unsigned int   symbol;
@@ -344,6 +486,18 @@ void rtty_set_state(rtty_state_t x) {
          * starts from idle. */
         rtty_sql_reset();
         rx_state = RX_STATE_IDLE;
+        pthread_mutex_lock(&rtty_mux);
+        rtty_afc_reset();               /* the band may have changed meanwhile */
+        afc_last_s = 0.0f;
+        frames_ok = frames_bad = 0;
+        pthread_mutex_unlock(&rtty_mux);
+    }
+    if (x != RTTY_RX) {
+        /* A snap asked for and not yet done is dropped with the receive:
+         * it must not go off after TX, or on another band next time. */
+        pthread_mutex_lock(&rtty_mux);
+        snap_req = false;
+        pthread_mutex_unlock(&rtty_mux);
     }
     state = x;
     dsp_audio_set_active(dsp_audio_sub_id, x == RTTY_RX);
@@ -405,11 +559,8 @@ uint16_t rtty_change_center(int16_t df) {
     }
 
     int32_t center = limit(align_int(param_i_get(cfg.rtty.center()) + df * 10, 10), 800, 1600);
-    param_i_set(cfg.rtty.center(), center);
 
-    pthread_mutex_lock(&rtty_mux);
-    update_nco();
-    pthread_mutex_unlock(&rtty_mux);
+    set_center_now(center);
 
     return param_i_get(cfg.rtty.center());
 }

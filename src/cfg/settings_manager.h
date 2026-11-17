@@ -329,6 +329,10 @@ class SettingsManager {
         StorageType::GLOBAL, pending_writes_, &global_params_};
     Parameter<int32_t> p_rtty_squelch{"rtty_squelch", 0, 0, 90,
         StorageType::GLOBAL, pending_writes_, &global_params_}; // 0: open, the receiver as before the squelch
+    Parameter<int32_t> p_rtty_usos{"rtty_usos", 1, 0, 1,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // unshift on space, as fldigi and MMTTY
+    Parameter<int32_t> p_rtty_afc{"rtty_afc", 0, 0, 1,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // keep a decoded signal centred (rtty_afc.h)
 
     // CW beacon period (legacy cw field; CW group lives below)
     Parameter<int32_t> p_cw_encoder_period{"cw_encoder_period", 10, {},
@@ -419,6 +423,8 @@ class SettingsManager {
         StorageType::GLOBAL, pending_writes_, &global_params_}; // append sent and received text to /mnt/<mode>_text.txt
     Parameter<int32_t> p_digi_auto_log{"digi_auto_log", 1, 0, 1,
         StorageType::GLOBAL, pending_writes_, &global_params_}; // log the QSO when the 73 macro goes out
+    Parameter<int32_t> p_digi_serial{"digi_serial", 1, 1, 9999,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // next contest serial number, <CNTR>
 
     // Network
     Parameter<int32_t> p_wifi_enabled{"wifi_enabled", false, 0, 1,
