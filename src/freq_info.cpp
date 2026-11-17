@@ -11,6 +11,10 @@
 #include "util.h"
 #include "lock_manager.h"
 
+extern "C" {
+    LV_FONT_DECLARE(bt_icons_17);
+}
+
 static lv_obj_t *obj;
 
 static lv_obj_t *fg_freq_row;
@@ -22,6 +26,7 @@ static lv_obj_t *bg_freq_label;
 
 static lv_obj_t *vfo_label;
 static lv_obj_t *mode_label;
+static lv_obj_t *bt_label;      /* Bluetooth, while a window hides the status bar */
 
 static int32_t freq_step;
 
@@ -128,6 +133,16 @@ lv_obj_t * freq_info_init(lv_obj_t * parent) {
     lv_obj_set_style_radius(mode_label, 3, LV_PART_MAIN);
     lv_obj_set_style_text_font(mode_label, &sony_28, LV_PART_MAIN);
 
+    /* Bluetooth, right of the mode (freq_info_bt()) */
+    bt_label = lv_label_create(obj);
+    lv_obj_set_style_text_font(bt_label, &bt_icons_17, LV_PART_MAIN);
+    lv_obj_set_style_text_letter_space(bt_label, 4, LV_PART_MAIN);
+    lv_obj_set_style_pad_hor(bt_label, 3, LV_PART_MAIN);
+    lv_obj_set_style_pad_ver(bt_label, 1, LV_PART_MAIN);
+    lv_obj_set_style_radius(bt_label, 3, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(bt_label, lv_color_hex(0x12526F), LV_PART_MAIN);
+    lv_obj_add_flag(bt_label, LV_OBJ_FLAG_HIDDEN);
+
     /* Subscriptions */
     constexpr auto observer_fn = [](Subject *, void *) {
         update_fg_freq();
@@ -208,9 +223,32 @@ static void on_step_change(Subject *subj, void *user_data) {
     lv_obj_invalidate(fg_freq_row);
 }
 
+static void bt_place(void) {
+    lv_obj_update_layout(mode_label);
+    lv_obj_align_to(bt_label, mode_label, LV_ALIGN_OUT_RIGHT_MID, 6, 0);
+}
+
 static void on_mode_change(Subject *subj, void *user_data) {
     x6100_mode_t mode = (x6100_mode_t)cfg.cur.mode()->get();
     lv_label_set_text(mode_label, mode_to_str(mode));
+    if (bt_label && !lv_obj_has_flag(bt_label, LV_OBJ_FLAG_HIDDEN)) {
+        bt_place();
+    }
+}
+
+void freq_info_bt(const char *text, bool connected) {
+    if (bt_label == NULL) {
+        return;
+    }
+    if (text == NULL) {
+        lv_obj_add_flag(bt_label, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    lv_label_set_text(bt_label, text);
+    lv_obj_set_style_text_color(bt_label, lv_color_hex(connected ? 0xFFFFFF : 0x8A8A8A), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(bt_label, connected ? LV_OPA_COVER : LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_clear_flag(bt_label, LV_OBJ_FLAG_HIDDEN);
+    bt_place();
 }
 
 static void tx_cb(void *s, lv_msg_t *msg) {
