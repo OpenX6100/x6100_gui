@@ -34,3 +34,7 @@ extern lv_group_t *keyboard_group;
 
 void keyboard_init();
 bool keyboard_ready();
+
+/* A Bluetooth keyboard is connected (looked for when an input device comes
+ * or goes). */
+bool keyboard_bt_connected();

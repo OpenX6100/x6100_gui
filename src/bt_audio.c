@@ -1181,6 +1181,16 @@ bt_audio_state_t bt_audio_state(void)
     return st;
 }
 
+bt_audio_state_t bt_audio_state_if_started(void)
+{
+    bt_audio_state_t st;
+
+    pthread_mutex_lock(&S.lock);
+    st = S.thread_valid ? S.state : BT_AUDIO_OFF;
+    pthread_mutex_unlock(&S.lock);
+    return st;
+}
+
 const char *bt_audio_sink(void)
 {
     return S.sink;

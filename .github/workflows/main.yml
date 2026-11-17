@@ -1,6 +1,15 @@
 name: Build image
+# On a tag: the release. Started by hand on any branch: a test image to try on
+# a radio before the PR (Actions > Build image > Run workflow), kept for 30
+# days as a download on the run's page, named after the branch ("/" -> "-").
+# Works in a fork too (anyone outside OpenX6100): enable Actions in the
+# fork, then Actions > Build image > Run workflow on your branch.
 on:
   workflow_dispatch:
+    inputs:
+      buildroot_ref:
+        description: AetherX6100Buildroot branch, tag or commit (to test with an open Buildroot PR; a release uses master)
+        default: master
   push:
     # Pattern matched against refs/tags
     tags:
@@ -46,7 +55,26 @@ jobs:
       with:
         submodules: true
         repository: OpenX6100/AetherX6100Buildroot
+        ref: ${{ inputs.buildroot_ref || 'master' }}
         path: AetherX6100Buildroot
+
+    # Inputs reach the shell through env, never pasted into the script.
+    - name: Check buildroot ref
+      env:
+        REF: ${{ inputs.buildroot_ref || 'master' }}
+      run: |
+        echo "Buildroot: $REF = $(git -C AetherX6100Buildroot rev-parse HEAD)" | tee -a "$GITHUB_STEP_SUMMARY"
+        if [[ "$GITHUB_REF" == refs/tags/* && "$REF" != master ]]; then
+          echo "A release must be built on Buildroot master, not $REF"; exit 1
+        fi
+
+    # The image's name: the tag or branch with everything but letters,
+    # digits and . _ - made "-". Git allows ; $ " : < > | * ? \ and spaces in
+    # a branch name: they'd run as shell in the steps below, and
+    # upload-artifact refuses some of them (Kris).
+    - name: Image name
+      id: img
+      run: echo "name=$(printf '%s' "$GITHUB_REF_NAME" | tr -c 'A-Za-z0-9._-' '-')" >> "$GITHUB_OUTPUT"
 
     - name: Patch GUI mk
       run: |
@@ -70,6 +98,20 @@ jobs:
       run: |
         cd AetherX6100Buildroot && bash ./br_config.sh
 
+    # Buildroot fetches U-Boot only from ftp.denx.de (sources.buildroot.net
+    # has no copy of 2023.01): when denx is down every build fails after
+    # ~45 min (2026-11-06, 11-10, 11-12). Put the tarball in Buildroot's dl
+    # folder first, from OpenWrt's source mirror if denx doesn't answer,
+    # checked by its hash. Update the version when Buildroot's U-Boot changes.
+    - name: U-Boot source (ftp.denx.de fallback)
+      run: |
+        f=u-boot-2023.01.tar.bz2
+        d=AetherX6100Buildroot/buildroot/dl/uboot
+        mkdir -p $d
+        curl -fsSL --connect-timeout 20 -m 600 -o $d/$f https://ftp.denx.de/pub/u-boot/$f ||
+          curl -fsSL --connect-timeout 20 -m 1200 -o $d/$f https://sources.openwrt.org/$f
+        echo "69423bad380f89a0916636e89e6dcbd2e4512d584308d922d1039d1e4331950f  $d/$f" | sha256sum -c
+
     # Build
     - name: Build
       run: |
@@ -86,21 +128,44 @@ jobs:
 
     # Compress image
     - name: Compress image
+      env:
+        NAME: ${{ steps.img.outputs.name }}
       run: |
         cd AetherX6100Buildroot/build/images
-        mv sdcard.img sdcard.${{ github.ref_name }}.img
-        zip sdcard.${{ github.ref_name }}.img.zip sdcard.${{ github.ref_name }}.img
+        mv sdcard.img "sdcard.$NAME.img"
+        zip "sdcard.$NAME.img.zip" "sdcard.$NAME.img"
 
-    # Upload image
-    # - name: 'Upload image'
-    #   uses: actions/upload-artifact@v4
-    #   with:
-    #     name: sdcard.${{ github.ref_name }}.img
-    #     path: AetherX6100Buildroot/build/images/sdcard.${{ github.ref_name }}.img
+    # Always keep the image as a download on the run's page: a branch run has
+    # no release to attach it to, and on a tag it survives a failed Release.
+    - name: Upload image
+      uses: actions/upload-artifact@v4
+      with:
+        name: sdcard.${{ steps.img.outputs.name }}.img.zip
+        path: AetherX6100Buildroot/build/images/sdcard.${{ steps.img.outputs.name }}.img.zip
+        retention-days: 30
+
+    # The GUI program before Buildroot strips it, for reading a core dump from
+    # the radio: function names (a Release build, so no source lines), where
+    # the image's copy has none. Same build, so its code is the image's.
+    - name: Find unstripped GUI
+      if: always()
+      continue-on-error: true
+      run: |
+        f=$(find AetherX6100Buildroot/build/build -path '*x6100*gui*' -name x6100_gui -type f -perm -u+x | head -1)
+        echo "unstripped: $f"; file "$f"
+        mkdir -p unstripped && cp "$f" unstripped/x6100_gui
+    - name: Upload unstripped GUI
+      uses: actions/upload-artifact@v4
+      if: always()
+      continue-on-error: true
+      with:
+        name: x6100_gui-unstripped.${{ steps.img.outputs.name }}
+        path: unstripped/x6100_gui
+        retention-days: 30
 
     # Create release
     - name: Release
       uses: softprops/action-gh-release@v2
       if: startsWith(github.ref, 'refs/tags/')
       with:
-        files: AetherX6100Buildroot/build/images/sdcard.${{ github.ref_name }}.img.zip
+        files: AetherX6100Buildroot/build/images/sdcard.${{ steps.img.outputs.name }}.img.zip

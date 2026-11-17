@@ -389,7 +389,7 @@ void table_view_build(lv_obj_t *parent, lv_coord_t x, lv_coord_t y, lv_coord_t w
     lv_table_set_col_width(s_table, 0, w - 2);
 
     lv_obj_set_style_border_width(s_table, 0, LV_PART_ITEMS);
-    lv_obj_set_style_bg_opa(s_table, 192, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_table, 150, LV_PART_MAIN); /* as JS8's list: the waterfall shows through */
     lv_obj_set_style_bg_color(s_table, lv_color_black(), LV_PART_MAIN);
     lv_obj_set_style_border_width(s_table, 1, LV_PART_MAIN);
     lv_obj_set_style_border_color(s_table, lv_color_white(), LV_PART_MAIN);

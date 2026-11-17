@@ -31,6 +31,7 @@
 #include <errno.h>
 #include <math.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <sys/stat.h>
 #include <time.h>
 #include <stdio.h>
@@ -862,8 +863,10 @@ static void clear_cb(button_data_t *data)
 
 /*
  * Write the text currently shown in the panel to
- * NAVTEX_SAVE_DIR/sitorb-YYYYMMDD-HHMMSS.txt.  Returns false (and leaves
- * the text untouched) on any error.
+ * NAVTEX_SAVE_DIR/sitorb-YYYYMMDD-HHMMSS.txt: first to NAME.txt.tmp, synced,
+ * then renamed, so the SD card never holds half a file under the real name
+ * (power off while saving).  Returns false (and leaves the text untouched)
+ * on any error.
  */
 static bool save_text(char *name, size_t name_size)
 {
@@ -887,13 +890,19 @@ static bool save_text(char *name, size_t name_size)
              tm_now.tm_year + 1900, tm_now.tm_mon + 1, tm_now.tm_mday,
              tm_now.tm_hour, tm_now.tm_min, tm_now.tm_sec);
 
-    char path[256];
+    char path[256], tmp[264];
     snprintf(path, sizeof(path), "%s/%s", NAVTEX_SAVE_DIR, name);
+    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
 
-    /* "x": never overwrite an existing file (two saves in the same second). */
-    FILE *f = fopen(path, "wx");
+    /* never overwrite an existing file (two saves in the same second) */
+    if (access(path, F_OK) == 0) {
+        fprintf(stderr, "NAVTEX SAVE: %s exists\n", path);
+        return false;
+    }
+
+    FILE *f = fopen(tmp, "w");
     if (!f) {
-        fprintf(stderr, "NAVTEX SAVE: fopen %s failed: %s\n", path, strerror(errno));
+        fprintf(stderr, "NAVTEX SAVE: fopen %s failed: %s\n", tmp, strerror(errno));
         return false;
     }
 
@@ -904,14 +913,19 @@ static bool save_text(char *name, size_t name_size)
 
     if (fflush(f) != 0)
         ok = false;
-    if (ok)
-        fsync(fileno(f));
+    if (ok && fsync(fileno(f)) != 0)
+        ok = false;
     if (fclose(f) != 0)
         ok = false;
 
     if (!ok) {
-        fprintf(stderr, "NAVTEX SAVE: write %s failed\n", path);
-        unlink(path);
+        fprintf(stderr, "NAVTEX SAVE: write %s failed\n", tmp);
+        unlink(tmp);
+        return false;
+    }
+    if (rename(tmp, path) != 0) {
+        fprintf(stderr, "NAVTEX SAVE: rename %s failed: %s\n", tmp, strerror(errno));
+        unlink(tmp);
         return false;
     }
 

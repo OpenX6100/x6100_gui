@@ -38,6 +38,11 @@ void bt_ctl_request(bool on);
 
 bt_ctl_state_t bt_ctl_state(void);
 
+/* The same without starting the worker, which brings Bluetooth up when
+ * bt.conf says so (the status bar asks every second; the FT8 and the
+ * Bluetooth windows start it): BT_CTL_OFF until then. */
+bt_ctl_state_t bt_ctl_state_if_started(void);
+
 /* Adapter address as "AA:BB:CC:DD:EE:FF", or "" when down. */
 const char *bt_ctl_addr(void);
 
