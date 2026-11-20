@@ -143,15 +143,30 @@ static void purge_buffer(void);
 static void on_fg_freq_change_cb(Subject *s, void *user_data);
 static void on_mode_change_cb(Subject *s, void *user_data);
 static void on_vfo_change_cb(Subject *s, void *user_data);
-static void handle_login_packet(const uint8_t *buf, size_t len);
-static void handle_token_packet(const uint8_t *buf, size_t len);
-static void handle_conninfo_packet(const uint8_t *buf, size_t len);
+static void handle_login_packet(const uint8_t *buf, size_t len, const sockaddr_in *src);
+static void handle_token_packet(const uint8_t *buf, size_t len, const sockaddr_in *src);
+static void handle_conninfo_packet(const uint8_t *buf, size_t len, const sockaddr_in *src);
 static void process_audio_packet(const uint8_t *buf, size_t len, const sockaddr_in *src);
 static void audio_lan_tx_cb(size_t n, float *samples);
 static void cleanup_audio();
 
 static uint32_t make_my_id(uint16_t port) {
     return (uint32_t)port;
+}
+
+static bool same_endpoint(const sockaddr_in *a, const sockaddr_in *b) {
+    return a->sin_addr.s_addr == b->sin_addr.s_addr && a->sin_port == b->sin_port;
+}
+
+// The control client that said are-you-there; login, token and stream
+// requests are only taken from it.
+static bool from_ctrl_client(const sockaddr_in *src) {
+    return client_ctrl_valid && same_endpoint(src, &client_ctrl);
+}
+
+// Past a login with the right username and password.
+static bool logged_in(void) {
+    return auth_state >= ST_AUTH_PENDING;
 }
 
 static bool udp_send(int fd, const void *data, size_t len, const sockaddr_in *dst) {
@@ -339,24 +354,27 @@ static void process_control_packet(const uint8_t *buf, size_t len, const sockadd
 
 // ---- Login / Token / ConnInfo handlers -----------------------------------
 
-static void handle_login_packet(const uint8_t *buf, size_t len) {
+static void handle_login_packet(const uint8_t *buf, size_t len, const sockaddr_in *src) {
     if (len < sizeof(login_packet_t)) return;
+    if (!from_ctrl_client(src)) {
+        LV_LOG_WARN("LAN: login from an unknown address, ignoring");
+        return;
+    }
     // New login means old connection is dead — clean up scope callback and audio
     cleanup_audio();
     scope_streamer_set_notify(nullptr);
+    client_civ_valid = false;
     const login_packet_t *in = (const login_packet_t *)buf;
 
-    uint8_t expected_user[16], expected_pass[16];
+    // wfview zero-fills the fields, so all 16 bytes are compared ("rootx"
+    // must not pass as "root").
+    uint8_t expected_user[16] = {0}, expected_pass[16] = {0};
     int ulen, plen;
     passcode_encode(AUTH_USERNAME, (int)std::strlen(AUTH_USERNAME), expected_user, &ulen);
     passcode_encode(AUTH_PASSWORD, (int)std::strlen(AUTH_PASSWORD), expected_pass, &plen);
 
-    bool user_ok = (ulen <= 16 && std::memcmp(in->username, expected_user, (size_t)ulen) == 0);
-    bool pass_ok = (plen <= 16 && std::memcmp(in->password, expected_pass, (size_t)plen) == 0);
-
-    if (!user_ok || !pass_ok) {
-        LV_LOG_WARN("LAN: invalid credentials");
-    }
+    bool user_ok = std::memcmp(in->username, expected_user, sizeof(expected_user)) == 0;
+    bool pass_ok = std::memcmp(in->password, expected_pass, sizeof(expected_pass)) == 0;
 
     remote_id   = in->sentid;
     tok_request = in->tokrequest;
@@ -373,6 +391,16 @@ static void handle_login_packet(const uint8_t *buf, size_t len) {
     resp.requestreply = 0x02;
     resp.innerseq     = htons(auth_seq++);
     resp.tokrequest   = tok_request;
+
+    if (!user_ok || !pass_ok) {
+        // As wfview's own server: the client shows "Invalid Username/Password"
+        resp.error = 0xFEFFFFFF;
+        send_tracked(fd_control, (const uint8_t *)&resp, sizeof(resp), &client_ctrl);
+        auth_state = ST_LOGIN_PENDING;
+        LV_LOG_WARN("LAN: invalid credentials, login refused");
+        return;
+    }
+
     resp.error        = 0;
     std::strncpy(resp.connection, "WFVIEW", sizeof(resp.connection) - 1);
 
@@ -381,8 +409,12 @@ static void handle_login_packet(const uint8_t *buf, size_t len) {
     LV_LOG_INFO("LAN: login response sent");
 }
 
-static void handle_token_packet(const uint8_t *buf, size_t len) {
+static void handle_token_packet(const uint8_t *buf, size_t len, const sockaddr_in *src) {
     if (len < sizeof(token_packet_t)) return;
+    if (!from_ctrl_client(src) || !logged_in()) {
+        LV_LOG_WARN("LAN: token request without a login, ignoring");
+        return;
+    }
     const token_packet_t *in = (const token_packet_t *)buf;
 
     bool is_new_token = (in->requesttype == 0x02);
@@ -471,7 +503,11 @@ static void send_conninfo(void) {
     send_tracked(fd_control, (const uint8_t *)&pkt, sizeof(pkt), &client_ctrl);
 }
 
-static void handle_conninfo_packet(const uint8_t *buf, size_t len) {
+static void handle_conninfo_packet(const uint8_t *buf, size_t len, const sockaddr_in *src) {
+    if (!from_ctrl_client(src) || !logged_in()) {
+        LV_LOG_WARN("LAN: stream request without a login, ignoring");
+        return;
+    }
     LV_LOG_INFO("LAN: stream request received");
 
     // Parse client-requested audio sample rate from conninfo
@@ -562,8 +598,8 @@ static void process_audio_packet(const uint8_t *buf, size_t len, const sockaddr_
     if (len == CONTROL_SIZE) {
         if (hdr->type == 0x03) {
             // Must have an authenticated control client from the same IP
-            if (!client_ctrl_valid || client_ctrl.sin_addr.s_addr != src->sin_addr.s_addr) {
-                LV_LOG_WARN("LAN/AUDIO: AYT from unknown IP, ignoring");
+            if (!client_ctrl_valid || !logged_in() || client_ctrl.sin_addr.s_addr != src->sin_addr.s_addr) {
+                LV_LOG_WARN("LAN/AUDIO: AYT from unknown IP or before login, ignoring");
                 return;
             }
             client_audio       = *src;
@@ -658,6 +694,19 @@ static void process_civ_packet(const uint8_t *buf, size_t len, const sockaddr_in
 
     if (hdr->type == 0x01) {
         handle_retransmit(fd_civ, buf, len, src);
+        return;
+    }
+
+    // As wfview's own server: the CI-V client comes from the same IP as the
+    // logged-in control client, and everything after its handshake from
+    // that one address and port. Anything else could key the radio.
+    bool is_ayt = len == CONTROL_SIZE && hdr->type == 0x03;
+    if (is_ayt) {
+        if (!client_ctrl_valid || !logged_in() || client_ctrl.sin_addr.s_addr != src->sin_addr.s_addr) {
+            LV_LOG_WARN("LAN/CIV: AYT from unknown IP or before login, ignoring");
+            return;
+        }
+    } else if (!client_civ_valid || !same_endpoint(src, &client_civ)) {
         return;
     }
 
@@ -875,11 +924,11 @@ static void cat_lan_thread() {
             if (n > 0) {
                 const control_packet_t *hdr = (const control_packet_t *)recv_buf;
                 if (hdr->type == 0 && (size_t)n == LOGIN_SIZE) {
-                    handle_login_packet(recv_buf, (size_t)n);
+                    handle_login_packet(recv_buf, (size_t)n, &src);
                 } else if (hdr->type == 0 && (size_t)n == TOKEN_SIZE) {
-                    handle_token_packet(recv_buf, (size_t)n);
+                    handle_token_packet(recv_buf, (size_t)n, &src);
                 } else if (hdr->type == 0 && (size_t)n == CONNINFO_SIZE) {
-                    handle_conninfo_packet(recv_buf, (size_t)n);
+                    handle_conninfo_packet(recv_buf, (size_t)n, &src);
                 } else {
                     process_control_packet(recv_buf, (size_t)n, &src);
                 }

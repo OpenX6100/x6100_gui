@@ -545,6 +545,48 @@ TEST_CASE("C_CTL_LVL squelch read", "[cat]") {
     }));
 }
 
+// CW pitch (0x09) used to fall through into TX power (0x0a): setting the
+// pitch over CAT changed the power, and reading it returned the power.
+TEST_CASE("C_CTL_LVL CW pitch write leaves TX power alone", "[cat]") {
+    TestDbGuard db;
+    SettingsManager mgr;
+    init_band_5(db, mgr);
+    cfg_set_instance(&mgr);
+
+    mgr.p_pwr.set(5.0f);
+
+    // 0128 = 600 Hz
+    auto raw = ci_v_frame(C_CTL_LVL, {0x09, 0x01, 0x28});
+    CivPacketView req(raw.data(), raw.size());
+    uint8_t txBuf[256];
+    CivTxPacker packer(txBuf, 0xE0, LOCAL_ADDRESS);
+    process_civ_message(req, packer);
+
+    REQUIRE(mgr.p_key_tone.get() == 600);
+    REQUIRE(mgr.p_pwr.get() == 5.0f);
+}
+
+TEST_CASE("C_CTL_LVL CW pitch read returns the pitch", "[cat]") {
+    TestDbGuard db;
+    SettingsManager mgr;
+    init_band_5(db, mgr);
+    cfg_set_instance(&mgr);
+
+    mgr.p_key_tone.set(700);
+    mgr.p_pwr.set(10.0f);
+
+    auto raw = ci_v_frame(C_CTL_LVL, {0x09});
+    CivPacketView req(raw.data(), raw.size());
+    uint8_t txBuf[256];
+    CivTxPacker packer(txBuf, 0xE0, LOCAL_ADDRESS);
+    auto sv = process_civ_message(req, packer);
+
+    // (700 - 300) * 0.425 = 170 -> BE BCD 0x01 0x70 (not the power's 0x02 0x55)
+    REQUIRE(to_bytes(sv) == std::vector<uint8_t>({
+        0xFE, 0xFE, 0xE0, LOCAL_ADDRESS, C_CTL_LVL, 0x09, 0x01, 0x70, 0xFD
+    }));
+}
+
 // ---- C_RD_SQSM (0x15) ------------------------------------------------------
 
 TEST_CASE("C_RD_SQSM s-meter returns 3 bytes with stub meter == 0", "[cat]") {
