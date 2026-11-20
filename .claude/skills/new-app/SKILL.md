@@ -39,6 +39,8 @@ so app PRs merge in any order (#313).
 4. **Build list:** the app's `.c`/`.cpp` files in `src/CMakeLists.txt`
    under `# <NAME>` (shared files it needs may be listed again under its
    name; duplicates are fine).
+   **Bug-hunt area:** the new files in `docs/bug-hunt/AREAS.md`, in an area
+   of the app's own (copy the shape of an existing one).
 5. **The window itself:** `src/dialog_<name>.c/.h` with a `dialog_t` and
    `extern dialog_t *dialog_<name>;`, built like an existing app (copy the
    shape of a small one, e.g. `dialog_jtty.c`). **Nothing transmits when
@@ -50,6 +52,7 @@ Then check:
 ```sh
 python3 tools/checks/check_app_cases.py
 python3 tools/checks/check_build_list.py
+python3 tools/bug-hunt/areas.py check
 tools/radio/x6100-syncheck src/main_screen.c src/buttons.cpp src/dialog_<name>.c   # if set up
 ```
 

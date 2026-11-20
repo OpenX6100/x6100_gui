@@ -14,7 +14,7 @@ decides. For several PRs, do each and give one list at the end.
    worktree, or the current branch):
    `python3 tools/checks/check_app_cases.py` and
    `python3 tools/checks/check_build_list.py`, `check_tests_in_ci.py`,
-   `check_ratchets.py`.
+   `check_ratchets.py`, and `python3 tools/bug-hunt/areas.py check`.
    Also the PR's CI (`gh pr checks <n>`).
 2. **Conflicts with other open PRs:** for each open PR touching the same
    files (`gh pr list --json number,files`),
