@@ -15,9 +15,11 @@ so app PRs merge in any order (#313).
 
 1. **Number:** in `src/settings_types.h`, `ACTION_APP_<NAME> = <n>,` with
    the next free number after the highest one, written out. Check the
-   open PRs too (`gh pr list` and their diffs of `settings_types.h`): two
-   apps must not take the same number. Never change or reuse a number:
-   numbers are saved on users' cards (long-press keys).
+   open PRs too (`gh pr list --limit 200` and their diffs of
+   `settings_types.h`): two apps must not take the same number. Never
+   change or reuse a number: numbers are saved on users' cards (long-press
+   keys). Leave the "are taken" comment above the numbers alone: it is one
+   shared line, and two app PRs editing it would conflict.
 2. **Button:** in `src/buttons.cpp`,
    `static button_data_t btn_<name> = make_app_btn("<Label>", ACTION_APP_<NAME>);`
    under its name line, then `&btn_<name>,` **at the end of the last APP

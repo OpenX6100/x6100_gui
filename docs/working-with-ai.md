@@ -136,13 +136,10 @@ protect nothing.
 
 ## Spare tokens: the bug hunt
 
-AI tokens left over at the end of the week? Point your agent at
-[docs/bug-hunt/HUNT.md](bug-hunt/HUNT.md). It takes a part of the code
-nobody has hunted yet, reviews every line, checks what it finds, and
-reports on that part's GitHub issue; it changes no code and never touches a
-radio. So that every line gets a turn, each source file belongs to an area
-(`docs/bug-hunt/AREAS.md`), and *Merge checks* fails when a new file isn't
-in one.
+See the README's [Bug hunt](../README.md#bug-hunt) and
+[docs/bug-hunt/HUNT.md](bug-hunt/HUNT.md). What matters for your own PRs:
+every source file belongs to a bug-hunt area (`docs/bug-hunt/AREAS.md`),
+and *Merge checks* fails when a new file isn't in one.
 
 ## Plain words
 

@@ -31,8 +31,10 @@ How often: <!-- every time / sometimes / once -->
 
 ## Log and screenshot
 <!-- The GUI's log is on the SD card's DATA partition, folder `app_logs`: one
-file per run, named with its date and time. Attach the one from when it
-happened (a crash or restart ends the file). A screenshot or a photo of the
+file per run, named with the date and time the run ended. It is only saved
+there when the GUI program stops (a crash or a restart). A normal power-off
+loses that run's log, so if it happened just before you switched off, say
+so instead of attaching an older file. A screenshot or a photo of the
 screen helps too. -->
 
 ## Anything else

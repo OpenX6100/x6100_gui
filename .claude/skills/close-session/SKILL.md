@@ -5,7 +5,8 @@ description: End a working session on the X6100 GUI so nothing lives only in the
 
 # /close-session: nothing left only in the chat
 
-Do every step without asking each time, then report. If the person's fork
+Do every step, then report. Ask before anything that publishes: a push,
+a post, a branch deleted. If the person's fork
 has its own closing checklist (its CLAUDE.md or AGENTS.local.md), follow
 that one; this is the general one.
 
@@ -21,9 +22,12 @@ that one; this is the general one.
    memory.
 3. **Docs:** anything users or testers read whose behaviour changed (the
    README, release notes, the PR's description).
-4. **Git and GitHub:** everything committed and pushed (`git status` clean
-   on every branch used); results posted on open PRs only where the person
-   approved the text; say which branch is current.
+4. **Git and GitHub:** your own work from this session committed, on the
+   branches you made for it (never build outputs, images or files you
+   didn't write: list those for the person instead). Push only to the
+   person's own branches, and only with their OK; results posted on open
+   PRs only where the person approved the text. Say which branch is
+   current and what is still unpushed.
 5. **The radio:** what's on the SD card (which image, which commit), the
    newest DATA backup, nothing left running on it that matters.
 6. **Lessons:** a new rule or preference the person stated goes in their

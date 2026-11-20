@@ -2,8 +2,9 @@
 
 This is the one guide for any AI tool working on this repository (Claude
 Code, Codex, Copilot, Gemini, Cursor, ...). `CLAUDE.md`, `GEMINI.md` and
-`.github/copilot-instructions.md` only point here, so every tool reads the
-same rules. For the people using those tools, the companion page is
+`.github/copilot-instructions.md` point here (the last two repeat the four
+rules that matter most, in case a tool doesn't follow the link; change
+them together with this file), so every tool reads the same rules. For the people using those tools, the companion page is
 [docs/working-with-ai.md](docs/working-with-ai.md): how we work with AI here,
 and why.
 
@@ -166,10 +167,13 @@ cases, the build list and the areas on every PR. On Claude Code, the
 - **Compile check for ARM:** `tools/radio/x6100-syncheck src/file.c ...`
   with a local Buildroot build or the matching toolchain (see the file).
 - **Unit tests** (Catch2, on a PC): `./run_tests.sh` builds and runs them
-  all; CI (*Unit tests*) runs all of them in two jobs, because JS8 needs
-  Ubuntu 24.04's Boost and the others need 22.04's libgpiod 1.6 (plus
-  SQLite and liquid-dsp at the image's versions, built in the job). A new
-  test goes in `tests/CMakeLists.txt` **and** `.github/workflows/tests.yml`.
+  all, if your PC has what each needs (JS8: Boost 1.78 or newer; the
+  others: libgpiod 1.6, as in the image). CI (*Unit tests*) runs every one
+  in two jobs for that reason (Ubuntu 24.04 and 22.04, SQLite and
+  liquid-dsp at the image's versions, built in the job); JS8's `[slow]`
+  tests are left out there. A new test goes in the `CMakeLists.txt` of its
+  folder (`tests/` or a folder in it) **and** in
+  `.github/workflows/tests.yml`.
   Catch2 splits test names at commas: escape `\,`.
 - **A fresh checkout** needs `git submodule update --init` (LVGL, its
   drivers).
@@ -180,7 +184,7 @@ cases, the build list and the areas on every PR. On Claude Code, the
 
 | Where | What |
 |---|---|
-| `src/main.c` | Start-up, the two screens (`obj` and `overlay_scr`) |
+| `src/main.c` | Start-up, the two display layers (`primary_scr` below, `overlay_scr` above) |
 | `src/main_screen.c` | The main screen, app start (`ACTION_APP_*` cases) |
 | `src/buttons.cpp` | The button pages, the APP pages |
 | `src/settings_types.h` | Action and app numbers (saved on the card) |
@@ -203,9 +207,13 @@ rename).
 
 ## Lessons from the code
 
-- **Two screens on two layers:** the spectrum and waterfall are on
-  `overlay_scr`, drawn **above** the main screen (`obj`). Anything shown
-  over the spectrum must be a child of that layer; on `obj` it is hidden.
+- **Two display layers:** the spectrum and waterfall write their pixels
+  straight to the lower layer (`primary_scr`'s plane, `drm_primary_begin_direct`).
+  Everything LVGL draws, the spectrum and waterfall objects included, is on
+  the upper layer, `overlay_scr`, which `main_screen.c` calls `obj` (the
+  same object). A widget meant to show over the spectrum is a child of the
+  spectrum object (as `freq_bounds`) or created after it: an earlier
+  sibling is drawn under it.
 - **LVGL 8.3:** resetting an input device turns a held key into a long
   press in the next focus (deleting the focused object from its own key
   handler does it: call `lv_indev_wait_release(lv_indev_get_act())`
