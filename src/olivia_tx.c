@@ -55,6 +55,7 @@ static const struct {
     const char *name;
 } mode_table[OLIVIA_MODE_COUNT] = {
     {  8,  250, "8/250"   },
+    {  8,  500, "8/500"   },    /* 62.5 baud: the faster one for good paths */
     { 16,  500, "16/500"  },
     { 32, 1000, "32/1000" },
 };

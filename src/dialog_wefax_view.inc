@@ -478,6 +478,12 @@ static void fs_open(void)
 static void fs_close(void)
 {
     if (!fs_win) return;
+    /* ESC closes this from the canvas's own key handler: deleting the
+     * focused object there resets the keypad while the key is still held,
+     * and the held key then counts as a long press in the browser list
+     * (LVGL 8.3; as textarea_window.c's swallow_key()). F5 arrives on its
+     * release, so for it this does nothing. */
+    if (lv_indev_get_act()) lv_indev_wait_release(lv_indev_get_act());
     fs_destroy();
     if (fs_prev_focus && lv_obj_is_valid(fs_prev_focus)) {
         lv_group_add_obj(keyboard_group, fs_prev_focus);

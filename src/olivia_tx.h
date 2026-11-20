@@ -29,6 +29,7 @@ extern "C" {
 /* Mode variants. The order is the order the Mode button steps through. */
 typedef enum {
     OLIVIA_MODE_8_250 = 0,
+    OLIVIA_MODE_8_500,
     OLIVIA_MODE_16_500,
     OLIVIA_MODE_32_1000,
     OLIVIA_MODE_COUNT

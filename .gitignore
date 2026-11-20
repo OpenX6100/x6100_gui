@@ -57,6 +57,9 @@ _build/
 build/
 build_test/
 
+# Python
+__pycache__/
+
 # Personal AI notes (AGENTS.md, "Your own notes")
 CLAUDE.local.md
 AGENTS.local.md
