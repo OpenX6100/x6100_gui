@@ -258,7 +258,10 @@ static void process_control_packet(const uint8_t *buf, size_t len, const sockadd
     const control_packet_t *in = (const control_packet_t *)buf;
 
     if (in->type == 0x01) {
-        handle_retransmit(fd_control, buf, len, src);
+        // Copies of what we sent go only to the client they were sent to
+        if (from_ctrl_client(src)) {
+            handle_retransmit(fd_control, buf, len, src);
+        }
         return;
     }
 
@@ -692,11 +695,6 @@ static void process_civ_packet(const uint8_t *buf, size_t len, const sockaddr_in
     if (len < sizeof(control_packet_t)) return;
     const control_packet_t *hdr = (const control_packet_t *)buf;
 
-    if (hdr->type == 0x01) {
-        handle_retransmit(fd_civ, buf, len, src);
-        return;
-    }
-
     // As wfview's own server: the CI-V client comes from the same IP as the
     // logged-in control client, and everything after its handshake from
     // that one address and port. Anything else could key the radio.
@@ -707,6 +705,11 @@ static void process_civ_packet(const uint8_t *buf, size_t len, const sockaddr_in
             return;
         }
     } else if (!client_civ_valid || !same_endpoint(src, &client_civ)) {
+        return;
+    }
+
+    if (hdr->type == 0x01) {
+        handle_retransmit(fd_civ, buf, len, src);
         return;
     }
 
