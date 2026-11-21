@@ -490,7 +490,7 @@ src/olivia_macro.h
 ```
 
 ### A19 · RTTY
-RTTY receive and transmit, its buttons and squelch. (The window is in
+RTTY receive and transmit, its buttons, squelch and AFC. (The window is in
 `main_screen.c`, area A08.)
 
 ```files
@@ -502,6 +502,8 @@ src/rtty_buttons.c
 src/rtty_buttons.h
 src/rtty_sql.c
 src/rtty_sql.h
+src/rtty_afc.c
+src/rtty_afc.h
 ```
 
 ### A20 · JTTY
