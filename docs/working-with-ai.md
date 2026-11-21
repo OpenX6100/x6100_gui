@@ -81,7 +81,7 @@ An AI forgets everything between sessions; only files survive.
   same thing is fine anywhere; code copied from WSJT-X or JS8Call (GPL-3.0)
   can only go into a GPL-3.0 file, with credit. On such
   a bench the FT8 decoder went from about half of WSJT-X's decodes to most
-  of them (#362-#371).
+  of them (#362-#370).
 - **Flicker is measurable:** a phone's slow-motion video of the screen,
   analysed frame by frame, found a waterfall stutter nobody could see in
   the code.

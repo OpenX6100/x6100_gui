@@ -2,7 +2,7 @@
 
 This is the one guide for any AI tool working on this repository (Claude
 Code, Codex, Copilot, Gemini, Cursor, ...). `CLAUDE.md`, `GEMINI.md` and
-`.github/copilot-instructions.md` point here (the last two repeat the four
+`.github/copilot-instructions.md` point here (the last two repeat the five
 rules that matter most, in case a tool doesn't follow the link; change
 them together with this file), so every tool reads the same rules. For the people using those tools, the companion page is
 [docs/working-with-ai.md](docs/working-with-ai.md): how we work with AI here,
@@ -16,9 +16,9 @@ Every rule in it was learned the hard way, on real radios.
 The alternative firmware GUI for the Xiegu X6100: one C/C++
 program, `x6100_gui`, drawn with LVGL 8.3, running on the radio's Linux
 system (OpenX6100/AetherX6100Buildroot) and talking to the radio's base
-board through X6100Control. Started by R1CBU, continued by the OpenX6100
-group. Several people build apps for it (FT8, JS8, WSPR, PSK31, Olivia,
-RTTY, SSTV, WeFax, NavTex, JTTY, ...), many of them with AI help, and many
+board through X6100Control. Started by R1CBU, continued by Georgy
+(R2RFE, gdyuldin) and now the OpenX6100 group. Several people build apps
+for it (FT8, JS8, WSPR, PSK31, Olivia, RTTY, SSTV, WeFax, NavTex, JTTY, ...), many of them with AI help, and many
 of them hams first and programmers second. The maintainers review every
 change and decide the project's direction.
 
