@@ -4,7 +4,7 @@ This is part of an alternative firmware for X6100 using the LVGL library
 
 ## Installing
 
-Open [Releases](https://github.com/gdyuldin/x6100_gui/releases/latest) page and download `sdcard.img` file (in Assets section). With balenaEtcher or Rufus
+Open [Releases](https://github.com/OpenX6100/x6100_gui/releases/latest) page and download `sdcard.img` file (in Assets section). With balenaEtcher or Rufus
 burn img file to microSD card. Insert card to the transceiver and boot it.
 
 ## Importing ADI log
