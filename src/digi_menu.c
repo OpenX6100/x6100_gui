@@ -20,8 +20,13 @@
 #define MENU_WIDTH_COMPACT  560
 #define MENU_WIDTH_LARGE    740
 #define ITEM_LEN    64
+#define TITLE_LEN   80
+
+#define ROW_COLOR       0x2060C0        /* the row the MFK is on */
+#define ADJUST_COLOR    0xE07000        /* the row the MFK is changing */
 
 static lv_obj_t       *box;
+static lv_obj_t       *title_label;
 static lv_obj_t       *list;
 static lv_obj_t       *back_obj;
 static lv_obj_t       *prev_focus;      /* focused before, when no `back` */
@@ -29,6 +34,11 @@ static bool            prev_editing;
 static digi_menu_cb_t  pick_cb;
 static void           *pick_ctx;
 static int             nitems;
+static char            title_text[TITLE_LEN];
+
+static uint32_t              adjust_rows;      /* bit n: row n has a value */
+static digi_menu_adjust_cb_t adjust_cb;
+static int                   adjusting = -1;   /* the row being changed */
 
 static void restore_focus(void)
 {
@@ -54,7 +64,9 @@ void digi_menu_close(void)
      * group. Out of the group first, CANCEL went to freed memory. */
     lv_obj_del(box);
     box = NULL;
+    title_label = NULL;
     list = NULL;
+    adjusting = -1;
     restore_focus();
     back_obj = NULL;
 }
@@ -76,6 +88,74 @@ void digi_menu_select(int row)
     lv_obj_invalidate(list);
 }
 
+void digi_menu_set_adjust(uint32_t rows, digi_menu_adjust_cb_t adjust)
+{
+    adjust_rows = rows;
+    adjust_cb = adjust;
+}
+
+void digi_menu_set_texts(const char *const *items, int n)
+{
+    if (list == NULL) {
+        return;
+    }
+    for (int i = 0; i < n && i < nitems; i++) {
+        lv_table_set_cell_value(list, (uint16_t)i, 0, items[i]);
+    }
+}
+
+static bool row_adjustable(int row)
+{
+    return adjust_cb != NULL && row >= 0 && row < nitems && row < 32 &&
+           (adjust_rows & (1u << row)) != 0;
+}
+
+/* In and out of changing a row's value: the row turns orange and the
+ * title says how to get out. */
+static void set_adjusting(int row)
+{
+    adjusting = row;
+    if (title_label != NULL) {
+        if (row >= 0) {
+            lv_label_set_text_fmt(title_label, "%s: turn the MFK, press when done", title_text);
+        } else {
+            lv_label_set_text(title_label, title_text);
+        }
+    }
+    lv_obj_invalidate(list);
+}
+
+/* While a row is being changed, the MFK's steps change its value
+ * instead of moving through the list: this runs before the table's own
+ * key handling, and stops it. */
+static void adjust_key_cb(lv_event_t *e)
+{
+    uint32_t key = *((uint32_t *)lv_event_get_param(e));
+    int      dir;
+
+    if (adjusting < 0) {
+        return;
+    }
+    switch (key) {
+        case LV_KEY_RIGHT:
+        case LV_KEY_DOWN:
+            dir = 1;
+            break;
+
+        case LV_KEY_LEFT:
+        case LV_KEY_UP:
+            dir = -1;
+            break;
+
+        default:
+            return;
+    }
+    lv_event_stop_processing(e);
+    if (adjust_cb != NULL) {
+        adjust_cb(adjusting, dir, pick_ctx);
+    }
+}
+
 static void key_cb(lv_event_t *e)
 {
     uint32_t       key = *((uint32_t *)lv_event_get_param(e));
@@ -83,6 +163,15 @@ static void key_cb(lv_event_t *e)
     uint16_t       col;
     digi_menu_cb_t cb = pick_cb;
     void          *ctx = pick_ctx;
+
+    /* Changing a value: the MFK's press, or ESC, ends it and leaves the
+     * list open on the same row. */
+    if (adjusting >= 0) {
+        if (key == LV_KEY_ENTER || key == LV_KEY_ESC) {
+            set_adjusting(-1);
+        }
+        return;
+    }
 
     /* The list is deleted while its key is still down, which resets the
      * keypad: LVGL would then see a long press and send the key again to
@@ -99,6 +188,10 @@ static void key_cb(lv_event_t *e)
     switch (key) {
         case LV_KEY_ENTER:
             lv_table_get_selected_cell(list, &row, &col);
+            if (row_adjustable((int)row)) {
+                set_adjusting((int)row);
+                break;
+            }
             digi_menu_close();
             if (cb != NULL && row < nitems) {
                 cb((int)row, ctx);
@@ -142,8 +235,13 @@ static void draw_cb(lv_event_t *e)
     }
     lv_table_get_selected_cell(list, &row, &col);
     if (dsc->id == row) {
-        dsc->rect_dsc->bg_color = lv_color_hex(0x2060C0);
+        bool changing = adjusting >= 0 && (int)row == adjusting;
+
+        dsc->rect_dsc->bg_color = lv_color_hex(changing ? ADJUST_COLOR : ROW_COLOR);
         dsc->rect_dsc->bg_opa = LV_OPA_COVER;
+        if (changing && dsc->label_dsc != NULL) {
+            dsc->label_dsc->color = lv_color_black();
+        }
     }
 }
 
@@ -169,6 +267,10 @@ void digi_menu_open(lv_obj_t *parent, const char *title, const char *const *item
     pick_ctx = ctx;
     nitems = n;
     back_obj = back;
+    adjust_rows = 0;
+    adjust_cb = NULL;
+    adjusting = -1;
+    snprintf(title_text, sizeof(title_text), "%s", title);
 
     box = lv_obj_create(parent);
     lv_obj_remove_style_all(box);
@@ -188,7 +290,8 @@ void digi_menu_open(lv_obj_t *parent, const char *title, const char *const *item
     label = lv_label_create(box);
     lv_obj_set_style_text_font(label, title_font, 0);
     lv_obj_set_style_text_color(label, lv_color_hex(0xA0A0A0), 0);
-    lv_label_set_text(label, title);
+    lv_label_set_text(label, title_text);
+    title_label = label;
 
     list = lv_table_create(box);
     lv_obj_set_width(list, width - 20);
@@ -220,6 +323,7 @@ void digi_menu_open(lv_obj_t *parent, const char *title, const char *const *item
     }
     ((lv_table_t *)list)->row_act = 0;
     ((lv_table_t *)list)->col_act = 0;
+    lv_obj_add_event_cb(list, adjust_key_cb, LV_EVENT_KEY | LV_EVENT_PREPROCESS, NULL);
     lv_obj_add_event_cb(list, key_cb, LV_EVENT_KEY, NULL);
     lv_obj_add_event_cb(list, draw_cb, LV_EVENT_DRAW_PART_BEGIN, NULL);
     lv_obj_add_event_cb(list, changed_cb, LV_EVENT_VALUE_CHANGED, NULL);

@@ -135,8 +135,8 @@ lv_obj_t * meter_init(lv_obj_t * parent) {
     lv_coord_t w = lv_obj_get_content_width(obj);
     lv_coord_t h = lv_obj_get_content_height(obj);
 
-    lv_msg_subscribe(MSG_RADIO_TX, tx_cb, NULL);
-    lv_msg_subscribe(MSG_RADIO_RX, rx_cb, NULL);
+    lv_msg_subscribe(MSG_TX_INFO_SHOW, tx_cb, NULL);
+    lv_msg_subscribe(MSG_TX_INFO_HIDE, rx_cb, NULL);
 
     s_bar = lv_bar_indicator_create(obj);
     lv_obj_set_size(s_bar, w, h);
