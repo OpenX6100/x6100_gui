@@ -43,6 +43,12 @@ extern "C" bool cfg_digital_load(int8_t dir, cfg_digital_type_t type) {
     return true;
 }
 
+extern "C" void cfg_digital_set(int32_t freq, int32_t mode, const char *label) {
+    last_label = label ? label : "";
+    cfg_sm.cp_fg_freq.set(freq);
+    cfg_sm.cp_cur_mode.set(mode);
+}
+
 extern "C" const char *cfg_digital_label_get(void) {
     return last_label.c_str();
 }

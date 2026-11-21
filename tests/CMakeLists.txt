@@ -103,3 +103,10 @@ set_target_properties(test_dsc_wav PROPERTIES OUTPUT_NAME dsc_wav RUNTIME_OUTPUT
 set_target_properties(test_dsc_gen PROPERTIES OUTPUT_NAME dsc_gen RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/dsc)
 add_test(NAME test_dsc COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/dsc/run_tests.py
     --bin ${CMAKE_CURRENT_BINARY_DIR}/dsc --check)
+
+# test_ftx_freqs: the FT8 window's list of every FT8 and FT4 frequency
+add_executable(test_ftx_freqs test_ftx_freqs.cpp ${PROJECT_SOURCE_DIR}/src/ftx_freqs.c)
+target_include_directories(test_ftx_freqs PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_compile_definitions(test_ftx_freqs PRIVATE X6100_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+target_link_libraries(test_ftx_freqs PRIVATE ft8_core Catch2::Catch2WithMain)
+add_test(NAME test_ftx_freqs COMMAND $<TARGET_FILE:test_ftx_freqs> --colour-mode=ansi)
