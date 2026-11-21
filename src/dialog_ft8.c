@@ -490,6 +490,7 @@ static void rx_filter_set(int low, int high) {
 }
 
 static void destruct_cb() {
+    digi_menu_close();      /* the Freq list goes with the window: not left behind in digi_menu.c */
     dsp_audio_set_active(dsp_audio_sub_id, false);
     keyboard_close();
     worker_done();
