@@ -15,6 +15,8 @@ enum msg_t {
     // Radio messages
     MSG_RADIO_RX,
     MSG_RADIO_TX,
+    MSG_TX_INFO_SHOW,   /* the TX meter takes the S-meter's and dial's place (tx_info.c) */
+    MSG_TX_INFO_HIDE,   /* ... and gives it back: in CW 1 s after the last element */
     MSG_LOW_POWER,
 
     // Service state messages

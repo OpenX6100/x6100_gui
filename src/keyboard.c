@@ -46,6 +46,7 @@ static bool                 ready = false;
 static kbd_rollover_t       rollover;
 static dev_t                kbd_rdev;  /* the keyboard opened: a new one (unplugged and back) opens again */
 static ino_t                kbd_ino;
+static bool                 bt_kbd_present; /* a Bluetooth keyboard connected, open or not */
 static lv_timer_t          *rescan_timer;
 static int                  rescans_left;
 
@@ -150,8 +151,13 @@ static void setup_kbd(char *path) {
 /* A keyboard there and not open (or a different one: unplugged and back):
  * open it; none there: not ready. */
 static void check_kbd(void) {
+    char        bt_path[256];
     char       *dev_path = search_kbd_device();
     struct stat st;
+
+    /* For the status bar's icon: a Bluetooth keyboard is there even when
+     * a USB one is the one open. */
+    bt_kbd_present = search_bt_kbd(bt_path, sizeof(bt_path));
     if (dev_path && stat(dev_path, &st) == 0) {
         if (!ready || st.st_rdev != kbd_rdev || st.st_ino != kbd_ino) setup_kbd(dev_path);
         return;
@@ -186,6 +192,9 @@ void keyboard_init() {
     lv_msg_subscribe(MSG_USB_DEVICE_CHANGED, on_device_change, NULL);
     lv_msg_subscribe(MSG_INPUT_DEVICE_CHANGED, on_device_change, NULL);
 
+    char bt_path[256];
+    bt_kbd_present = search_bt_kbd(bt_path, sizeof(bt_path));
+
     char *path = search_kbd_device();
     if (!path)
         return;
@@ -195,4 +204,8 @@ void keyboard_init() {
 
 bool keyboard_ready() {
     return ready;
+}
+
+bool keyboard_bt_connected() {
+    return bt_kbd_present;
 }
