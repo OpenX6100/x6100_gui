@@ -211,7 +211,12 @@ static void key_cb(lv_event_t * e) {
 
     switch (key) {
         case LV_KEY_ESC:
-            dialog_destruct(&dialog);
+            /* The RFG knob, as JS8: the first stops TX, the next closes. */
+            if (cw_encoder_state() != CW_ENCODER_IDLE) {
+                send_stop_cb(NULL);
+            } else {
+                dialog_destruct(&dialog);
+            }
             break;
 
         case KEYBOARD_F4:

@@ -34,6 +34,8 @@
 #include "styles.h"
 #include "cfg/cfg_api.h"
 #include "radio.h"
+#include "band_plan.h"
+#include "itu_region.h"
 #include "common/time.h"
 #include "audio.h"
 #include "dsp.h"
@@ -59,6 +61,9 @@
 #include "digi_qso.h"           /* shared QSO state: DX call and RST */
 #include "digi_menu.h"
 #include "digi_next.h"
+#include "digi_log.h"
+#include "digi_qso_menu.h"
+#include "digi_text.h"
 
 #include <math.h>
 #include <pthread.h>
@@ -67,6 +72,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
+#define TEXT_PATH       "/mnt/olivia_text.txt"
 
 #define WIDTH           771
 #define WF_HEIGHT       325
@@ -113,39 +120,49 @@
  * From the frequency table of oliviadigitalmode.org: dial frequencies
  * for the calling channels, with the waterfall centre at 1500 Hz, which
  * is where opening the window and every band change put the finder.
- * Region 1 values where regions differ (160 m 1837.5, not 1825.5; 40 m
- * the secondary 7071.0, since 7038.5 is a Region 2 channel). 20 m has a
- * second, 32/1000 channel. No 6 m channel is listed.
+ * Where it gives one channel for Region 1 and another for Region 2 (160 m
+ * 1837.5 and 1825.5; 40 m 7038.5 in Region 2, otherwise the secondary
+ * 7071.0), the station's region is used: Settings > Band plan, or with
+ * Auto the region of the locator in the QTH Grid app (band_plan_region(),
+ * itu_region.c). It names none for Region 3, which takes Region 1's.
+ * 20 m has a second, 32/1000 channel. No 6 m channel is listed.
  */
 typedef struct {
     const char *label;
-    uint32_t    dial_hz;
+    uint32_t    dial[3];        /* Regions 1, 2, 3; 0: Region 1's */
 } olivia_band_t;
 
 static const olivia_band_t olivia_bands[] = {
-    {"160m",       1837500},
-    {"80m",        3581500},
-    {"40m",        7071000},
-    {"30m",       10141500},
-    {"20m",       14071000},
-    {"20m wide",  14107000},
-    {"17m",       18097500},
-    {"15m",       21071000},
-    {"12m",       24921000},
-    {"10m",       28121000},
+    {"160m",     { 1837500, 1825500}},
+    {"80m",      { 3581500}},
+    {"40m",      { 7071000, 7038500}},
+    {"30m",      {10141500}},
+    {"20m",      {14071000}},
+    {"20m wide", {14107000}},
+    {"17m",      {18097500}},
+    {"15m",      {21071000}},
+    {"12m",      {24921000}},
+    {"10m",      {28121000}},
 };
 
 #define OLIVIA_BAND_CNT ((int)(sizeof(olivia_bands) / sizeof(olivia_bands[0])))
 #define BAND_CENTER_HZ  1500
 
 static int cur_band = -1;
+static int region = 1;          /* the station's, read by load_band() */
+
+/* The band's dial for the station's region. */
+static uint32_t band_dial(int idx)
+{
+    return itu_region_pick(olivia_bands[idx].dial, region);
+}
 
 /* ------------------------------------------------------------------ */
 
 static void construct_cb(lv_obj_t *parent);
 static void destruct_cb(void);
 static void key_cb(lv_event_t *e);
-static void rotary_cb(int32_t diff);
+static void rotary_cb(int32_t diff, uint16_t dt);
 static void band_cb(lv_event_t *e);
 
 static lv_obj_t   *waterfall = NULL;
@@ -460,10 +477,11 @@ static void rx_text_ui(void *data)
         return;
 
     snprintf(before, sizeof(before), "%s", digi_qso_dx());
+    digi_text_rx(s);
 
     for (; *s; s++) {
         txt_put(*s, false);
-        /* Catch the correspondent's call from "DE <call>". */
+        /* Catch the correspondent's call, name and QTH. */
         digi_qso_feed_rx(*s);
     }
 
@@ -485,6 +503,8 @@ static void tx_echo_cb(const char *text)
 
     if (!alive || !text)
         return;
+
+    digi_text_tx(text);
 
     /* The line breaks sent around every transmission are for the other
      * station's screen; here each transmission gets its own line. */
@@ -743,7 +763,7 @@ static int band_nearest(uint32_t freq)
     int64_t best_d = -1;
 
     for (int i = 0; i < OLIVIA_BAND_CNT; i++) {
-        int64_t d = (int64_t)freq - (int64_t)olivia_bands[i].dial_hz;
+        int64_t d = (int64_t)freq - (int64_t)band_dial(i);
 
         if (d < 0)
             d = -d;
@@ -757,9 +777,15 @@ static int band_nearest(uint32_t freq)
 
 static void band_msg(uint32_t f)
 {
+    char region_s[16] = "";
+
+    /* where the channel depends on the region, say which one it is */
+    if (itu_region_differs(olivia_bands[cur_band].dial))
+        snprintf(region_s, sizeof(region_s), " (Region %d)", region);
+
     if (dial_offset_hz == 0)
-        msg_update_text_fmt("Olivia %s  %u.%04u MHz", olivia_bands[cur_band].label,
-                            (unsigned)(f / 1000000u), (unsigned)((f / 100u) % 10000u));
+        msg_update_text_fmt("Olivia %s  %u.%04u MHz%s", olivia_bands[cur_band].label,
+                            (unsigned)(f / 1000000u), (unsigned)((f / 100u) % 10000u), region_s);
     else
         msg_update_text_fmt("Olivia %s  %u.%04u MHz (%+d kHz)", olivia_bands[cur_band].label,
                             (unsigned)(f / 1000000u), (unsigned)((f / 100u) % 10000u),
@@ -772,6 +798,7 @@ static void load_band(int8_t dir)
 {
     int idx;
 
+    region = band_plan_region();    /* once here, not on every band_dial() */
     if (dir == 0 || cur_band < 0) {
         idx = band_nearest((uint32_t)cparam_i_get(cfg.cur.fg_freq()));
     } else {
@@ -787,13 +814,14 @@ static void load_band(int8_t dir)
     refresh_btn(&btn_dial);
 
     /* Frequency first, then mode - the order cfg_digital_load() uses. */
-    cparam_i_set(cfg.cur.fg_freq(), (int32_t)olivia_bands[idx].dial_hz);
+    cparam_i_set(cfg.cur.fg_freq(), (int32_t)band_dial(idx));
     cparam_i_set(cfg.cur.mode(), x6100_mode_usb_dig);
+    digi_text_new_header();
 
     /* The listed dial frequencies assume the waterfall centre at 1500. */
     olivia_tx_set_center(BAND_CENTER_HZ);
 
-    band_msg(olivia_bands[idx].dial_hz);
+    band_msg(band_dial(idx));
 }
 
 static void change_band(int8_t dir)
@@ -851,8 +879,9 @@ static void dial_apply(void)
     if (cur_band < 0)
         return;
 
-    f = (uint32_t)((int32_t)olivia_bands[cur_band].dial_hz + dial_offset_hz);
+    f = (uint32_t)((int32_t)band_dial(cur_band) + dial_offset_hz);
     cparam_i_set(cfg.cur.fg_freq(), (int32_t)f);
+    digi_text_new_header();
 
     /* What the waterfall and the receiver hold belongs to the old dial.
      * The received text stays: it is still the same conversation. */
@@ -864,7 +893,8 @@ static void dial_apply(void)
     refresh_btn(&btn_dial);
 }
 
-static void dial_change(int d)
+/* The VFO d steps of 1 kHz from where it is, within DIAL_MAX_HZ. */
+static void dial_step(int d)
 {
     int32_t v = dial_offset_hz + d * DIAL_STEP_HZ;
 
@@ -877,12 +907,18 @@ static void dial_change(int d)
         v = -DIAL_MAX_HZ;
     if (v > DIAL_MAX_HZ)
         v = DIAL_MAX_HZ;
-    knob_timer_restart();
     if (v == dial_offset_hz)
         return;
 
     dial_offset_hz = v;
     dial_apply();
+}
+
+static void dial_change(int d)
+{
+    if (!olivia_tx_is_on())
+        knob_timer_restart();
+    dial_step(d);
 }
 
 /* Press: the multifunction knob moves the VFO in 1 kHz steps; press
@@ -1021,6 +1057,7 @@ static void focus_timer_cb(lv_timer_t *t)
 static void input_end(void)
 {
     input_active = false;
+    olivia_tx_hold(false);      /* typed during TX: it may end now */
     if (!focus_timer) {
         focus_timer = lv_timer_create(focus_timer_cb, 100, NULL);
         lv_timer_set_repeat_count(focus_timer, 1);
@@ -1043,31 +1080,80 @@ static bool input_cancel_cb(void)
     return true;
 }
 
+/* ---- QSO menu and log ------------------------------------------------- */
+
+static lv_obj_t *qso_parent(void)
+{
+    return dialog.obj;
+}
+
+static bool qso_input_begin(void)
+{
+    if (!alive || input_active)
+        return false;
+    input_begin();
+    return true;
+}
+
+static void qso_changed(void)
+{
+    refresh_btn(&btn_next);
+    refresh_btn(&btn_dx);
+    refresh_btn(&btn_rst);
+}
+
+/* ADIF's name for the variant on the air, "OLIVIA 32/1000". */
+static const char *qso_submode(void)
+{
+    static char buf[24];
+
+    snprintf(buf, sizeof(buf), "OLIVIA %s", olivia_tx_mode_name(olivia_tx_get_mode()));
+    return buf;
+}
+
+/* What went out: the dial plus the audio centre, USB. */
+static uint64_t qso_freq(void)
+{
+    return (uint64_t)cparam_i_get(cfg.cur.fg_freq()) + olivia_tx_get_center();
+}
+
+static const digi_qso_menu_t qso_menu = {
+    .parent      = qso_parent,
+    .input_begin = qso_input_begin,
+    .input_end   = input_end,
+    .changed     = qso_changed,
+    .mode        = DIGI_LOG_OLIVIA,
+    .submode     = qso_submode,
+    .freq        = qso_freq,
+    .tx_on       = olivia_tx_is_on,
+};
+
 /* ---- Transmit --------------------------------------------------------- */
 
+/* While a transmission runs the text joins its end (digi_txq.h). */
 static bool send_text(const char *text)
 {
     char buf[OLIVIA_MACRO_TEXT_LEN + 400];
+    bool on = olivia_tx_is_on();
 
     if (!text || !*text)
         return false;
 
-    if (olivia_tx_is_on()) {
-        msg_update_text_fmt("#FF0000 Olivia TX busy");
-        return false;
-    }
-
-    /* Start and finish on a fresh line on the other station's screen. */
-    snprintf(buf, sizeof(buf), "\n%s\n", text);
+    /* Start and finish on a fresh line on the other station's screen;
+     * text added to a transmission follows the line break it ends with. */
+    snprintf(buf, sizeof(buf), on ? "%s\n" : "\n%s\n", text);
 
     if (olivia_tx_send(buf)) {
-        msg_update_text_fmt("#FFFFFF Olivia %s TX...",
-                            olivia_tx_mode_name(olivia_tx_get_mode()));
+        if (on)
+            msg_update_text_fmt("#FFFFFF Olivia: added to the transmission");
+        else
+            msg_update_text_fmt("#FFFFFF Olivia %s TX...",
+                                olivia_tx_mode_name(olivia_tx_get_mode()));
         refresh_btn(&btn_status);
         refresh_btn(&btn_next);
         return true;
     }
-    msg_update_text_fmt("#FF0000 Olivia TX busy");
+    msg_update_text_fmt("#FF0000 Olivia: the TX buffer is full");
     return false;
 }
 
@@ -1081,18 +1167,18 @@ static bool free_text_ok_cb(void)
     return true;
 }
 
+/* Opened while transmitting, the transmitter sends empty blocks until
+ * the text is sent or the window cancelled, so the text joins the
+ * transmission. */
 static void text_press_cb(button_data_t *b)
 {
     (void)b;
 
     if (input_active)
         return;
-    if (olivia_tx_is_on()) {
-        msg_update_text_fmt("#FF0000 Olivia TX busy");
-        return;
-    }
 
     input_begin();
+    olivia_tx_hold(true);
     textarea_window_open_w_label(free_text_ok_cb, input_cancel_cb, "Olivia msg:");
     /* The stock window takes 64 characters. */
     lv_textarea_set_max_length(textarea_window_text(), OLIVIA_MACRO_TEXT_LEN - 1);
@@ -1106,10 +1192,12 @@ static void stop_press_cb(button_data_t *b)
     if (olivia_tx_is_on()) {
         olivia_tx_stop();
         msg_update_text_fmt("#FFFFFF Olivia: stopping after this block");
+        digi_qso_menu_tx_stopped();     /* says so if a 73 was waiting */
     }
 }
 
-static void mode_press_cb(button_data_t *b)
+/* The next variant (d = 1) or the one before (d = -1). */
+static void mode_step(int d)
 {
     olivia_mode_t m;
 
@@ -1118,7 +1206,7 @@ static void mode_press_cb(button_data_t *b)
         return;
     }
 
-    m = (olivia_mode_t)((olivia_tx_get_mode() + 1) % OLIVIA_MODE_COUNT);
+    m = (olivia_mode_t)((olivia_tx_get_mode() + OLIVIA_MODE_COUNT + d) % OLIVIA_MODE_COUNT);
     olivia_tx_set_mode(m);
 
     /* A wider variant may no longer fit around the old centre. */
@@ -1126,7 +1214,13 @@ static void mode_press_cb(button_data_t *b)
     rebuild_rx();
 
     msg_update_text_fmt("#FFFFFF Olivia %s", olivia_tx_mode_name(m));
-    refresh_btn(b);
+    refresh_btn(&btn_mode);
+}
+
+static void mode_press_cb(button_data_t *b)
+{
+    (void)b;
+    mode_step(1);
 }
 
 static void status_press_cb(button_data_t *b)
@@ -1163,16 +1257,15 @@ static void macro_press(int idx)
     }
 
     if (!olivia_macro_expand(m->text, out, sizeof(out), &missing)) {
-        if (missing && strcmp(missing, "<CALL>") == 0)
-            msg_update_text_fmt("#FF0000 No DX call - set it in Menu");
-        else
-            msg_update_text_fmt("#FF0000 %s is empty", missing ? missing : "?");
+        msg_update_text_fmt("#FF0000 %s", digi_qso_missing_hint(missing));
         return;
     }
 
     if (send_text(out)) {
+        digi_qso_note_sent(m->text);                /* a <CNTR> keeps its number */
+        digi_qso_menu_sent(&qso_menu, m->name);     /* a 73 logs the QSO */
         digi_next_sent(&next_state, m->name, digi_qso_dx());
-        if (digi_next_is_cq(m->name)) {
+        if (digi_next_is_cq_macro(m->name, m->text)) {
             digi_qso_clear();           /* a CQ starts a new QSO */
         }
         refresh_btn(&btn_next);
@@ -1408,20 +1501,18 @@ static void macros_press_cb(button_data_t *b)
 
 enum {
     MENU_MODE, MENU_DIAL, MENU_DIAL_BACK, MENU_BAND_UP, MENU_BAND_DOWN, MENU_DX, MENU_RST,
-    MENU_NEW_QSO, MENU_RESYNC, MENU_CLEAR, MENU_COUNT
+    MENU_QSO, MENU_NEW_QSO, MENU_RESYNC, MENU_CLEAR, MENU_COUNT
 };
 
 static void menu_pick(int item, void *ctx)
 {
     (void)ctx;
     switch (item) {
-        case MENU_MODE:      mode_press_cb(&btn_mode); break;
-        case MENU_DIAL:      dial_press_cb(&btn_dial); break;
         case MENU_DIAL_BACK: dial_hold_cb(&btn_dial); break;
         case MENU_BAND_UP:   band_up_cb(NULL); break;
         case MENU_BAND_DOWN: band_down_cb(NULL); break;
         case MENU_DX:        dx_press_cb(&btn_dx); break;
-        case MENU_RST:       rst_press_cb(&btn_rst); break;
+        case MENU_QSO:       digi_qso_menu_open(&qso_menu); break;
         case MENU_NEW_QSO:
             dx_hold_cb(&btn_dx);
             memset(&next_state, 0, sizeof(next_state));
@@ -1432,11 +1523,51 @@ static void menu_pick(int item, void *ctx)
     refresh_btn(&btn_next);
 }
 
+static char menu_text[MENU_COUNT][48];
+
+static void menu_texts(const char *items[MENU_COUNT])
+{
+    const char *dx = digi_qso_dx();
+
+    snprintf(menu_text[MENU_MODE], 48, "Mode: %s  (press to change)",
+             olivia_tx_mode_name(olivia_tx_get_mode()));
+    snprintf(menu_text[MENU_DIAL], 48, "Dial: %+d kHz  (press to change)",
+             (int)(dial_offset_hz / 1000));
+    snprintf(menu_text[MENU_DIAL_BACK], 48, "Dial back to the band's");
+    snprintf(menu_text[MENU_BAND_UP], 48, "Band up");
+    snprintf(menu_text[MENU_BAND_DOWN], 48, "Band down");
+    snprintf(menu_text[MENU_DX], 48, "DX call...  (%s)", (dx && *dx) ? dx : "none");
+    snprintf(menu_text[MENU_RST], 48, "RST sent: %s  (press to change)", digi_qso_rst_sent());
+    snprintf(menu_text[MENU_QSO], 48, "QSO: log, name, QTH...");
+    snprintf(menu_text[MENU_NEW_QSO], 48, "New QSO (clear DX call, name, RST)");
+    snprintf(menu_text[MENU_RESYNC], 48, "RX resync");
+    snprintf(menu_text[MENU_CLEAR], 48, "Clear the text and waterfall");
+    for (int i = 0; i < MENU_COUNT; i++)
+        items[i] = menu_text[i];
+}
+
+/* The rows changed in place with the MFK: Mode, Dial and RST sent. */
+static void menu_adjust(int item, int dir, void *ctx)
+{
+    const char *items[MENU_COUNT];
+
+    (void)ctx;
+    switch (item) {
+        case MENU_MODE: mode_step(dir); break;
+        case MENU_DIAL: dial_step(dir); break;
+        case MENU_RST:
+            digi_qso_change_rst_sent((int16_t)dir);
+            refresh_btn(&btn_rst);
+            break;
+    }
+    menu_texts(items);
+    digi_menu_set_texts(items, MENU_COUNT);
+    refresh_btn(&btn_next);
+}
+
 static void menu_press_cb(button_data_t *b)
 {
-    static char  text[MENU_COUNT][48];
-    const char  *items[MENU_COUNT];
-    const char  *dx = digi_qso_dx();
+    const char *items[MENU_COUNT];
 
     (void)b;
     if (input_active)
@@ -1445,19 +1576,9 @@ static void menu_press_cb(button_data_t *b)
         digi_menu_close();
         return;
     }
-    snprintf(text[MENU_MODE], 48, "Mode: %s  (press: next)", olivia_tx_mode_name(olivia_tx_get_mode()));
-    snprintf(text[MENU_DIAL], 48, "Dial with the knob  (%+d kHz)", (int)(dial_offset_hz / 1000));
-    snprintf(text[MENU_DIAL_BACK], 48, "Dial back to the band's");
-    snprintf(text[MENU_BAND_UP], 48, "Band up");
-    snprintf(text[MENU_BAND_DOWN], 48, "Band down");
-    snprintf(text[MENU_DX], 48, "DX call...  (%s)", (dx && *dx) ? dx : "none");
-    snprintf(text[MENU_RST], 48, "RST sent: %s  (press: next)", digi_qso_rst_sent());
-    snprintf(text[MENU_NEW_QSO], 48, "New QSO (clear DX call, RST)");
-    snprintf(text[MENU_RESYNC], 48, "RX resync");
-    snprintf(text[MENU_CLEAR], 48, "Clear the text and waterfall");
-    for (int i = 0; i < MENU_COUNT; i++)
-        items[i] = text[i];
+    menu_texts(items);
     digi_menu_open(dialog.obj, "Menu", items, MENU_COUNT, menu_pick, NULL, NULL);
+    digi_menu_set_adjust((1u << MENU_MODE) | (1u << MENU_DIAL) | (1u << MENU_RST), menu_adjust);
 }
 
 /* ---- QSO fields ------------------------------------------------------- */
@@ -1556,10 +1677,12 @@ static void reveal_waterfall(void)
 /* ---- Dialog callbacks ------------------------------------------------- */
 
 /* Main encoder: moves the band; the receiver follows once it stops. */
-static void rotary_cb(int32_t diff)
+static void rotary_cb(int32_t diff, uint16_t dt)
 {
     int32_t mag = diff < 0 ? -diff : diff;
     int32_t step = ROTARY_HZ * (mag > 6 ? 6 : (mag > 3 ? 3 : 1));
+
+    (void)dt;
 
     if (olivia_tx_is_on()) {
         msg_update_text_fmt("#FF0000 Olivia: stop TX first");
@@ -1577,7 +1700,12 @@ static void key_cb(lv_event_t *e)
 
     switch (key) {
         case LV_KEY_ESC:
-            dialog_destruct();
+            /* The RFG knob, as JS8: the first stops TX, the next closes. */
+            if (olivia_tx_is_on()) {
+                stop_press_cb(NULL);
+            } else {
+                dialog_destruct();
+            }
             break;
 
         case LV_KEY_ENTER:
@@ -1742,6 +1870,9 @@ static void construct_cb(lv_obj_t *parent)
 
     /* Receiver and transmitter, routed to this window */
 
+    digi_log_open();
+    digi_text_open("Olivia", TEXT_PATH, qso_freq);
+
     olivia_app_init();
     olivia_app_set_text_cb(rx_text_cb);
     olivia_app_set_audio_tap(rx_tap);
@@ -1762,7 +1893,7 @@ static void del_timer(lv_timer_t **t)
 
 static void destruct_cb(void)
 {
-    digi_menu_close();
+    digi_qso_menu_close();
     alive = false;
     tx_frame = NULL;            /* deleted with the window */
 
@@ -1801,6 +1932,9 @@ static void destruct_cb(void)
     olivia_app_set_text_cb(NULL);
     olivia_app_set_audio_tap(NULL);
     olivia_tx_set_echo_cb(NULL);
+
+    digi_text_close();
+    digi_log_close();
 
     pthread_mutex_lock(&spec_mux);
     if (spec_ok)

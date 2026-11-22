@@ -65,6 +65,8 @@ static ParamInt *cfg_vox_delay(void) { return param_ref<ParamInt>(cfg_instance()
 static ParamInt *cfg_ft8_show_all(void) { return param_ref<ParamInt>(cfg_instance().p_ft8_show_all); }
 static ParamInt *cfg_ft8_protocol(void) { return param_ref<ParamInt>(cfg_instance().p_ft8_protocol); }
 static ParamInt *cfg_ft8_auto(void) { return param_ref<ParamInt>(cfg_instance().p_ft8_auto); }
+static ParamInt *cfg_ft8_psk(void) { return param_ref<ParamInt>(cfg_instance().p_ft8_psk); }
+static ParamInt *cfg_ft8_psk_min(void) { return param_ref<ParamInt>(cfg_instance().p_ft8_psk_min); }
 static ParamInt *cfg_ft8_hold_freq(void) { return param_ref<ParamInt>(cfg_instance().p_ft8_hold_freq); }
 static ParamInt *cfg_ft8_max_repeats(void) { return param_ref<ParamInt>(cfg_instance().p_ft8_max_repeats); }
 static ParamInt *cfg_swrscan_linear(void) { return param_ref<ParamInt>(cfg_instance().p_swrscan_linear); }
@@ -172,12 +174,19 @@ static ParamInt *cfg_rtty_shift(void) { return param_ref<ParamInt>(cfg_instance(
 static ParamInt *cfg_rtty_rate(void) { return param_ref<ParamInt>(cfg_instance().p_rtty_rate); }
 static ParamInt *cfg_rtty_reverse(void) { return param_ref<ParamInt>(cfg_instance().p_rtty_reverse); }
 static ParamInt *cfg_rtty_squelch(void) { return param_ref<ParamInt>(cfg_instance().p_rtty_squelch); }
+static ParamInt *cfg_rtty_usos(void) { return param_ref<ParamInt>(cfg_instance().p_rtty_usos); }
+static ParamInt *cfg_rtty_afc(void) { return param_ref<ParamInt>(cfg_instance().p_rtty_afc); }
 static ParamInt *cfg_cw_encoder_period(void) { return param_ref<ParamInt>(cfg_instance().p_cw_encoder_period); }
 static ParamInt *cfg_ft8_tx_freq(void) { return param_ref<ParamInt>(cfg_instance().p_ft8_tx_freq); }
 static ParamFloat *cfg_ft8_output_gain_offset(void) { return param_ref<ParamFloat>(cfg_instance().p_ft8_output_gain_offset); }
 static ParamText *cfg_ft8_cq_modifier(void) { return param_ref<ParamText>(cfg_instance().p_ft8_cq_modifier); }
 static ParamText *cfg_qth(void) { return param_ref<ParamText>(cfg_instance().p_qth); }
 static ParamText *cfg_callsign(void) { return param_ref<ParamText>(cfg_instance().p_callsign); }
+static ParamText *cfg_op_name(void) { return param_ref<ParamText>(cfg_instance().p_op_name); }
+static ParamText *cfg_op_qth(void) { return param_ref<ParamText>(cfg_instance().p_op_qth); }
+static ParamInt *cfg_digi_text_save(void) { return param_ref<ParamInt>(cfg_instance().p_digi_text_save); }
+static ParamInt *cfg_digi_auto_log(void) { return param_ref<ParamInt>(cfg_instance().p_digi_auto_log); }
+static ParamInt *cfg_digi_serial(void) { return param_ref<ParamInt>(cfg_instance().p_digi_serial); }
 static ParamInt *cfg_wifi_enabled(void) { return param_ref<ParamInt>(cfg_instance().p_wifi_enabled); }
 static ParamInt *cfg_long_gen(void) { return param_ref<ParamInt>(cfg_instance().p_long_gen); }
 static ParamInt *cfg_long_app(void) { return param_ref<ParamInt>(cfg_instance().p_long_app); }
@@ -259,6 +268,11 @@ extern "C" const cfg_refs_t cfg = {
 
     .qth = &cfg_qth,
     .callsign = &cfg_callsign,
+    .op_name = &cfg_op_name,
+    .op_qth = &cfg_op_qth,
+    .digi_text_save = &cfg_digi_text_save,
+    .digi_auto_log = &cfg_digi_auto_log,
+    .digi_serial = &cfg_digi_serial,
 
     .ui = {
         .auto_level_enabled = &cfg_auto_level_enabled,
@@ -310,6 +324,8 @@ extern "C" const cfg_refs_t cfg = {
         .protocol = &cfg_ft8_protocol,
         .auto_mode = &cfg_ft8_auto,
         .hold_freq = &cfg_ft8_hold_freq,
+        .psk = &cfg_ft8_psk,
+        .psk_min = &cfg_ft8_psk_min,
         .max_repeats = &cfg_ft8_max_repeats,
         .tx_freq = &cfg_ft8_tx_freq,
         .output_gain_offset = &cfg_ft8_output_gain_offset,
@@ -432,6 +448,8 @@ extern "C" const cfg_refs_t cfg = {
         .rate = &cfg_rtty_rate,
         .reverse = &cfg_rtty_reverse,
         .squelch = &cfg_rtty_squelch,
+        .usos = &cfg_rtty_usos,
+        .afc = &cfg_rtty_afc,
     },
     .network = {
         .wifi_enabled = &cfg_wifi_enabled,

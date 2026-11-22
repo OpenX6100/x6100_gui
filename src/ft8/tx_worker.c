@@ -23,8 +23,7 @@
 #include "worker.h"
 #include "ft2.h"
 
-/* FT8 audio tone offset inside the radio passband. */
-#define SIGNAL_FREQ_HZ   1325
+#define SIGNAL_FREQ_HZ   FT8_TX_AUDIO_HZ
 #define MAX_PWR_W        5.0f
 #define GAIN_MIN_DB     (-30.0f)
 #define GAIN_MAX_DB      0.0f

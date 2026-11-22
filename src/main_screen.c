@@ -61,9 +61,13 @@
 #include "dialog_olivia.h"
 /* WeFax */
 #include "dialog_wefax.h"
+/* NavTex */
+#include "dialog_navtex.h"
 /* SSTV */
 #include "dialog_sstv.h"
 #include "dialog_jtty.h"
+/* DSC */
+#include "dialog_dsc.h"
 #include "display.h"
 #include "buttons.h"
 #include "recorder.h"
@@ -176,7 +180,7 @@ static void next_freq_step(bool up) {
 static void apps_disable() {
     dialog_destruct();
 
-    rtty_tx_stop();
+    rtty_tx_stop_wait();                /* unkeyed before the next app retunes */
     rtty_tx_close_input();
     rtty_sql_timer_stop();
     rtty_set_state(RTTY_OFF);
@@ -265,6 +269,12 @@ void main_screen_start_app(press_action_t app_action) {
             voice_say_text_fmt("WeFax window");
             break;
 
+        /* NavTex */
+        case ACTION_APP_NAVTEX:
+            dialog_construct(dialog_navtex, obj);
+            voice_say_text_fmt("NAVTEX window");
+            break;
+
         /* SSTV */
         case ACTION_APP_SSTV:
             dialog_construct(dialog_sstv, obj);
@@ -275,6 +285,12 @@ void main_screen_start_app(press_action_t app_action) {
         case ACTION_APP_JTTY:
             dialog_construct(dialog_jtty, obj);
             voice_say_text_fmt("JTTY window");
+            break;
+
+        /* DSC */
+        case ACTION_APP_DSC:
+            dialog_construct(dialog_dsc, obj);
+            voice_say_text_fmt("DSC window");
             break;
 
         default:
@@ -354,10 +370,14 @@ void main_screen_action(press_action_t action) {
         case ACTION_APP_OLIVIA:
         /* WeFax */
         case ACTION_APP_WEFAX:
+        /* NavTex */
+        case ACTION_APP_NAVTEX:
         /* SSTV */
         case ACTION_APP_SSTV:
         /* JTTY */
         case ACTION_APP_JTTY:
+        /* DSC */
+        case ACTION_APP_DSC:
             main_screen_start_app(action);
             break;
 
@@ -903,8 +923,8 @@ static void main_screen_hkey_cb(lv_event_t * e) {
         case HKEY_UP:
             if (hkey->state == HKEY_RELEASE) {
                 if (!lm_get_freq()) {
-                    if (dialog_wefax_mic_step(-1)) {
-                        /* WeFax open: previous station in its list */
+                    if (dialog_mic_step(-1)) {
+                        /* an app with a list open (WeFax, NavTex, DSC): its previous row */
                     } else if (dialog_channels_recall_relative(-1)) {
                         msg_update_text_fmt("%s", dialog_channels_last_recalled_name());
                     } else if (dialog_channels_empty()) {
@@ -922,8 +942,8 @@ static void main_screen_hkey_cb(lv_event_t * e) {
         case HKEY_DOWN:
             if (hkey->state == HKEY_RELEASE) {
                 if (!lm_get_freq()) {
-                    if (dialog_wefax_mic_step(+1)) {
-                        /* WeFax open: next station in its list */
+                    if (dialog_mic_step(+1)) {
+                        /* an app with a list open (WeFax, NavTex, DSC): its next row */
                     } else if (dialog_channels_recall_relative(+1)) {
                         msg_update_text_fmt("%s", dialog_channels_last_recalled_name());
                     } else if (dialog_channels_empty()) {
@@ -939,12 +959,14 @@ static void main_screen_hkey_cb(lv_event_t * e) {
             break;
 
         case HKEY_VM:
-            /* WeFax open: its stations list; otherwise open/close CHANNELS,
+            /* An app with a list open (WeFax, NavTex, DSC): its list (vm_toggle_cb
+             * in its dialog_t); otherwise open/close CHANNELS,
              * also on top of another dialog (an overlay, see
              * dialog_channels.c). CHANNELS already open over WeFax is still
              * closed by V/M. As in Hany's 1KO125 firmware (#311). */
             if (hkey->state == HKEY_RELEASE) {
-                if (dialog_channels_is_open() || !dialog_wefax_vm_toggle()) {
+                if (dialog_channels_is_open() ||
+                    !dialog_vm_toggle()) {
                     dialog_channels_toggle(obj, dialog_running);
                 }
             }
@@ -1153,6 +1175,10 @@ static void spectrum_key_cb(lv_event_t * e) {
 
         case LV_KEY_ESC:
             // VOL press also
+            if (rtty_tx_is_on()) {
+                rtty_buttons_stop();    /* as JS8: the RFG knob stops TX */
+                break;
+            }
             if (!dialog_running) {
                 switch (vol->state) {
                     case VOL_STATE_EDIT:

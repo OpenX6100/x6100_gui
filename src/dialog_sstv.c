@@ -1545,6 +1545,12 @@ static void key_cb(lv_event_t *e)
         case KEY_VOL_RIGHT_SELECT:
             radio_change_vol(1);
             return;
+        case LV_KEY_ESC:
+            if (tx_running) {           /* as JS8: the RFG knob stops TX */
+                tx_abort = true;
+                msg_update_text_fmt("SSTV: transmission stopped");
+            }
+            return;
         default:
             break;
     }

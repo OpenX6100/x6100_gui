@@ -148,6 +148,10 @@ class SettingsManager {
         StorageType::GLOBAL, pending_writes_, &global_params_};
     Parameter<int32_t> p_ft8_hold_freq{"ft8_hold_freq", true, 0, 1,
         StorageType::GLOBAL, pending_writes_, &global_params_};
+    Parameter<int32_t> p_ft8_psk{"ft8_psk", false, 0, 1,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // who hears you, from PSK Reporter
+    Parameter<int32_t> p_ft8_psk_min{"ft8_psk_min", 15, 5, 60,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // how long their lines stay
     Parameter<int32_t> p_ft8_max_repeats{"ft8_max_repeats", 6, {},
         StorageType::GLOBAL, pending_writes_, {}, &global_params_};
 
@@ -325,6 +329,10 @@ class SettingsManager {
         StorageType::GLOBAL, pending_writes_, &global_params_};
     Parameter<int32_t> p_rtty_squelch{"rtty_squelch", 0, 0, 90,
         StorageType::GLOBAL, pending_writes_, &global_params_}; // 0: open, the receiver as before the squelch
+    Parameter<int32_t> p_rtty_usos{"rtty_usos", 1, 0, 1,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // unshift on space, as fldigi and MMTTY
+    Parameter<int32_t> p_rtty_afc{"rtty_afc", 0, 0, 1,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // keep a decoded signal centred (rtty_afc.h)
 
     // CW beacon period (legacy cw field; CW group lives below)
     Parameter<int32_t> p_cw_encoder_period{"cw_encoder_period", 10, {},
@@ -405,6 +413,18 @@ class SettingsManager {
         StorageType::GLOBAL, pending_writes_, {}, &global_params_};
     Parameter<std::string> p_callsign{"callsign", "", {},
         StorageType::GLOBAL, pending_writes_, {}, &global_params_};
+    Parameter<std::string> p_op_name{"op_name", "", {},
+        StorageType::GLOBAL, pending_writes_, {}, &global_params_}; // operator's name, <MYNAME> in the keyboard modes
+    Parameter<std::string> p_op_qth{"op_qth", "", {},
+        StorageType::GLOBAL, pending_writes_, {}, &global_params_}; // operator's town, <MYQTH> (p_qth is the locator)
+
+    // Keyboard modes (PSK31, Olivia, RTTY)
+    Parameter<int32_t> p_digi_text_save{"digi_text_save", 1, 0, 1,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // append sent and received text to /mnt/<mode>_text.txt
+    Parameter<int32_t> p_digi_auto_log{"digi_auto_log", 1, 0, 1,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // log the QSO when the 73 macro goes out
+    Parameter<int32_t> p_digi_serial{"digi_serial", 1, 1, 9999,
+        StorageType::GLOBAL, pending_writes_, &global_params_}; // next contest serial number, <CNTR>
 
     // Network
     Parameter<int32_t> p_wifi_enabled{"wifi_enabled", false, 0, 1,

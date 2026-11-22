@@ -27,14 +27,20 @@ extern "C" {
 uint16_t psk_tx_get_center(void);
 void     psk_tx_set_center(uint16_t hz);
 
-/* Start transmitting text asynchronously. False if already running. */
+/* Transmit text asynchronously. While a transmission runs the text is
+ * added to its end (digi_txq.h). False when the queue has no room for
+ * it. */
 bool psk_tx_send(const char *text);
 
-/* Request a stop; the current symbol finishes, then the postamble runs. */
+/* Request a stop: what is still queued is dropped, the current
+ * character finishes, then the postamble runs. */
 void psk_tx_stop(void);
 
 bool psk_tx_is_on(void);
 
+/* While the operator types during a transmission: send idle reversals
+ * rather than end when the text runs out (digi_txq_hold). */
+bool psk_tx_hold(bool on);
 
 
 /* Varicode code string for a character, or NULL. Shared with the

@@ -47,6 +47,7 @@ typedef struct {
     char     extra[24]; /* more for the selected one's details ("23 dBm"), "" none */
     uint32_t path;      /* a path from you in this colour, 0 none */
     uint8_t  path_w;    /* its width, 0: 3 px */
+    lv_opa_t path_opa;  /* how solid, 0: fully */
 } map_scene_station_t;
 
 /* A thin line between two stations (indexes into the list). */
@@ -70,6 +71,8 @@ typedef struct {
     unsigned                   nlegend;
     const char                *status;   /* top right, "" none */
     const char                *status2;  /* under it ("DX ZL2AB 11300 km", may hold a \n), "" none */
+    const char                *status3;  /* one more under those, in status3_color, NULL none */
+    uint32_t                   status3_color;
     const char                *hint;     /* bottom left, above the legend, "" none */
 } map_scene_t;
 

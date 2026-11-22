@@ -568,7 +568,7 @@ static bool setup(void)
     wspr_worker_cb_t cb = {
         .on_spot = on_spot,
         .on_slot_end = on_slot_end,
-        .on_psd = on_psd,
+        .on_psd = ui.on_psd ? on_psd : NULL,    /* no spectrum nobody draws */
         .on_tick = on_tick,
         .ctx = NULL,
     };

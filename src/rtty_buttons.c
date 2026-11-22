@@ -14,15 +14,65 @@
 
 #include "lvgl/lvgl.h"
 
+#include "cfg/cfg_api.h"
 #include "mfk.h"
 #include "msg.h"
+#include "digi_log.h"
 #include "digi_menu.h"
 #include "digi_next.h"
 #include "digi_qso.h"
+#include "digi_qso_menu.h"
+#include "digi_text.h"
+#include "qso_log.h"
+#include "radio.h"
+#include "rtty.h"
 #include "rtty_sql.h"
 #include "rtty_tx.h"
 
+#define TEXT_PATH "/mnt/rtty_text.txt"
+
+
+/* Snap and AFC search inside the receive filter. */
+static void note_filter(void)
+{
+    rtty_set_passband(cparam_i_get(cfg.filter.low()), cparam_i_get(cfg.filter.high()));
+}
+
 static digi_next_t next_state;          /* where the QSO is, for Next */
+
+/* ---- QSO menu and log ------------------------------------------------ */
+
+static lv_obj_t *qso_parent(void)
+{
+    return lv_scr_act();
+}
+
+static void qso_changed(void)
+{
+    rtty_refresh_macro_labels();
+}
+
+/* What went out: the centre of the two tones, on the dial's side. */
+static uint64_t qso_freq(void)
+{
+    x6100_mode_t mode = (x6100_mode_t)cparam_i_get(cfg.cur.mode());
+    int64_t      dial = cparam_i_get(cfg.cur.fg_freq());
+    int64_t      center = param_i_get(cfg.rtty.center());
+    bool         lsb = (mode == x6100_mode_lsb) || (mode == x6100_mode_lsb_dig);
+
+    return (uint64_t)(lsb ? dial - center : dial + center);
+}
+
+static const digi_qso_menu_t qso_menu = {
+    .parent      = qso_parent,
+    .input_begin = rtty_tx_input_begin,
+    .input_end   = rtty_tx_input_end,
+    .changed     = qso_changed,
+    .mode        = DIGI_LOG_RTTY,
+    .submode     = NULL,
+    .freq        = qso_freq,
+    .tx_on       = rtty_tx_is_on,
+};
 
 /* ---- helpers -------------------------------------------------------- */
 
@@ -33,20 +83,29 @@ static const char *macro_name_at(int idx)
     return m ? m->name : NULL;
 }
 
+/* While a transmission runs the macro joins its end (digi_txq.h). */
 static void send_macro(int idx)
 {
     const rtty_macro_t *m = rtty_macro_get(idx);
+    const char         *missing = NULL;
+    bool                on = rtty_tx_is_on();
 
     if (m == NULL) {
         return;
     }
-    if (!rtty_macro_send(idx)) {
-        msg_update_text_fmt("#FF0000 RTTY TX busy");
+    if (!rtty_macro_send(idx, &missing)) {
+        if (missing) {
+            msg_update_text_fmt("#FF0000 %s", digi_qso_missing_hint(missing));
+        } else {
+            msg_update_text_fmt("#FF0000 RTTY: the TX buffer is full");
+        }
         return;
     }
-    msg_update_text_fmt("#FFFFFF RTTY TX: %s", m->name);
+    msg_update_text_fmt(on ? "#FFFFFF RTTY: %s added to the transmission" : "#FFFFFF RTTY TX: %s",
+                        m->name);
+    digi_qso_menu_sent(&qso_menu, m->name);     /* a 73 logs the QSO */
     digi_next_sent(&next_state, m->name, digi_qso_dx());
-    if (digi_next_is_cq(m->name)) {
+    if (digi_next_is_cq_macro(m->name, m->text)) {
         digi_qso_clear();               /* a CQ starts a new QSO */
     }
 }
@@ -83,8 +142,7 @@ static void next_press_cb(button_data_t *b)
 
     digi_menu_close();
     if (rtty_tx_is_on()) {
-        rtty_tx_stop();
-        buttons_refresh(b);
+        rtty_buttons_stop();
         return;
     }
     idx = digi_next_pick(&next_state, digi_qso_dx(), rtty_macros_count(), macro_name_at);
@@ -233,12 +291,12 @@ static button_data_t btn_rtty_macros = {
 /* ---- Menu ----------------------------------------------------------- */
 
 /*
- * The reports are set with the knob, like Rate, Shift and Center:
- * picking one hands the MFK knob to it and its value shows on the
- * message line as it turns.
+ * The reports are changed in the list itself: press the MFK on one, turn
+ * it, press again (digi_menu_set_adjust()).
  */
 enum {
-    MENU_DX, MENU_RST_SENT, MENU_RST_RCVD, MENU_AUTO_DX, MENU_NEW_QSO, MENU_COUNT
+    MENU_DX, MENU_RST_SENT, MENU_RST_RCVD, MENU_AUTO_DX, MENU_QSO, MENU_NEW_QSO, MENU_SNAP,
+    MENU_AFC, MENU_USOS, MENU_COUNT
 };
 
 static void menu_pick(int item, void *ctx)
@@ -249,17 +307,30 @@ static void menu_pick(int item, void *ctx)
             rtty_qso_open_dx_input();
             break;
 
-        case MENU_RST_SENT:
-            mfk_set_ctrl(CTRL_RTTY_RST_SENT);
-            break;
-
-        case MENU_RST_RCVD:
-            mfk_set_ctrl(CTRL_RTTY_RST_RCVD);
-            break;
-
         case MENU_AUTO_DX:
             digi_qso_toggle_autograb();
-            msg_update_text_fmt("#FFFFFF Auto DX %s", digi_qso_autograb() ? "on" : "off");
+            msg_update_text_fmt("#FFFFFF Call, name and QTH from the text: %s",
+                                digi_qso_autograb() ? "on" : "off");
+            break;
+
+        case MENU_QSO:
+            digi_qso_menu_open(&qso_menu);
+            break;
+
+        case MENU_SNAP:
+            note_filter();
+            rtty_snap();
+            break;
+
+        case MENU_AFC:
+            param_i_set(cfg.rtty.afc(), !param_i_get(cfg.rtty.afc()));
+            msg_update_text_fmt("#FFFFFF RTTY AFC %s", param_i_get(cfg.rtty.afc()) ? "on" : "off");
+            break;
+
+        case MENU_USOS:
+            param_i_set(cfg.rtty.usos(), !param_i_get(cfg.rtty.usos()));
+            msg_update_text_fmt("#FFFFFF Unshift on space %s",
+                                param_i_get(cfg.rtty.usos()) ? "on" : "off");
             break;
 
         case MENU_NEW_QSO:
@@ -271,28 +342,56 @@ static void menu_pick(int item, void *ctx)
     buttons_refresh(&btn_rtty_next);
 }
 
+static void menu_texts(char text[MENU_COUNT][56], const char *items[MENU_COUNT])
+{
+    const char *dx = digi_qso_dx();
+
+    snprintf(text[MENU_DX], 56, "DX call...  (%s)", (dx && *dx) ? dx : "none");
+    snprintf(text[MENU_RST_SENT], 56, "RST sent: %s  (press to change)", digi_qso_rst_sent());
+    snprintf(text[MENU_RST_RCVD], 56, "RST received: %s  (press to change)",
+             digi_qso_rst_rcvd());
+    snprintf(text[MENU_AUTO_DX], 56, "Call/name/QTH from text: %s  (press: %s)",
+             digi_qso_autograb() ? "on" : "off", digi_qso_autograb() ? "off" : "on");
+    snprintf(text[MENU_QSO], 56, "QSO: log, name, QTH...");
+    snprintf(text[MENU_NEW_QSO], 56, "New QSO (clear DX call, name, RST)");
+    snprintf(text[MENU_SNAP], 56, "Snap to the signal (also: hold Center)");
+    snprintf(text[MENU_AFC], 56, "AFC, keep the signal centred: %s",
+             param_i_get(cfg.rtty.afc()) ? "on" : "off");
+    snprintf(text[MENU_USOS], 56, "Unshift on space: %s", param_i_get(cfg.rtty.usos()) ? "on" : "off");
+    for (int i = 0; i < MENU_COUNT; i++) {
+        items[i] = text[i];
+    }
+}
+
+static char menu_text[MENU_COUNT][56];
+
+static void menu_adjust(int item, int dir, void *ctx)
+{
+    const char *items[MENU_COUNT];
+
+    (void)ctx;
+    if (item == MENU_RST_SENT) {
+        digi_qso_change_rst_sent((int16_t)dir);
+    } else if (item == MENU_RST_RCVD) {
+        digi_qso_change_rst_rcvd((int16_t)dir);
+    }
+    menu_texts(menu_text, items);
+    digi_menu_set_texts(items, MENU_COUNT);
+    buttons_refresh(&btn_rtty_next);
+}
+
 static void menu_press_cb(button_data_t *b)
 {
-    static char  text[MENU_COUNT][56];
-    const char  *items[MENU_COUNT];
-    const char  *dx = digi_qso_dx();
+    const char *items[MENU_COUNT];
 
     (void)b;
     if (digi_menu_is_open()) {
         digi_menu_close();
         return;
     }
-    snprintf(text[MENU_DX], 56, "DX call...  (%s)", (dx && *dx) ? dx : "none");
-    snprintf(text[MENU_RST_SENT], 56, "RST sent with the knob  (%s)", digi_qso_rst_sent());
-    snprintf(text[MENU_RST_RCVD], 56, "RST received with the knob  (%s)",
-             digi_qso_rst_rcvd());
-    snprintf(text[MENU_AUTO_DX], 56, "Auto DX from the text: %s  (press: %s)",
-             digi_qso_autograb() ? "on" : "off", digi_qso_autograb() ? "off" : "on");
-    snprintf(text[MENU_NEW_QSO], 56, "New QSO (clear DX call, RST)");
-    for (int i = 0; i < MENU_COUNT; i++) {
-        items[i] = text[i];
-    }
+    menu_texts(menu_text, items);
     digi_menu_open(lv_scr_act(), "Menu", items, MENU_COUNT, menu_pick, NULL, NULL);
+    digi_menu_set_adjust((1u << MENU_RST_SENT) | (1u << MENU_RST_RCVD), menu_adjust);
 }
 
 static button_data_t btn_rtty_menu = {
@@ -301,11 +400,29 @@ static button_data_t btn_rtty_menu = {
     .press = menu_press_cb,
 };
 
+/* ---- page 1's Center, held ------------------------------------------- */
+
+
+void rtty_center_hold_cb(button_data_t *b)
+{
+    (void)b;
+    digi_menu_close();
+    note_filter();
+    rtty_snap();
+}
+
 /* ---- page ----------------------------------------------------------- */
 
 buttons_page_t buttons_page_rtty_2 = {
     {&btn_rtty_p2, &btn_rtty_next, &btn_rtty_sql, &btn_rtty_macros, &btn_rtty_menu}
 };
+
+void rtty_buttons_stop(void)
+{
+    rtty_tx_stop();
+    digi_qso_menu_tx_stopped();
+    rtty_refresh_macro_labels();
+}
 
 void rtty_refresh_macro_labels(void)
 {
@@ -319,29 +436,46 @@ void rtty_refresh_macro_labels(void)
 /* Next follows the transmitter (Stop TX while it runs) and the DX call,
  * which the decoder may pick up off the air, and SQL shows the live
  * level, so both are repainted here. */
-static lv_timer_t *sql_timer = NULL;
+static lv_timer_t     *sql_timer = NULL;
+static qso_log_band_t  text_band = BAND_OTHER;
 
 static void sql_timer_cb(lv_timer_t *t)
 {
+    qso_log_band_t band = qso_log_freq_to_band((uint64_t)cparam_i_get(cfg.cur.fg_freq()));
+
     (void)t;
+    /* the VFO is free here: a new band gets a new header in the file */
+    if (band != text_band) {
+        text_band = band;
+        digi_text_new_header();
+    }
+    note_filter();
     rtty_refresh_macro_labels();
     if (btn_rtty_sql.disp_btn) {
         buttons_refresh(&btn_rtty_sql);
     }
 }
 
+/* The RTTY pages open and close with these: the log's UDP and the text
+ * file go with them. */
 void rtty_sql_timer_start(void)
 {
     if (!sql_timer) {
         sql_timer = lv_timer_create(sql_timer_cb, 400, NULL);
+        note_filter();
+        text_band = qso_log_freq_to_band((uint64_t)cparam_i_get(cfg.cur.fg_freq()));
+        digi_log_open();
+        digi_text_open("RTTY", TEXT_PATH, qso_freq);
     }
 }
 
 void rtty_sql_timer_stop(void)
 {
-    digi_menu_close();
+    digi_qso_menu_close();
     if (sql_timer) {
         lv_timer_del(sql_timer);
         sql_timer = NULL;
+        digi_text_close();
+        digi_log_close();
     }
 }

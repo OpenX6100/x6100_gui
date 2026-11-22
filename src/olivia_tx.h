@@ -29,6 +29,7 @@ extern "C" {
 /* Mode variants. The order is the order the Mode button steps through. */
 typedef enum {
     OLIVIA_MODE_8_250 = 0,
+    OLIVIA_MODE_8_500,
     OLIVIA_MODE_16_500,
     OLIVIA_MODE_32_1000,
     OLIVIA_MODE_COUNT
@@ -48,10 +49,12 @@ int olivia_tx_mode_bandwidth(olivia_mode_t mode);
 uint16_t olivia_tx_get_center(void);
 void     olivia_tx_set_center(uint16_t hz);
 
-/* Start transmitting. False when already transmitting. */
+/* Transmit. While a transmission runs the text is added to its end
+ * (digi_txq.h). False when the queue has no room for it. */
 bool olivia_tx_send(const char *text);
 
-/* Ask to stop; the current block is finished, then one closing block. */
+/* Ask to stop: what is still queued is dropped, the current block is
+ * finished, then one closing block. */
 void olivia_tx_stop(void);
 
 /* Stop for the window closing: the current block, then the fade-out, no
@@ -59,6 +62,10 @@ void olivia_tx_stop(void);
 void olivia_tx_stop_quick(void);
 
 bool olivia_tx_is_on(void);
+
+/* While the operator types during a transmission: send empty blocks
+ * rather than end when the text runs out (digi_txq_hold). */
+bool olivia_tx_hold(bool on);
 
 /* The Olivia window shows what is sent in its own text area: when set,
  * olivia_tx_send() hands the text here. Called on the thread that calls

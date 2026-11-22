@@ -73,16 +73,27 @@ static const char *const bodies[] = {
     "NAVTEX - bulletins (ZCZC ... NNNN) shown as cards, with the quality of reception: OK, "
     "DAMAGED or UNREADABLE. Copies received again are merged.\n"
     "SITORB - the received text as it arrives, for any SITOR-B station.\n"
-    "Bulletins are recognised and saved in both modes.\n\n"
+    "Bulletins are recognised and saved in both modes. Messages sent without ZCZC and NNNN, "
+    "each starting with its date and time (as some coast stations do on HF), are shown as "
+    "SITOR-B messages, with a purple bar.\n\n"
     H("HOW TO USE IT")
     "Press Freq. and tune 518 kHz (international NAVTEX, English), 490 kHz (national "
     "languages), 4209.5 kHz (HF), a coast station or an HF MSI channel. The dial is set 1 kHz "
     "below the centre frequency, USB-D.\n\n"
+    H("SCAN")
+    "Scan (SITOR-B page 1, NAVTEX page 2, or in the Freq. list) tunes the frequencies of the list one after the "
+    "other up to the highest, then again from the lowest, and stops on the first SITOR-B "
+    "signal with a message. Once stopped it never starts again by itself. The first Scan "
+    "after the application opens starts from the lowest frequency (490 kHz); otherwise Scan "
+    "goes on from where it stopped. A long press of Scan starts again from 490 kHz. Press "
+    "Scan during the scan, or change "
+    "the frequency, to stop it.\n\n"
     H("COLOURS IN A BULLETIN")
     "Yellow: uncertain character. Red *: lost character. Light blue: position. "
     "Green: digits repaired.\n\n"
     H("FILES")
-    "Bulletins and texts: /mnt/navtex\n\n"
+    "Bulletins and texts: /mnt/navtex. In SITOR-B, Save and Clear saves the text shown; "
+    "Sitor-B Browser (page 2) lists those texts, opens and deletes them (a scan stops).\n\n"
     H("MICROPHONE")
     "V/M opens and closes the frequency list. UP/DOWN tune the previous/next frequency.",
 

@@ -242,6 +242,8 @@ typedef struct {
     ParamInt *(*rate)(void); /* p_rtty_rate */
     ParamInt *(*reverse)(void); /* p_rtty_reverse */
     ParamInt *(*squelch)(void); /* p_rtty_squelch */
+    ParamInt *(*usos)(void); /* p_rtty_usos */
+    ParamInt *(*afc)(void); /* p_rtty_afc */
 } cfg_rtty_refs_t;
 
 typedef struct {
@@ -322,6 +324,8 @@ typedef struct {
     ParamInt *(*protocol)(void); /* p_ft8_protocol */
     ParamInt *(*auto_mode)(void); /* p_ft8_auto */
     ParamInt *(*hold_freq)(void); /* p_ft8_hold_freq */
+    ParamInt *(*psk)(void); /* p_ft8_psk */
+    ParamInt *(*psk_min)(void); /* p_ft8_psk_min */
     ParamInt *(*max_repeats)(void); /* p_ft8_max_repeats */
     ParamInt *(*tx_freq)(void); /* p_ft8_tx_freq */
     ParamFloat *(*output_gain_offset)(void); /* p_ft8_output_gain_offset */
@@ -447,6 +451,11 @@ typedef struct {
 
     ParamText *(*qth)(void); /* p_qth */
     ParamText *(*callsign)(void); /* p_callsign */
+    ParamText *(*op_name)(void); /* p_op_name */
+    ParamText *(*op_qth)(void); /* p_op_qth */
+    ParamInt *(*digi_text_save)(void); /* p_digi_text_save */
+    ParamInt *(*digi_auto_log)(void); /* p_digi_auto_log */
+    ParamInt *(*digi_serial)(void); /* p_digi_serial */
 
 
     cfg_ui_refs_t ui;

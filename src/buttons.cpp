@@ -341,10 +341,14 @@ static button_data_t  btn_olivia = make_app_btn("Olivia", ACTION_APP_OLIVIA);
 static button_data_t  btn_wefax  = make_app_btn("WeFax", ACTION_APP_WEFAX);
 /* SSTV */
 static button_data_t  btn_sstv   = make_app_btn("SSTV", ACTION_APP_SSTV);
+/* NavTex */
+static button_data_t  btn_navtex = make_app_btn("Navtex\nSitorB", ACTION_APP_NAVTEX);
 /* Channels */
 static button_data_t  btn_channels = make_action_btn("Channels", ACTION_APP_CHANNELS);
 /* JTTY */
 static button_data_t  btn_jtty   = make_app_btn("JTTY", ACTION_APP_JTTY);
+/* DSC */
+static button_data_t  btn_dsc    = make_app_btn("DSC", ACTION_APP_DSC);
 
 /* RTTY */
 static button_data_t btn_rtty_p1 = {
@@ -371,6 +375,7 @@ static button_data_t btn_rtty_center = {
     .type  = BTN_TEXT,
     .label = "Center",
     .press = button_encoder_update_cb,
+    .hold  = rtty_center_hold_cb,       /* snap to the signal */
     .ctrl  = CTRL_RTTY_CENTER,
     .encoder_allowed = true,
 };
@@ -499,6 +504,10 @@ static buttons_page_t page_app_5 = {{
     &btn_olivia,
     /* JTTY */
     &btn_jtty,
+    /* NavTex */
+    &btn_navtex,
+    /* DSC */
+    &btn_dsc,
 }};
 
 /* RTTY */

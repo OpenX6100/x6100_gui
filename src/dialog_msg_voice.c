@@ -488,7 +488,15 @@ static void key_cb(lv_event_t * e) {
 
     switch (key) {
         case LV_KEY_ESC:
-            dialog_destruct(&dialog);
+            /* The RFG knob, as JS8: the first stops what's going out, the
+             * next closes. */
+            if (beacon != VOICE_BEACON_OFF) {
+                beacon_stop_cb(NULL);
+            } else if (state != MSG_VOICE_OFF && state != MSG_VOICE_RECORD) {
+                send_stop_cb(NULL);
+            } else {
+                dialog_destruct(&dialog);
+            }
             break;
 
         case KEY_VOL_LEFT_EDIT:

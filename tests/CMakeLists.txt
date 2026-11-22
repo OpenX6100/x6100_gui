@@ -12,6 +12,13 @@ add_executable(test_qth test_qth.cpp)
 target_link_libraries(test_qth PRIVATE QTH Catch2::Catch2WithMain)
 add_test(NAME test_qth COMMAND $<TARGET_FILE:test_qth> --colour-mode=ansi )
 
+# test_itu_region: the ITU region of a position or a locator
+# (src/itu_region.c, plain C, the locator maths from QTH)
+add_executable(test_itu_region test_itu_region.cpp ${PROJECT_SOURCE_DIR}/src/itu_region.c)
+target_include_directories(test_itu_region PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(test_itu_region PRIVATE QTH m Catch2::Catch2WithMain)
+add_test(NAME test_itu_region COMMAND $<TARGET_FILE:test_itu_region> --colour-mode=ansi)
+
 add_subdirectory(../src/ft8 ${CMAKE_BINARY_DIR}/src/ft8)
 add_executable(test_ft8_qso test_ft8_qso.cpp)
 target_link_libraries(test_ft8_qso PRIVATE ft8_core QTH aether_x6100_control Catch2::Catch2WithMain)
@@ -46,9 +53,53 @@ target_include_directories(test_civ PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(test_civ PRIVATE cat_core Catch2::Catch2WithMain)
 add_test(NAME test_civ COMMAND $<TARGET_FILE:test_civ> --colour-mode=ansi)
 
+# test_adif_rec: the ADIF records of the logs and of UDP (src/adif_rec.c,
+# plain C)
+add_executable(test_adif_rec test_adif_rec.cpp ${PROJECT_SOURCE_DIR}/src/adif_rec.c)
+target_include_directories(test_adif_rec PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(test_adif_rec PRIVATE Catch2::Catch2WithMain)
+add_test(NAME test_adif_rec COMMAND $<TARGET_FILE:test_adif_rec> --colour-mode=ansi)
+
 # test_tx_level: the digital modes' drive level (src/tx_level.c, plain C,
 # no radio) against a model radio.
 add_executable(test_tx_level test_tx_level.cpp ${PROJECT_SOURCE_DIR}/src/tx_level.c)
 target_include_directories(test_tx_level PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(test_tx_level PRIVATE Catch2::Catch2WithMain)
 add_test(NAME test_tx_level COMMAND $<TARGET_FILE:test_tx_level> --colour-mode=ansi)
+
+# test_digi_txq: the text queue of the PSK31, Olivia and RTTY transmitters
+# (src/digi_txq.c, plain C and pthreads): typing while sending.
+add_executable(test_digi_txq test_digi_txq.cpp ${PROJECT_SOURCE_DIR}/src/digi_txq.c)
+target_include_directories(test_digi_txq PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(test_digi_txq PRIVATE Catch2::Catch2WithMain pthread)
+add_test(NAME test_digi_txq COMMAND $<TARGET_FILE:test_digi_txq> --colour-mode=ansi)
+
+# test_olivia: the Olivia modulator into the receiver, every variant of
+# the Mode button (src/olivia*.c, plain C, no radio)
+add_executable(test_olivia test_olivia.cpp
+    ${PROJECT_SOURCE_DIR}/src/olivia.c ${PROJECT_SOURCE_DIR}/src/olivia_mod.c
+    ${PROJECT_SOURCE_DIR}/src/olivia_demod.c ${PROJECT_SOURCE_DIR}/src/olivia_rx.c)
+target_include_directories(test_olivia PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(test_olivia PRIVATE m Catch2::Catch2WithMain)
+add_test(NAME test_olivia COMMAND $<TARGET_FILE:test_olivia> --colour-mode=ansi)
+
+# test_navtex_bulletin: the NavTex bulletin assembler on texts
+# (src/navtex/bulletin.c, plain C)
+add_executable(test_navtex_bulletin navtex/bulletin_test.c ${PROJECT_SOURCE_DIR}/src/navtex/bulletin.c)
+target_include_directories(test_navtex_bulletin PRIVATE ${PROJECT_SOURCE_DIR}/src/navtex)
+add_test(NAME test_navtex_bulletin COMMAND $<TARGET_FILE:test_navtex_bulletin>)
+
+# test_dsc: the DSC decoder on synthetic calls at several SNR and fadings
+# (tests/dsc/run_tests.py --check, with dsc_gen and dsc_wav built here):
+# no call decoded WRONG, every call of the clean case verified
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_executable(test_dsc_wav dsc/dsc_wav.c ${PROJECT_SOURCE_DIR}/src/dsc/dsc_decoder.c
+    ${PROJECT_SOURCE_DIR}/src/dsc/dsc_format.c ${PROJECT_SOURCE_DIR}/src/dsc/dsc_mid.c)
+target_include_directories(test_dsc_wav PRIVATE ${PROJECT_SOURCE_DIR}/src/dsc)
+target_link_libraries(test_dsc_wav PRIVATE m)
+add_executable(test_dsc_gen dsc/dsc_gen.c)
+target_link_libraries(test_dsc_gen PRIVATE m)
+set_target_properties(test_dsc_wav PROPERTIES OUTPUT_NAME dsc_wav RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/dsc)
+set_target_properties(test_dsc_gen PROPERTIES OUTPUT_NAME dsc_gen RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/dsc)
+add_test(NAME test_dsc COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/dsc/run_tests.py
+    --bin ${CMAKE_CURRENT_BINARY_DIR}/dsc --check)
