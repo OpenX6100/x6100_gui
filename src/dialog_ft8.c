@@ -81,6 +81,10 @@
 #define FT2_WIDTH_HZ    167
 
 #define MAX_TX_START_DELAY 1.5f
+/* A station picked by hand, as WSJT-X: up to 75 % into the slot (tx_worker.c
+ * leaves out what's already past). FT4's 75 % is after its message has ended. */
+#define PICKED_TX_START_FT8 11.25f
+#define PICKED_TX_START_FT4 5.0f
 
 /* ---- FT8 / FT4 / FT2 ------------------------------------------------
  * cfg.ft8.protocol: FTX_PROTOCOL_FT4 (0), FTX_PROTOCOL_FT8 (1) or
@@ -111,9 +115,12 @@ static int ftx_width_hz(void) {
 }
 
 /* A transmission may start this late into its slot. FT2 lasts 2.52 s
- * and must end inside the 3.75 s slot. */
-static float ftx_max_tx_start(void) {
-    return ftx_is_ft2() ? 0.8f : MAX_TX_START_DELAY;
+ * and must end inside the 3.75 s slot. A CQ or an automatic reply would
+ * rather wait for a slot it can fill. */
+static float ftx_max_tx_start(bool picked) {
+    if (ftx_is_ft2()) return 0.8f;
+    if (!picked) return MAX_TX_START_DELAY;
+    return ftx_mode() == FTX_PROTOCOL_FT4 ? PICKED_TX_START_FT4 : PICKED_TX_START_FT8;
 }
 
 static qso_log_mode_t ftx_log_mode(void) {
@@ -137,6 +144,7 @@ static ft8_state_t state = RX_PROCESS;
 static SubjectInt *tx_enabled;
 static SubjectInt *cq_enabled;
 static bool        tx_time_slot;
+static bool        tx_picked;       /* the operator chose this station just now */
 
 /* tx_msg and tx_time_slot: written by the GUI, the decoder and the TX
  * thread (ft8/tx_worker.c), so under tx_mux */
@@ -1133,9 +1141,10 @@ static void tx_cq_en_dis_cb(struct button_data_t *btn_data) {
         clock_gettime(CLOCK_REALTIME, &now);
         float time_since_slot_start;
         tx_time_slot = !get_time_slot(now, &time_since_slot_start);
-        if (time_since_slot_start < ftx_max_tx_start()) {
+        if (time_since_slot_start < ftx_max_tx_start(false)) {
             tx_time_slot = !tx_time_slot;
         }
+        tx_picked = false;
 
         if (tx_msg.msg[2] == '_') {
             msg_schedule_text_fmt("Next TX: CQ %s", tx_msg.msg + 3);
@@ -1176,13 +1185,15 @@ static void tx_call_en_dis_cb(struct button_data_t *btn_data) {
         if (state == TX_PROCESS) {
             state = RX_PROCESS;
         }
+        tx_picked = false;
         subject_i_set(tx_enabled, false);
         tx_stop_done();
     }
 }
 
 static void tx_call_off() {
-    state = RX_PROCESS;
+    state     = RX_PROCESS;
+    tx_picked = false;
     subject_i_set(tx_enabled, false);
     tx_stop_done();
 }
@@ -1247,6 +1258,7 @@ static void on_table_press(const cell_data_t *cell_data) {
             set_freq(cell_data->meta.freq_hz);
         }
         tx_time_slot = !cell_data->odd;
+        tx_picked    = true;
     }
     pthread_mutex_unlock(&tx_mux);
 
@@ -1363,7 +1375,7 @@ static bool tx_should_abort_cb(void *ctx) {
     }
     clock_gettime(CLOCK_REALTIME, &now);
     bool odd = get_time_slot(now, &sec);
-    if (sec >= ftx_max_tx_start()) {
+    if (sec >= ftx_max_tx_start(false)) {
         return false;
     }
 
@@ -1449,6 +1461,7 @@ static void add_rx_text(int16_t snr, const char * text, slot_info_t *s_info, flo
             set_freq(freq_hz);
         }
         tx_time_slot = !s_info->odd;
+        tx_picked    = false;
     }
     pthread_mutex_unlock(&tx_mux);
 
@@ -1544,11 +1557,11 @@ static void tx_tick_cb(bool odd, float sec_since_slot_start, void *ctx) {
     (void)ctx;
     unsigned seq = atomic_load(&tx_stop_seq);     /* before anything is looked at */
 
-    if (sec_since_slot_start >= ftx_max_tx_start() || !subject_i_get(tx_enabled)) {
+    if (!subject_i_get(tx_enabled)) {
         return;
     }
     pthread_mutex_lock(&tx_mux);
-    bool go = tx_msg.msg[0] != '\0' && tx_time_slot == odd;
+    bool go = tx_msg.msg[0] != '\0' && tx_time_slot == odd && sec_since_slot_start < ftx_max_tx_start(tx_picked);
     if (go) {
         strcpy(tx_on_air, tx_msg.msg);
         tx_on_air_freq    = (int32_t)param_i_get(cfg.ft8.tx_freq());
@@ -1571,6 +1584,7 @@ static void tx_tick_cb(bool odd, float sec_since_slot_start, void *ctx) {
     }
 
     pthread_mutex_lock(&tx_mux);
+    tx_picked = false;      /* only the first TX after a pick can start late */
     if (strcmp(tx_msg.msg, tx_on_air) == 0) {   /* not moved on meanwhile */
         if (tx_msg.repeats > 0) {
             tx_msg.repeats--;
