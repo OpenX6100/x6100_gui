@@ -15,6 +15,8 @@
 #include "cfg/settings_internal.h"
 #include "cfg/settings_manager.h"
 
+#include "cat_test_db.h"
+
 // Fake application ports, injected via civ_set_ports(): CI-V handlers use them
 // instead of the application's radio/telemetry objects.
 namespace {
@@ -119,70 +121,6 @@ static std::vector<uint8_t> ci_v_frame(uint8_t cmd, const std::vector<uint8_t> &
     raw.back() = FRAME_END;
     return raw;
 }
-
-// ---- TestDbGuard ------------------------------------------------------------
-namespace {
-
-struct TestDbGuard {
-    sqlite3 *db = nullptr;
-
-    TestDbGuard() {
-        REQUIRE(sqlite3_open(":memory:", &db) == SQLITE_OK);
-        char *err = nullptr;
-        int   rc  = sqlite3_exec(db,
-                                 "CREATE TABLE IF NOT EXISTS params ("
-                                     "  name TEXT PRIMARY KEY,"
-                                     "  val  INTEGER"
-                                     ");"
-                                     "CREATE TABLE IF NOT EXISTS band_params("
-                                     "  bands_id INTEGER,"
-                                     "  name     TEXT,"
-                                     "  val      INTEGER,"
-                                     "  UNIQUE (bands_id, name) ON CONFLICT REPLACE"
-                                     ");"
-                                     "CREATE TABLE IF NOT EXISTS mode_params("
-                                     "  mode INTEGER,"
-                                     "  name TEXT,"
-                                     "  val  INTEGER,"
-                                     "  UNIQUE (mode, name) ON CONFLICT REPLACE"
-                                     ");"
-                                     "CREATE TABLE IF NOT EXISTS bands("
-                                     "  id         INTEGER PRIMARY KEY,"
-                                     "  name       TEXT,"
-                                     "  start_freq INTEGER,"
-                                     "  stop_freq  INTEGER,"
-                                     "  type       INTEGER"
-                                     ");"
-                                     "CREATE TABLE IF NOT EXISTS transverter("
-                                     "  id   INTEGER,"
-                                     "  name TEXT,"
-                                     "  val  INTEGER,"
-                                     "  UNIQUE(id, name) ON CONFLICT REPLACE"
-                                     ");",
-                                 nullptr, nullptr, &err);
-        REQUIRE(rc == SQLITE_OK);
-        if (err)
-            sqlite3_free(err);
-        KeyValueTable<StorageType::GLOBAL>::Init(db);
-        KeyValueTable<StorageType::BAND>::Init(db);
-        KeyValueTable<StorageType::MODE>::Init(db);
-        BandsTable::Init(db);
-        KeyValueTable<StorageType::TRANSVERTER>::Init(db);
-    }
-
-    ~TestDbGuard() {
-        KeyValueTable<StorageType::TRANSVERTER>::Shutdown();
-        BandsTable::Shutdown();
-        KeyValueTable<StorageType::GLOBAL>::Shutdown();
-        KeyValueTable<StorageType::BAND>::Shutdown();
-        KeyValueTable<StorageType::MODE>::Shutdown();
-        if (db) {
-            sqlite3_close(db);
-        }
-    }
-};
-
-} // namespace
 
 // ---- helpers ---------------------------------------------------------------
 
@@ -542,6 +480,48 @@ TEST_CASE("C_CTL_LVL squelch read", "[cat]") {
     // 10 * 255 / 100 = 25 -> BE BCD 0x00 0x25
     REQUIRE(to_bytes(sv) == std::vector<uint8_t>({
         0xFE, 0xFE, 0xE0, LOCAL_ADDRESS, C_CTL_LVL, 0x03, 0x00, 0x25, 0xFD
+    }));
+}
+
+// CW pitch (0x09) used to fall through into TX power (0x0a): setting the
+// pitch over CAT changed the power, and reading it returned the power.
+TEST_CASE("C_CTL_LVL CW pitch write leaves TX power alone", "[cat]") {
+    TestDbGuard db;
+    SettingsManager mgr;
+    init_band_5(db, mgr);
+    cfg_set_instance(&mgr);
+
+    mgr.p_pwr.set(5.0f);
+
+    // 0128 = 600 Hz
+    auto raw = ci_v_frame(C_CTL_LVL, {0x09, 0x01, 0x28});
+    CivPacketView req(raw.data(), raw.size());
+    uint8_t txBuf[256];
+    CivTxPacker packer(txBuf, 0xE0, LOCAL_ADDRESS);
+    process_civ_message(req, packer);
+
+    REQUIRE(mgr.p_key_tone.get() == 600);
+    REQUIRE(mgr.p_pwr.get() == 5.0f);
+}
+
+TEST_CASE("C_CTL_LVL CW pitch read returns the pitch", "[cat]") {
+    TestDbGuard db;
+    SettingsManager mgr;
+    init_band_5(db, mgr);
+    cfg_set_instance(&mgr);
+
+    mgr.p_key_tone.set(700);
+    mgr.p_pwr.set(10.0f);
+
+    auto raw = ci_v_frame(C_CTL_LVL, {0x09});
+    CivPacketView req(raw.data(), raw.size());
+    uint8_t txBuf[256];
+    CivTxPacker packer(txBuf, 0xE0, LOCAL_ADDRESS);
+    auto sv = process_civ_message(req, packer);
+
+    // (700 - 300) * 0.425 = 170 -> BE BCD 0x01 0x70 (not the power's 0x02 0x55)
+    REQUIRE(to_bytes(sv) == std::vector<uint8_t>({
+        0xFE, 0xFE, 0xE0, LOCAL_ADDRESS, C_CTL_LVL, 0x09, 0x01, 0x70, 0xFD
     }));
 }
 
