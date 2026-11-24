@@ -17,7 +17,8 @@
  *  plus the audio offset, as fldigi logs it.
  *
  *  ADIF modes: PSK31 is MODE PSK SUBMODE PSK31, Olivia MODE OLIVIA with
- *  SUBMODE "OLIVIA 32/1000" (and so on), RTTY MODE RTTY.
+ *  SUBMODE "OLIVIA 32/1000" (and so on), RTTY MODE RTTY. Contest serial
+ *  numbers, when sent or received, go in STX and SRX.
  */
 
 #pragma once
@@ -47,6 +48,8 @@ typedef struct {
     char            qth[32];
     char            rst_sent[8];
     char            rst_rcvd[8];
+    int             stx;           /* serial sent, 0: none */
+    char            srx[8];        /* serial received, "": none */
     time_t          start;         /* UTC */
     time_t          end;
     uint64_t        freq_hz;       /* the signal, not the dial */

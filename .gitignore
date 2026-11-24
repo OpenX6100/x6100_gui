@@ -56,3 +56,6 @@ images/*.png
 _build/
 build/
 build_test/
+
+# Python
+__pycache__/
