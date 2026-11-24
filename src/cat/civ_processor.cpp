@@ -657,6 +657,7 @@ std::string_view handle_ctl_lvl_x14(const CivPacketView &request, CivTxPacker &r
                 return after_cmd.append_byte(0x01).append_byte(0x28).get_packet();
             case 0x09: // cw keytone
                 to_bcd_be(bcd, x_cw_pitch_2_ci(cfg.cw.key_tone()->get()), 3);
+                break;
             case 0x0a: // Get Tx power
                 to_bcd_be(bcd, std::round(cfg.pwr()->get() * 255 / 10), 3);
                 break;
@@ -681,6 +682,7 @@ std::string_view handle_ctl_lvl_x14(const CivPacketView &request, CivTxPacker &r
                 break;
             case 0x09: // cw keytone
                 cfg.cw.key_tone()->set(ci_cw_pitch_2_x(bcd_val));
+                break;
             case 0x0a: // Set Tx power
                 {
                     float pwr = static_cast<float>(bcd_val) * 10.0f / 255.0f;

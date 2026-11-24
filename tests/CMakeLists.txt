@@ -53,6 +53,14 @@ target_include_directories(test_civ PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(test_civ PRIVATE cat_core Catch2::Catch2WithMain)
 add_test(NAME test_civ COMMAND $<TARGET_FILE:test_civ> --colour-mode=ansi)
 
+# test_cat_lan: the network CAT (src/cat/lan, wfview's protocol) and who may
+# use it: the real server on UDP 50001-50003, clients on 127.0.0.1 and
+# 127.0.0.2
+add_executable(test_cat_lan test_cat_lan.cpp)
+target_include_directories(test_cat_lan PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(test_cat_lan PRIVATE cat_lan Catch2::Catch2WithMain)
+add_test(NAME test_cat_lan COMMAND $<TARGET_FILE:test_cat_lan> --colour-mode=ansi)
+
 # test_adif_rec: the ADIF records of the logs and of UDP (src/adif_rec.c,
 # plain C)
 add_executable(test_adif_rec test_adif_rec.cpp ${PROJECT_SOURCE_DIR}/src/adif_rec.c)
