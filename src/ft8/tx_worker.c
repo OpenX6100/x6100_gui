@@ -12,7 +12,9 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 #include <errno.h>
+#include <pthread.h>
 #include <time.h>
 
 #include <ft8lib/constants.h>
@@ -37,9 +39,33 @@
  * modulator does the same). */
 #define TX_START_SEC     0.5f
 
+/* The level is corrected once a block, from the 31st on. The audio goes
+ * out in quarter blocks (85 ms at the 6 kHz used), so a swapped message
+ * (tx_worker_swap) is on the air within about 0.3 s (the player holds
+ * ~0.24 s). */
+#define BLOCK_SAMPLES    2048
+#define PART_SAMPLES     (BLOCK_SAMPLES / 4)
+
+#define TICK_MS          100
+
 static audio_port_player_t *player;
 static const app_ports_t *g_ports = NULL;
 static uint32_t sample_rate;
+
+/* The TX thread */
+static pthread_t       tick_thread;
+static bool            tick_up;
+static pthread_mutex_t tick_mux = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t  tick_cv;            /* on CLOCK_MONOTONIC: Time Sync steps the clock */
+static bool            tick_cv_made;
+static bool            tick_quit;
+static tx_tick_fn_t    tick_fn;
+static void           *tick_ctx;
+
+/* The transmission going out (the TX thread only): the waveform as made,
+ * the part that was skipped (a late start) and how much has gone out */
+static int16_t        *tx_samples;
+static uint32_t        tx_n_samples, tx_skip, tx_pos;
 
 
 /* ALC-driven gain correction (legacy formula from dialog_ft8.c). */
@@ -106,14 +132,52 @@ void tx_worker_destruct() {
     g_ports->audio->player_release(player);
 }
 
-bool tx_worker_run(const char *tx_text, float base_gain_offset, tx_abort_fn_t abort_check,
-                   void *abort_check_ctx) {
-    int16_t *samples   = NULL;
-    uint32_t n_samples = 0;
+/* The level a fraction into a ramp from from_db to to_db: the ramp is
+ * linear in scale (audio gain_db_transition) */
+static float ramp_db(float from_db, float to_db, float frac) {
+    float from = powf(10.0f, from_db / 20.0f);
+    float to   = powf(10.0f, to_db / 20.0f);
 
+    return 20.0f * log10f(from + (to - from) * frac);
+}
+
+static void correct_level(float *gain_offset) {
+    *gain_offset += get_correction() * 0.4f;
+    if (*gain_offset > GAIN_MAX_DB) {
+        *gain_offset = GAIN_MAX_DB;
+    } else if (*gain_offset < GAIN_MIN_DB) {
+        *gain_offset = GAIN_MIN_DB;
+    }
+}
+
+bool tx_worker_swap(const char *text) {
+    int16_t *swapped   = NULL;
+    uint32_t n_swapped = 0;
+
+    if (!tx_samples) {
+        return false;
+    }
+    if (!ftx_worker_generate_tx_samples(text, SIGNAL_FREQ_HZ, sample_rate, &swapped, &n_swapped)) {
+        return false;
+    }
+    /* Same mode, same length; and everything gone out must be text's too */
+    if (n_swapped != tx_n_samples ||
+        memcmp(swapped + tx_skip, tx_samples + tx_skip, (tx_pos - tx_skip) * sizeof(int16_t)) != 0) {
+        free(swapped);
+        LV_LOG_USER("FT8/FT4 TX: too late to swap at %.2f s into the slot, %s goes next time", sec_into_slot(), text);
+        return false;
+    }
+    free(tx_samples);
+    tx_samples = swapped;
+    LV_LOG_USER("FT8/FT4 TX swapped %.2f s into the slot: %s", sec_into_slot(), text);
+    return true;
+}
+
+bool tx_worker_run(const char *tx_text, int32_t tx_freq, float base_gain_offset, tx_abort_fn_t abort_check,
+                   void *abort_check_ctx) {
     if (!ftx_worker_generate_tx_samples(tx_text, SIGNAL_FREQ_HZ,
                                         sample_rate,
-                                        &samples, &n_samples)) {
+                                        &tx_samples, &tx_n_samples)) {
         return true; /* nothing to send; not an abort */
     }
 
@@ -126,64 +190,142 @@ bool tx_worker_run(const char *tx_text, float base_gain_offset, tx_abort_fn_t ab
     gain_offset           -= play_gain_offset;
 
     uint64_t radio_freq = cparam_i_get(cfg.cur.fg_freq());
-    g_ports->radio->set_freq((int32_t)radio_freq + (int32_t)param_i_get(cfg.ft8.tx_freq()) - SIGNAL_FREQ_HZ);
+    g_ports->radio->set_freq((int32_t)radio_freq + tx_freq - SIGNAL_FREQ_HZ);
     g_ports->radio->set_modem(true);
+    LV_LOG_USER("FT8/FT4 TX keyed %.3f s into the slot", sec_into_slot());
 
-    float    prev_gain_offset = gain_offset;
-    size_t   counter          = 0;
-    int16_t *ptr              = samples;
-    size_t   part;
-    uint32_t skip             = align_to_slot(n_samples);
+    size_t   counter          = 0;     /* blocks begun */
+    int16_t  part_buf[PART_SAMPLES];   /* the waveform stays as made, for tx_worker_swap() */
+    /* A level change ramps over its whole block, as when a block went out
+     * in one piece: the scale goes from block_from to block_to */
+    float    block_from = gain_offset, block_to = gain_offset;
 
-    ptr       += skip;
-    n_samples -= skip;
-    if (skip > 0) {
-        /* Cut mid-symbol: 5 ms fade-in, no click on the air */
-        uint32_t ramp = LV_MIN(sample_rate / 200, n_samples);
-
-        for (uint32_t i = 0; i < ramp; i++) {
-            ptr[i] = (int16_t)((int32_t)ptr[i] * (int32_t)i / (int32_t)ramp);
-        }
-    }
+    tx_skip = tx_pos = align_to_slot(tx_n_samples);
+    uint32_t block_start = tx_pos, block_end = tx_pos;
+    /* Cut mid-symbol: 5 ms fade-in, no click on the air */
+    uint32_t ramp      = LV_MIN(sample_rate / 200, tx_n_samples - tx_skip);
 
     bool aborted = false;
-    while (true) {
-        if (counter > 30) {
-            gain_offset += get_correction() * 0.4f;
-            if (gain_offset > GAIN_MAX_DB) {
-                gain_offset = GAIN_MAX_DB;
-            } else if (gain_offset < GAIN_MIN_DB) {
-                gain_offset = GAIN_MIN_DB;
+    while (tx_pos < tx_n_samples) {
+        if (tx_pos >= block_end) {
+            block_from = block_to;
+            if (counter > 30) {
+                correct_level(&gain_offset);
             }
-        }
-        if (n_samples <= 0) {
-            break;
+            block_to = gain_offset;
+            counter++;
+            block_start = tx_pos;
+            block_end   = LV_MIN(tx_pos + BLOCK_SAMPLES, tx_n_samples);
         }
         if (abort_check && abort_check(abort_check_ctx)) {
             aborted = true;
             break;
         }
-        part = LV_MIN(1024 * 2, n_samples);
-        if (gain_offset == prev_gain_offset) {
-            if (gain_offset != 0.0f) {
-                g_ports->audio->gain_db(ptr, part, gain_offset, ptr);
+        uint32_t part = LV_MIN(PART_SAMPLES, block_end - tx_pos);
+
+        memcpy(part_buf, tx_samples + tx_pos, part * sizeof(int16_t));
+        for (uint32_t i = 0; tx_skip > 0 && i < part && tx_pos + i < tx_skip + ramp; i++) {
+            uint32_t k = tx_pos + i - tx_skip;
+            part_buf[i] = (int16_t)((int32_t)part_buf[i] * (int32_t)k / (int32_t)ramp);
+        }
+        if (block_from == block_to) {
+            if (block_to != 0.0f) {
+                g_ports->audio->gain_db(part_buf, part, block_to, part_buf);
             }
         } else {
-            g_ports->audio->gain_db_transition(ptr, part, prev_gain_offset, gain_offset, ptr);
-            prev_gain_offset = gain_offset;
+            float len = (float)(block_end - block_start);
+            g_ports->audio->gain_db_transition(part_buf, part,
+                                               ramp_db(block_from, block_to, (float)(tx_pos - block_start) / len),
+                                               ramp_db(block_from, block_to, (float)(tx_pos + part - block_start) / len),
+                                               part_buf);
         }
-        g_ports->audio->player_send(player, ptr, part);
-        n_samples -= part;
-        ptr       += part;
-        counter++;
+        g_ports->audio->player_send(player, part_buf, part);
+        tx_pos += part;
+    }
+    if (!aborted && counter > 30) {
+        correct_level(&gain_offset);    /* after the last block, as before */
     }
 
     param_f_set(cfg.ft8.output_gain_offset(), gain_offset - base_gain_offset + play_gain_offset);
     g_ports->audio->player_wait(player);
     g_ports->radio->set_modem(false);
     g_ports->radio->set_freq((int32_t)radio_freq);
-    free(samples);
+    free(tx_samples);
+    tx_samples = NULL;
     g_ports->audio->set_play_vol(param_f_get(cfg.audio.play_gain_db()));
 
     return !aborted;
+}
+
+/* ---------- the TX thread -------------------------------------------- */
+
+static void *tick_main(void *arg) {
+    (void)arg;
+    pthread_mutex_lock(&tick_mux);
+    while (!tick_quit) {
+        pthread_mutex_unlock(&tick_mux);
+
+        struct timespec now;
+        float           sec;
+        int             proto = param_i_get(cfg.ft8.protocol());
+
+        clock_gettime(CLOCK_REALTIME, &now);
+        bool odd = ftx_slot_pos(proto, now, &sec);
+        tick_fn(odd, sec, tick_ctx);
+
+        /* Next: 100 ms on, or just after the next slot starts */
+        long wait_ms = (long)((ftx_slot_time(proto) - sec_into_slot()) * 1000.0f) + 1;
+
+        if (wait_ms > TICK_MS) {
+            wait_ms = TICK_MS;
+        }
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        now.tv_sec  += wait_ms / 1000;
+        now.tv_nsec += (wait_ms % 1000) * 1000000L;
+        if (now.tv_nsec >= 1000000000L) {
+            now.tv_sec  += 1;
+            now.tv_nsec -= 1000000000L;
+        }
+        pthread_mutex_lock(&tick_mux);
+        if (!tick_quit) {
+            pthread_cond_timedwait(&tick_cv, &tick_mux, &now);
+        }
+    }
+    pthread_mutex_unlock(&tick_mux);
+    return NULL;
+}
+
+void tx_worker_start(tx_tick_fn_t tick, void *ctx) {
+    if (tick_up) {
+        return;
+    }
+    if (!tick_cv_made) {
+        pthread_condattr_t attr;
+
+        pthread_condattr_init(&attr);
+        pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+        pthread_cond_init(&tick_cv, &attr);
+        pthread_condattr_destroy(&attr);
+        tick_cv_made = true;
+    }
+    tick_fn   = tick;
+    tick_ctx  = ctx;
+    tick_quit = false;
+    if (pthread_create(&tick_thread, NULL, tick_main, NULL) != 0) {
+        LV_LOG_ERROR("FT8/FT4: can't start the TX thread");
+        return;
+    }
+    tick_up = true;
+}
+
+void tx_worker_stop(void) {
+    if (!tick_up) {
+        return;
+    }
+    pthread_mutex_lock(&tick_mux);
+    tick_quit = true;
+    pthread_cond_broadcast(&tick_cv);
+    pthread_mutex_unlock(&tick_mux);
+    pthread_join(tick_thread, NULL);
+    tick_up = false;
 }
