@@ -402,8 +402,8 @@ src/ft8_udp.h
 ```
 
 ### A15 · FT8 window, maps, PSK Reporter
-The FT8/FT4/FT2 window, its list and map, the shared map widget and
-scene, PSK Reporter uploads.
+The FT8/FT4/FT2 window, its list and map, its frequency list, the shared
+map widget and scene, PSK Reporter uploads.
 **Look hard at:** list rows and map stations past their limits; PSK
 Reporter's network thread and the GUI.
 
@@ -411,6 +411,8 @@ Reporter's network thread and the GUI.
 src/dialog_ft8.c
 src/dialog_ft8.h
 src/ft8_ui/
+src/ftx_freqs.c
+src/ftx_freqs.h
 src/map_scene.c
 src/map_scene.h
 src/map_widget.c
