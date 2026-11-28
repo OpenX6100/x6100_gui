@@ -29,6 +29,11 @@ typedef enum {
 // error returns false and leaves the frequency, mode and label unchanged.
 bool cfg_digital_load(int8_t dir, cfg_digital_type_t type);
 
+// Tune to a frequency that is not in the table (the FT8 window's list of
+// every FT8/FT4 frequency): as a load would, with `label` for
+// cfg_digital_label_get().
+void cfg_digital_set(int32_t freq, int32_t mode, const char *label);
+
 // Label of the last successfully loaded preset. Borrowed pointer: valid until
 // the next successful cfg_digital_load() call; empty string before any
 // successful load.

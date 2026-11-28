@@ -18,7 +18,7 @@ target_sources(${PROJECT_NAME} PUBLIC
     main.c main_screen.c
     channels.c dialog_channels.c broadcast_db.c broadcast_overlay.c cJSON.c
     styles.c spectrum.c radio.c dsp.cpp util.cpp
-    band_bar.c band_plan.c itu_region.c
+    band_bar.c band_plan.c itu_region.c ftx_freqs.c
     app_ports.cpp
     waterfall.c rotary.cpp keyboard.c kbd_rollover.c encoder.c
     events.c msg.c msg_tiny.c keypad.c
@@ -27,7 +27,7 @@ target_sources(${PROJECT_NAME} PUBLIC
     audio.c mfk.cpp cw.cpp panel.cpp
     rtty.c screenshot.c display.cpp gps.c
     rtty_tx.c rtty_sql.c rtty_buttons.c digi_qso.c digi_next.c
-    digi_txq.c digi_text.c digi_log.c digi_qso_menu.c
+    digi_txq.c digi_text.c digi_log.c digi_qso_menu.c rtty_afc.c
     ui_list.c app_info.c
     app_radio.c
     dialog.c dialog_swrscan.c

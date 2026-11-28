@@ -72,6 +72,10 @@ void bt_audio_request(bool on);
 
 bt_audio_state_t bt_audio_state(void);
 
+/* The same without starting the audio worker (the status bar asks every
+ * second): BT_AUDIO_OFF until the Bluetooth window started it. */
+bt_audio_state_t bt_audio_state_if_started(void);
+
 /* Sink the loopback feeds, "" when none was found. */
 const char *bt_audio_sink(void);
 

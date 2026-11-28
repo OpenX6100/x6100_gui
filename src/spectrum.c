@@ -242,8 +242,9 @@ static void spectrum_overlay_draw_cb(lv_event_t *e) {
         rect_dsc.bg_color = lv_color_white();
         rect_dsc.bg_opa   = LV_OPA_50;
 
-        from = sign_from * (dnf_center - dnf_width);
-        to   = sign_to * (dnf_center + dnf_width);
+        /* dnf_center already has the sign of the sideband */
+        from = dnf_center - dnf_width;
+        to   = dnf_center + dnf_width;
 
         if (from < to) {
             f1 = (w * from) / width_hz;

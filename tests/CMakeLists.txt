@@ -53,6 +53,14 @@ target_include_directories(test_civ PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(test_civ PRIVATE cat_core Catch2::Catch2WithMain)
 add_test(NAME test_civ COMMAND $<TARGET_FILE:test_civ> --colour-mode=ansi)
 
+# test_cat_lan: the network CAT (src/cat/lan, wfview's protocol) and who may
+# use it: the real server on UDP 50001-50003, clients on 127.0.0.1 and
+# 127.0.0.2
+add_executable(test_cat_lan test_cat_lan.cpp)
+target_include_directories(test_cat_lan PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(test_cat_lan PRIVATE cat_lan Catch2::Catch2WithMain)
+add_test(NAME test_cat_lan COMMAND $<TARGET_FILE:test_cat_lan> --colour-mode=ansi)
+
 # test_adif_rec: the ADIF records of the logs and of UDP (src/adif_rec.c,
 # plain C)
 add_executable(test_adif_rec test_adif_rec.cpp ${PROJECT_SOURCE_DIR}/src/adif_rec.c)
@@ -82,3 +90,31 @@ add_executable(test_olivia test_olivia.cpp
 target_include_directories(test_olivia PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(test_olivia PRIVATE m Catch2::Catch2WithMain)
 add_test(NAME test_olivia COMMAND $<TARGET_FILE:test_olivia> --colour-mode=ansi)
+
+# test_navtex_bulletin: the NavTex bulletin assembler on texts
+# (src/navtex/bulletin.c, plain C)
+add_executable(test_navtex_bulletin navtex/bulletin_test.c ${PROJECT_SOURCE_DIR}/src/navtex/bulletin.c)
+target_include_directories(test_navtex_bulletin PRIVATE ${PROJECT_SOURCE_DIR}/src/navtex)
+add_test(NAME test_navtex_bulletin COMMAND $<TARGET_FILE:test_navtex_bulletin>)
+
+# test_dsc: the DSC decoder on synthetic calls at several SNR and fadings
+# (tests/dsc/run_tests.py --check, with dsc_gen and dsc_wav built here):
+# no call decoded WRONG, every call of the clean case verified
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_executable(test_dsc_wav dsc/dsc_wav.c ${PROJECT_SOURCE_DIR}/src/dsc/dsc_decoder.c
+    ${PROJECT_SOURCE_DIR}/src/dsc/dsc_format.c ${PROJECT_SOURCE_DIR}/src/dsc/dsc_mid.c)
+target_include_directories(test_dsc_wav PRIVATE ${PROJECT_SOURCE_DIR}/src/dsc)
+target_link_libraries(test_dsc_wav PRIVATE m)
+add_executable(test_dsc_gen dsc/dsc_gen.c)
+target_link_libraries(test_dsc_gen PRIVATE m)
+set_target_properties(test_dsc_wav PROPERTIES OUTPUT_NAME dsc_wav RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/dsc)
+set_target_properties(test_dsc_gen PROPERTIES OUTPUT_NAME dsc_gen RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/dsc)
+add_test(NAME test_dsc COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/dsc/run_tests.py
+    --bin ${CMAKE_CURRENT_BINARY_DIR}/dsc --check)
+
+# test_ftx_freqs: the FT8 window's list of every FT8 and FT4 frequency
+add_executable(test_ftx_freqs test_ftx_freqs.cpp ${PROJECT_SOURCE_DIR}/src/ftx_freqs.c)
+target_include_directories(test_ftx_freqs PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_compile_definitions(test_ftx_freqs PRIVATE X6100_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+target_link_libraries(test_ftx_freqs PRIVATE ft8_core Catch2::Catch2WithMain)
+add_test(NAME test_ftx_freqs COMMAND $<TARGET_FILE:test_ftx_freqs> --colour-mode=ansi)

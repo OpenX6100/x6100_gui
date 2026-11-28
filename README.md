@@ -4,7 +4,7 @@ This is part of an alternative firmware for X6100 using the LVGL library
 
 ## Installing
 
-Open [Releases](https://github.com/gdyuldin/x6100_gui/releases/latest) page and download `sdcard.img` file (in Assets section). With balenaEtcher or Rufus
+Open [Releases](https://github.com/OpenX6100/x6100_gui/releases/latest) page and download `sdcard.img` file (in Assets section). With balenaEtcher or Rufus
 burn img file to microSD card. Insert card to the transceiver and boot it.
 
 ## Importing ADI log
@@ -57,6 +57,24 @@ cd buildroot
 
 Images built from this repository include JS8's engine, which changes their
 licence: see [License](#license).
+
+## Working on the code
+
+Pull requests are welcome, with or without an AI assistant. Before your
+first one, read [docs/working-with-ai.md](docs/working-with-ai.md) (how we
+work: options, mock-ups, test images, radio tests, reviews) and
+[AGENTS.md](AGENTS.md), the guide your AI tool reads by itself (the safety
+rules for a live radio, adding an app, merging). Test images: Actions >
+*Build image* > Run workflow on your branch. Tools for a test radio on a
+Linux PC (console, screenshots, flashing the card while keeping DATA) are in
+[tools/radio](tools/radio/README.md).
+
+## Bug hunt
+
+AI tokens left over at the end of the week? Point your agent at
+[docs/bug-hunt/HUNT.md](docs/bug-hunt/HUNT.md): it takes a part of the code
+nobody has hunted yet, reviews every line, and reports what it finds on that
+part's GitHub issue. It changes no code.
 
 ## License
 
