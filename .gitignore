@@ -59,3 +59,10 @@ build_test/
 
 # Python
 __pycache__/
+
+# Personal AI notes (AGENTS.md, "Your own notes")
+CLAUDE.local.md
+AGENTS.local.md
+# Claude Code's own files per person (the skills in .claude/ are shared)
+.claude/settings.local.json
+.claude/worktrees/
